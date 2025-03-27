@@ -1,6 +1,11 @@
 use crate::exceptions;
 
-use super::{mmu::{MmuCause, MmuRegister, MmuStatus}, cpu, rcp, memory::{self, AccessSize, AccessType}, N64};
+use super::{
+    mmu::{MmuCause, MmuRegister, MmuStatus},
+    cpu, rcp,
+    memory::{self, AccessSize, AccessType},
+    N64,
+};
 
 pub const FCR31_CAUSE_UNIMP_BIT: u32 = 1 << 17;
 pub const FCR31_CMP_BIT: u32 = 1 << 23;
@@ -81,21 +86,26 @@ fn check_fpu_access(n64: &N64) -> bool {
     n64.cpu.mmu.regs[MmuRegister::Status as usize] & (MmuStatus::CU1 as u64) != 0
 }
 
-fn handle_fpu_op<F>(n64: &mut N64,opcode: u32, op: F)
-where F: FnOnce(&mut N64,u32) {
+fn handle_fpu_op<F>(n64: &mut N64, opcode: u32, op: F)
+where
+    F: FnOnce(&mut N64, u32),
+{
     if !check_fpu_access(n64) {
         return unusable(n64, opcode);
     }
     op(n64, opcode);
 }
 
-fn handle_fpu_mem_op<F>(n64: &mut N64,opcode: u32, access_type: AccessType, op: F) 
-where F: FnOnce(&mut N64,u64, bool) {
+fn handle_fpu_mem_op<F>(n64: &mut N64, opcode: u32, access_type: AccessType, op: F)
+where
+    F: FnOnce(&mut N64, u64, bool),
+{
     if !check_fpu_access(n64) {
         return unusable(n64, opcode);
     }
 
-    let addr = n64.cpu.gpr[cpu::rs(opcode) as usize].wrapping_add(cpu::se16(cpu::imm(opcode) as i16));
+    let addr =
+        n64.cpu.gpr[cpu::rs(opcode) as usize].wrapping_add(cpu::se16(cpu::imm(opcode) as i16));
 
     let (phys_addr, cached, err) = memory::translate_address(n64, addr, access_type);
     if err {
@@ -122,7 +132,7 @@ macro_rules! fpr_access {
     };
 }
 
-pub fn lwc1(n64: &mut N64,opcode: u32) {
+pub fn lwc1(n64: &mut N64, opcode: u32) {
     handle_fpu_mem_op(n64, opcode, AccessType::Read, |dev, addr, cached| {
         let value = memory::read_data(dev, addr, AccessSize::Word, cached).to_ne_bytes();
         set_fpr_single(
@@ -134,7 +144,7 @@ pub fn lwc1(n64: &mut N64,opcode: u32) {
     });
 }
 
-pub fn ldc1(n64: &mut N64,opcode: u32) {
+pub fn ldc1(n64: &mut N64, opcode: u32) {
     handle_fpu_mem_op(n64, opcode, AccessType::Read, |dev, addr, cached| {
         let w0 = memory::read_data(dev, addr, AccessSize::Dword, cached);
         let w1 = memory::read_data(dev, addr + 4, AccessSize::Dword, cached);
@@ -147,42 +157,56 @@ pub fn ldc1(n64: &mut N64,opcode: u32) {
     });
 }
 
-pub fn swc1(n64: &mut N64,opcode: u32) {
+pub fn swc1(n64: &mut N64, opcode: u32) {
     handle_fpu_mem_op(n64, opcode, AccessType::Write, |dev, addr, cached| {
         let value = get_fpr_single(dev, rcp::ft(opcode) as usize).to_ne_bytes();
         memory::write_data(dev, addr, u32::from_ne_bytes(value), 0xFFFFFFFF, cached);
     });
 }
 
-pub fn sdc1(n64: &mut N64,opcode: u32) {
+pub fn sdc1(n64: &mut N64, opcode: u32) {
     handle_fpu_mem_op(n64, opcode, AccessType::Write, |dev, addr, cached| {
         let value = get_fpr_double(dev, rcp::ft(opcode) as usize).to_ne_bytes();
-        memory::write_data( dev, addr, u32::from_ne_bytes(value[4..8].try_into().unwrap()), 0xFFFFFFFF, cached);
-        memory::write_data( dev, addr + 4, u32::from_ne_bytes(value[0..4].try_into().unwrap()), 0xFFFFFFFF, cached);
+        memory::write_data(
+            dev,
+            addr,
+            u32::from_ne_bytes(value[4..8].try_into().unwrap()),
+            0xFFFFFFFF,
+            cached,
+        );
+        memory::write_data(
+            dev,
+            addr + 4,
+            u32::from_ne_bytes(value[0..4].try_into().unwrap()),
+            0xFFFFFFFF,
+            cached,
+        );
     });
 }
 
-fn mfc1(n64: &mut N64,opcode: u32) {
+fn mfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         let value = get_fpr_single(dev, rcp::fs(op) as usize);
-        dev.cpu.gpr[cpu::rt(op) as usize] = cpu::se32(u32::from_ne_bytes(value.to_ne_bytes()) as i32);
+        dev.cpu.gpr[cpu::rt(op) as usize] =
+            cpu::se32(u32::from_ne_bytes(value.to_ne_bytes()) as i32);
     });
 }
 
-fn dmfc1(n64: &mut N64,opcode: u32) {
+fn dmfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         let value = get_fpr_double(dev, rcp::fs(op) as usize);
         dev.cpu.gpr[cpu::rt(op) as usize] = u64::from_ne_bytes(value.to_ne_bytes());
     });
 }
 
-fn cfc1(n64: &mut N64,opcode: u32) {
+fn cfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        dev.cpu.gpr[cpu::rt(op) as usize] = cpu::se32(get_control_registers_fpu(dev, rcp::fs(op)) as i32)
+        dev.cpu.gpr[cpu::rt(op) as usize] =
+            cpu::se32(get_control_registers_fpu(dev, rcp::fs(op)) as i32)
     });
 }
 
-fn dcfc1(n64: &mut N64,opcode: u32) {
+fn dcfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, _op| {
         dev.cpu.fpu.fcr31 &= !FCR31_CAUSE_MASK;
         dev.cpu.fpu.fcr31 |= FCR31_CAUSE_UNIMP_BIT;
@@ -190,94 +214,79 @@ fn dcfc1(n64: &mut N64,opcode: u32) {
     });
 }
 
-fn mtc1(n64: &mut N64,opcode: u32) {
+fn mtc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        let value = f32::from_ne_bytes(
-            (dev.cpu.gpr[cpu::rt(op) as usize] as u32).to_ne_bytes(),
-        );
-        set_fpr_single(
-            dev,
-            rcp::fs(op) as usize,
-            value,
-            false,
-        )
+        let value = f32::from_ne_bytes((dev.cpu.gpr[cpu::rt(op) as usize] as u32).to_ne_bytes());
+        set_fpr_single(dev, rcp::fs(op) as usize, value, false)
     });
 }
 
-fn dmtc1(n64: &mut N64,opcode: u32) {
+fn dmtc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         let value = f64::from_ne_bytes(dev.cpu.gpr[cpu::rt(op) as usize].to_ne_bytes());
         set_fpr_double(dev, rcp::fs(op) as usize, value)
     });
 }
 
-fn ctc1(n64: &mut N64,opcode: u32) {
+fn ctc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        set_control_registers_fpu(
-            dev,
-            rcp::fs(op),
-            dev.cpu.gpr[cpu::rt(op) as usize] as u32,
-        )
+        set_control_registers_fpu(dev, rcp::fs(op), dev.cpu.gpr[cpu::rt(op) as usize] as u32)
     });
 }
 
-fn execute_fpu_b(n64: &mut N64,opcode: u32) {
+fn execute_fpu_b(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         dev.cpu.fpu.b_instrs[((op >> 16) & 0x3) as usize](dev, op)
     });
 }
 
-fn execute_fpu_s(n64: &mut N64,opcode: u32) {
+fn execute_fpu_s(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         dev.cpu.fpu.s_instrs[(op & 0x3F) as usize](dev, op)
     });
 }
 
-fn execute_fpu_d(n64: &mut N64,opcode: u32) {
+fn execute_fpu_d(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         dev.cpu.fpu.d_instrs[(op & 0x3F) as usize](dev, op)
     });
 }
 
-fn execute_fpu_l(n64: &mut N64,opcode: u32) {
+fn execute_fpu_l(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         dev.cpu.fpu.l_instrs[(op & 0x3F) as usize](dev, op)
     });
 }
 
-fn execute_fpu_w(n64: &mut N64,opcode: u32) {
+fn execute_fpu_w(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         dev.cpu.fpu.w_instrs[(op & 0x3F) as usize](dev, op)
     });
 }
 
-fn dctc1(n64: &mut N64,opcode: u32) {
+fn dctc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        set_control_registers_fpu(
-            dev,
-            rcp::fs(op),
-            dev.cpu.gpr[cpu::rt(op) as usize] as u32,
-        )
+        set_control_registers_fpu(dev, rcp::fs(op), dev.cpu.gpr[cpu::rt(op) as usize] as u32)
     });
 }
 
-fn unusable(n64: &mut N64,_opcode: u32) {
+fn unusable(n64: &mut N64, _opcode: u32) {
     exceptions::cop_unusable_exception(n64, MmuCause::CE1 as u64)
 }
 
-pub fn reserved(n64: &mut N64,opcode: u32) {
+pub fn reserved(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, _op| {
         exceptions::reserved_exception(dev, MmuCause::CE1 as u64)
     });
 }
 
-fn handle_fcr31(n64: &mut N64,data: u32) {
+fn handle_fcr31(n64: &mut N64, data: u32) {
     n64.cpu.fpu.fcr31 = data & FCR31_WRITE_MASK;
-    
-    let cause_enabled = (n64.cpu.fpu.fcr31 & FCR31_CAUSE_MASK) >> 5 
-        & (n64.cpu.fpu.fcr31 & FCR31_ENABLE_MASK) != 0;
+
+    let cause_enabled =
+        (n64.cpu.fpu.fcr31 & FCR31_CAUSE_MASK) >> 5 & (n64.cpu.fpu.fcr31 & FCR31_ENABLE_MASK) != 0;
     let unimp_operation = n64.cpu.fpu.fcr31 & FCR31_CAUSE_UNIMP_BIT != 0;
-    
+
     if cause_enabled || unimp_operation {
         exceptions::floating_point_exception(n64)
     }
@@ -304,14 +313,14 @@ fn update_flush_mode(n64: &mut N64) {
     }
 }
 
-fn set_control_registers_fpu(n64: &mut N64,index: u32, data: u32) {
+fn set_control_registers_fpu(n64: &mut N64, index: u32, data: u32) {
     match index {
-        0 => (), // read only
+        0 => (),
         31 => {
             handle_fcr31(n64, data);
             update_flush_mode(n64);
         }
-        _ => panic!("unknown FCR register")
+        _ => panic!("unknown FCR register"),
     }
 }
 
@@ -325,7 +334,7 @@ fn get_control_registers_fpu(n64: &N64, index: u32) -> u32 {
     }
 }
 
-pub fn set_fpr_single(n64: &mut N64,index: usize, value: f32, clear_high: bool) {
+pub fn set_fpr_single(n64: &mut N64, index: usize, value: f32, clear_high: bool) {
     let bytes = value.to_ne_bytes();
     if n64.cpu.mmu.regs[MmuRegister::Status as usize] & (MmuStatus::FR as u64) == 0 {
         n64.cpu.fpu.fgr32[index] = bytes;
@@ -349,43 +358,28 @@ pub fn get_fpr_single(n64: &N64, index: usize) -> f32 {
     )
 }
 
-pub fn set_fpr_double(n64: &mut N64,index: usize, value: f64) {
+pub fn set_fpr_double(n64: &mut N64, index: usize, value: f64) {
     let bytes = value.to_ne_bytes();
-    fpr_access!(
-        n64,
-        index,
-        n64.cpu.fpu.fgr64[index] = bytes,
-        {
-            n64.cpu.fpu.fgr32[index & !1] = bytes[0..4].try_into().unwrap();
-            n64.cpu.fpu.fgr32[(index & !1) + 1] = bytes[4..8].try_into().unwrap();
-        }
-    )
+    fpr_access!(n64, index, n64.cpu.fpu.fgr64[index] = bytes, {
+        n64.cpu.fpu.fgr32[index & !1] = bytes[0..4].try_into().unwrap();
+        n64.cpu.fpu.fgr32[(index & !1) + 1] = bytes[4..8].try_into().unwrap();
+    })
 }
 
 pub fn get_fpr_double(n64: &N64, index: usize) -> f64 {
-    fpr_access!(
-        n64,
-        index,
-        f64::from_ne_bytes(n64.cpu.fpu.fgr64[index]),
-        {
-            let bytes_lo = n64.cpu.fpu.fgr32[index & !1];
-            let bytes_hi = n64.cpu.fpu.fgr32[(index & !1) + 1];
-            f64::from_ne_bytes([bytes_lo, bytes_hi].concat().try_into().unwrap())
-        }
-    )
+    fpr_access!(n64, index, f64::from_ne_bytes(n64.cpu.fpu.fgr64[index]), {
+        let bytes_lo = n64.cpu.fpu.fgr32[index & !1];
+        let bytes_hi = n64.cpu.fpu.fgr32[(index & !1) + 1];
+        f64::from_ne_bytes([bytes_lo, bytes_hi].concat().try_into().unwrap())
+    })
 }
 
-const B_INSTRUCTIONS: [fn(&mut N64,u32); 4] = [
-    rcp::bc1f,
-    rcp::bc1t,
-    rcp::bc1fl,
-    rcp::bc1tl,
-];
+const B_INSTRUCTIONS: [fn(&mut N64, u32); 4] = [rcp::bc1f, rcp::bc1t, rcp::bc1fl, rcp::bc1tl];
 
-const MAIN_INSTRUCTIONS: [fn(&mut N64,u32); 32] = {
+const MAIN_INSTRUCTIONS: [fn(&mut N64, u32); 32] = {
     // Define the reserved function with matching signature first
-    let reserved: fn(&mut N64,u32) = reserved;
-    
+    let reserved: fn(&mut N64, u32) = reserved;
+
     let mut arr = [reserved; 32];
     arr[0] = mfc1;
     arr[1] = dmfc1;
@@ -403,15 +397,15 @@ const MAIN_INSTRUCTIONS: [fn(&mut N64,u32); 32] = {
     arr
 };
 
-fn init_s_instructions() -> [fn(&mut N64,u32); 64] {
+fn init_s_instructions() -> [fn(&mut N64, u32); 64] {
     // Correctly declare reserved function type
-    let reserved: fn(&mut N64,u32) = reserved;
+    let reserved: fn(&mut N64, u32) = reserved;
     let mut arr = [reserved; 64];
-    
+
     // Basic arithmetic
     arr[0..8].copy_from_slice(&[
         rcp::add_s,
-        rcp::sub_s, 
+        rcp::sub_s,
         rcp::mul_s,
         rcp::div_s,
         rcp::sqrt_s,
@@ -460,10 +454,10 @@ fn init_s_instructions() -> [fn(&mut N64,u32); 64] {
     arr
 }
 
-fn init_d_instructions() -> [fn(&mut N64,u32); 64] {
-    let reserved: fn(&mut N64,u32) = reserved;
+fn init_d_instructions() -> [fn(&mut N64, u32); 64] {
+    let reserved: fn(&mut N64, u32) = reserved;
     let mut arr = [reserved; 64];
-    
+
     // Basic arithmetic
     arr[0..8].copy_from_slice(&[
         rcp::add_d,
@@ -516,8 +510,8 @@ fn init_d_instructions() -> [fn(&mut N64,u32); 64] {
     arr
 }
 
-fn init_conversion_instructions() -> ([fn(&mut N64,u32); 64], [fn(&mut N64,u32); 64]) {
-    let reserved: fn(&mut N64,u32) = reserved;
+fn init_conversion_instructions() -> ([fn(&mut N64, u32); 64], [fn(&mut N64, u32); 64]) {
+    let reserved: fn(&mut N64, u32) = reserved;
     let mut l_arr = [reserved; 64];
     let mut w_arr = [reserved; 64];
 
@@ -532,9 +526,9 @@ fn init_conversion_instructions() -> ([fn(&mut N64,u32); 64], [fn(&mut N64,u32);
     (l_arr, w_arr)
 }
 
-pub fn set_fgr_registers(n64: &mut N64,status_reg: u64) {
+pub fn set_fgr_registers(n64: &mut N64, status_reg: u64) {
     let is_32bit_mode = (status_reg & (MmuStatus::FR as u64)) == 0;
-    
+
     (0..32).step_by(2).for_each(|i| {
         if is_32bit_mode {
             split_64bit_to_32bit(n64, i);
@@ -545,14 +539,14 @@ pub fn set_fgr_registers(n64: &mut N64,status_reg: u64) {
 }
 
 #[inline]
-fn split_64bit_to_32bit(n64: &mut N64,i: usize) {
+fn split_64bit_to_32bit(n64: &mut N64, i: usize) {
     let bytes = n64.cpu.fpu.fgr64[i];
     n64.cpu.fpu.fgr32[i] = bytes[0..4].try_into().unwrap();
     n64.cpu.fpu.fgr32[i + 1] = bytes[4..8].try_into().unwrap();
 }
 
 #[inline]
-fn merge_32bit_to_64bit(n64: &mut N64,i: usize) {
+fn merge_32bit_to_64bit(n64: &mut N64, i: usize) {
     let bytes_lo = n64.cpu.fpu.fgr32[i];
     let bytes_hi = n64.cpu.fpu.fgr32[i + 1];
     n64.cpu.fpu.fgr64[i] = [bytes_lo, bytes_hi].concat().try_into().unwrap();

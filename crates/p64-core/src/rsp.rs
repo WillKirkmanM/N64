@@ -436,15 +436,12 @@ pub fn start_rsp(n64: &mut N64) {
     n64.rsp.vector.shuffle = unsafe {
         let mut shuffle = [_mm_set_epi8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); 16];
 
-        // Vector
         shuffle[0] = _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
         shuffle[1] = _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 
-        // Scalar quarter
         shuffle[2] = _mm_set_epi8(15, 14, 15, 14, 11, 10, 11, 10, 7, 6, 7, 6, 3, 2, 3, 2);
         shuffle[3] = _mm_set_epi8(13, 12, 13, 12, 9, 8, 9, 8, 5, 4, 5, 4, 1, 0, 1, 0);
 
-        // Scalar half
         for i in 0..4 {
             shuffle[4 + i] = _mm_set_epi8(
                 (15 - 2 * i) as i8,
@@ -466,7 +463,6 @@ pub fn start_rsp(n64: &mut N64) {
             );
         }
 
-        // Scalar whole
         for i in 0..8 {
             shuffle[8 + i] = _mm_set_epi8(
                 (15 - 2 * i) as i8,
@@ -1085,10 +1081,6 @@ fn rsp_event(n64: &mut N64) {
     n64.rsp.processor.sync_point = false;
     do_task(n64)
 }
-
-/*
-    RPS INSTRUCTIONS
-*/
 
 // Define a macro for field extraction
 macro_rules! field {

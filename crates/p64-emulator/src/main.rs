@@ -23,5 +23,6 @@ pub fn main() {
             ..Default::default()
         },
         Box::new(|_cc| Ok(Box::new(P64Gui::new()))),
-    ).unwrap();
+    )
+    .unwrap();
 }

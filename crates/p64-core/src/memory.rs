@@ -1,8 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{audio::{handle_ai_register_read, handle_ai_register_write}, cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video};
+use crate::{
+    audio::{handle_ai_register_read, handle_ai_register_write},
+    cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video,
+};
 
-use super::{cache::{dcache_read, dcache_write}, tlb, N64};
+use super::{
+    cache::{dcache_read, dcache_write},
+    tlb, N64,
+};
 
 #[repr(usize)]
 pub enum MemoryMap {
@@ -63,13 +69,23 @@ impl Default for Memory {
     }
 }
 
-pub fn unmapped_read_mem(_device: &mut N64, _address: u64, _access_size: AccessSize) -> u32 { 3 }
+pub fn unmapped_read_mem(_device: &mut N64, _address: u64, _access_size: AccessSize) -> u32 {
+    3
+}
 pub fn unmapped_write_mem(_device: &mut N64, _address: u64, _value: u32, _mask: u32) {}
 
-pub fn masked_write_32(dst: &mut u32, value: u32, mask: u32) { *dst = (*dst & !mask) | (value & mask) }
-pub fn masked_write_64(dst: &mut u64, value: u64, mask: u64) { *dst = (*dst & !mask) | (value & mask) }
+pub fn masked_write_32(dst: &mut u32, value: u32, mask: u32) {
+    *dst = (*dst & !mask) | (value & mask)
+}
+pub fn masked_write_64(dst: &mut u64, value: u64, mask: u64) {
+    *dst = (*dst & !mask) | (value & mask)
+}
 
-pub fn translate_address(n64: &mut N64, address: u64, access_type: AccessType) -> (u64, bool, bool) {
+pub fn translate_address(
+    n64: &mut N64,
+    address: u64,
+    access_type: AccessType,
+) -> (u64, bool, bool) {
     match address & KSEG_MASK {
         addr if addr != KSEG0_BASE => tlb::get_physical_address(n64, address, access_type),
         _ => (address & PHYSICAL_MASK, (address & CACHE_MASK) == 0, false),
@@ -77,7 +93,9 @@ pub fn translate_address(n64: &mut N64, address: u64, access_type: AccessType) -
 }
 
 #[inline]
-fn get_handler_index(phys_address: u64) -> usize { (phys_address >> 16) as usize }
+fn get_handler_index(phys_address: u64) -> usize {
+    (phys_address >> 16) as usize
+}
 
 pub fn read_data(n64: &mut N64, addr: u64, size: AccessSize, cached: bool) -> u32 {
     match cached {
@@ -104,21 +122,108 @@ macro_rules! map_memory_range {
 }
 
 pub fn initialise_memory_map(n64: &mut N64) {
-    map_memory_range!(n64, MemoryMap::RdramDram, MemoryMap::RdramDram as usize + 0x03EFFFFF, rdram::read_mem_fast, rdram::write_mem, rdram::read_mem);
-    map_memory_range!(n64, MemoryMap::RspMem, MemoryMap::RspMem as usize + 0x3FFFF, rsp::read_mem, rsp::write_mem, rsp::read_mem_fast);
-    map_memory_range!(n64, MemoryMap::CartRom, MemoryMap::CartRom as usize + n64.cartridge.rom.len() - 1, cartridge::read_mem, cartridge::write_mem, cartridge::read_mem_fast);
+    map_memory_range!(
+        n64,
+        MemoryMap::RdramDram,
+        MemoryMap::RdramDram as usize + 0x03EFFFFF,
+        rdram::read_mem_fast,
+        rdram::write_mem,
+        rdram::read_mem
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::RspMem,
+        MemoryMap::RspMem as usize + 0x3FFFF,
+        rsp::read_mem,
+        rsp::write_mem,
+        rsp::read_mem_fast
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::CartRom,
+        MemoryMap::CartRom as usize + n64.cartridge.rom.len() - 1,
+        cartridge::read_mem,
+        cartridge::write_mem,
+        cartridge::read_mem_fast
+    );
 
-    map_memory_range!(n64, MemoryMap::RspRegs, MemoryMap::RspRegs as usize + MASK_64K, rsp::read_regs, rsp::write_regs);
-    map_memory_range!(n64, MemoryMap::RspRegsPc, MemoryMap::RspRegsPc as usize + MASK_64K, rsp::read_regs2, rsp::write_regs2);
-    map_memory_range!(n64, MemoryMap::DpcRegs, MemoryMap::DpcRegs as usize + MASK_64K, rdp::read_regs_dpc, rdp::write_regs_dpc);
-    map_memory_range!(n64, MemoryMap::DpsRegs, MemoryMap::DpsRegs as usize + MASK_64K, rdp::read_regs_dps, rdp::write_regs_dps);
-    map_memory_range!(n64, MemoryMap::MiRegs, MemoryMap::MiRegs as usize + MASK_64K, mips::read_regs, mips::write_regs);
-    map_memory_range!(n64, MemoryMap::ViRegs, MemoryMap::ViRegs as usize + MASK_64K, video::read_regs, video::write_regs);
-    map_memory_range!(n64, MemoryMap::AiRegs, MemoryMap::AiRegs as usize + MASK_64K, handle_ai_register_read, handle_ai_register_write);
-    map_memory_range!(n64, MemoryMap::PiRegs, MemoryMap::PiRegs as usize + MASK_64K, peripheral::read_regs, peripheral::write_regs);
-    map_memory_range!(n64, MemoryMap::RiRegs, MemoryMap::RiRegs as usize + MASK_64K, rdram::read_regs, rdram::write_regs);
-    map_memory_range!(n64, MemoryMap::SerialRegisters, MemoryMap::SerialRegisters as usize + MASK_64K, serial::read_regs, serial::write_regs);
-    map_memory_range!(n64, MemoryMap::PifMem, MemoryMap::PifMem as usize + MASK_64K, pif::read_mem, pif::write_mem);
+    map_memory_range!(
+        n64,
+        MemoryMap::RspRegs,
+        MemoryMap::RspRegs as usize + MASK_64K,
+        rsp::read_regs,
+        rsp::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::RspRegsPc,
+        MemoryMap::RspRegsPc as usize + MASK_64K,
+        rsp::read_regs2,
+        rsp::write_regs2
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::DpcRegs,
+        MemoryMap::DpcRegs as usize + MASK_64K,
+        rdp::read_regs_dpc,
+        rdp::write_regs_dpc
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::DpsRegs,
+        MemoryMap::DpsRegs as usize + MASK_64K,
+        rdp::read_regs_dps,
+        rdp::write_regs_dps
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::MiRegs,
+        MemoryMap::MiRegs as usize + MASK_64K,
+        mips::read_regs,
+        mips::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::ViRegs,
+        MemoryMap::ViRegs as usize + MASK_64K,
+        video::read_regs,
+        video::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::AiRegs,
+        MemoryMap::AiRegs as usize + MASK_64K,
+        handle_ai_register_read,
+        handle_ai_register_write
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::PiRegs,
+        MemoryMap::PiRegs as usize + MASK_64K,
+        peripheral::read_regs,
+        peripheral::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::RiRegs,
+        MemoryMap::RiRegs as usize + MASK_64K,
+        rdram::read_regs,
+        rdram::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::SerialRegisters,
+        MemoryMap::SerialRegisters as usize + MASK_64K,
+        serial::read_regs,
+        serial::write_regs
+    );
+    map_memory_range!(
+        n64,
+        MemoryMap::PifMem,
+        MemoryMap::PifMem as usize + MASK_64K,
+        pif::read_mem,
+        pif::write_mem
+    );
 
     cache::init(n64)
 }

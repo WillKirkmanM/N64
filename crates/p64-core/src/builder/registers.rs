@@ -2,7 +2,7 @@ use crate::{memory::AccessSize, N64};
 use std::ops::{Index, IndexMut, Range};
 
 type RegReadCallback = fn(&N64, u64, AccessSize) -> u32;
-type RegWriteCallback = fn(&mut N64,u64, u32, u32);
+type RegWriteCallback = fn(&mut N64, u64, u32, u32);
 
 #[derive(Default, Debug)]
 pub struct Registers<T = u32> {
@@ -55,7 +55,7 @@ impl Registers<u32> {
 // Implement Index/IndexMut for both types
 impl<T> Index<usize> for Registers<T> {
     type Output = T;
-    
+
     fn index(&self, index: usize) -> &Self::Output {
         &self.regs[index]
     }
@@ -69,7 +69,7 @@ impl<T> IndexMut<usize> for Registers<T> {
 
 impl<T> Index<Range<usize>> for Registers<T> {
     type Output = [T];
-    
+
     fn index(&self, range: Range<usize>) -> &Self::Output {
         &self.regs[range]
     }
@@ -123,15 +123,20 @@ impl<T> AsMut<[T]> for Registers<T> {
     }
 }
 
-impl<T> Registers<T> 
-where 
-    T: Default + Copy + std::ops::BitAnd<Output = T> + std::ops::BitOr<Output = T> + 
-        std::ops::Not<Output = T> + From<u32> + Into<u32>
+impl<T> Registers<T>
+where
+    T: Default
+        + Copy
+        + std::ops::BitAnd<Output = T>
+        + std::ops::BitOr<Output = T>
+        + std::ops::Not<Output = T>
+        + From<u32>
+        + Into<u32>,
 {
     pub fn read(&self, n64: &N64, address: u64, access_size: AccessSize) -> T {
         // Calculate register index from address
         let reg = ((address & 0xFFFF) >> 2) as usize;
-        
+
         // Check bounds
         if reg >= self.size {
             return T::default();
@@ -153,7 +158,7 @@ where
     // pub fn write(&mut self, n64: &mut N64,address: u64, value: T, mask: T) {
     //     // Calculate register index from address
     //     let reg = ((address & 0xFFFF) >> 2) as usize;
-        
+
     //     // Check bounds
     //     if reg >= self.size {
     //         return;
@@ -176,4 +181,3 @@ where
     //     }
     // }
 }
-

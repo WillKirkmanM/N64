@@ -47,8 +47,7 @@ impl Memory {
     pub fn with_size(mut self, size: usize) -> Self {
         if self.alignment > 0 {
             // Use aligned allocation when alignment is specified
-            let layout = Layout::from_size_align(size, self.alignment)
-                .expect("Invalid layout");
+            let layout = Layout::from_size_align(size, self.alignment).expect("Invalid layout");
             let ptr = unsafe { alloc_zeroed(layout) };
             self.data = unsafe { Vec::from_raw_parts(ptr, size, size) };
         } else {
@@ -91,7 +90,7 @@ impl Memory {
     //     if self.is_mempak {
     //         let channel = (address >> 16) as usize;
     //         let addr = (address & 0xFFFF) as u16;
-            
+
     //         if (addr as usize) < MEMPAK_SIZE {
     //             let offset = (channel * MEMPAK_SIZE) + addr as usize;
     //             let bytes = &self.data[offset..offset + 4];
@@ -134,7 +133,7 @@ impl Memory {
         if self.is_mempak {
             let channel = (address >> 16) as usize;
             let addr = (address & 0xFFFF) as u16;
-            
+
             if (addr as usize) < MEMPAK_SIZE {
                 let offset = (channel * MEMPAK_SIZE) + addr as usize;
                 let bytes = &self.data[offset..offset + 4];
@@ -146,7 +145,7 @@ impl Memory {
         let bytes = self.data[masked_address..masked_address + 4]
             .try_into()
             .unwrap();
-        
+
         if self.is_little_endian {
             u32::from_le_bytes(bytes)
         } else {
@@ -155,10 +154,10 @@ impl Memory {
     }
 
     pub fn write_mem(&mut self, address: u64, value: u32) {
-                if self.is_mempak {
+        if self.is_mempak {
             let channel = (address >> 16) as usize;
             let addr = (address & 0xFFFF) as u16;
-            
+
             if (addr as usize) < MEMPAK_SIZE {
                 // Needs N64 to Function. We can't without a shared reference.
                 // format_mempak();
@@ -168,8 +167,10 @@ impl Memory {
             }
             return;
         }
-        
-        if !address < self.size as u64 { return }
+
+        if !address < self.size as u64 {
+            return;
+        }
         // Try callback first
         if let Some(callback) = self.write_callback {
             if callback(address, value) {
@@ -199,7 +200,7 @@ impl Memory {
         if self.is_mempak {
             let channel = (address >> 16) as usize;
             let addr = (address & 0xFFFF) as u16;
-            
+
             if (addr as usize) < MEMPAK_SIZE {
                 let offset = (channel * MEMPAK_SIZE) + addr as usize;
                 let bytes = &self.data[offset..offset + 4];
@@ -211,7 +212,7 @@ impl Memory {
         let bytes = self.data[masked_address..masked_address + 4]
             .try_into()
             .unwrap();
-        
+
         if self.is_little_endian {
             u32::from_le_bytes(bytes)
         } else {
@@ -223,7 +224,7 @@ impl Memory {
         if self.is_mempak {
             let channel = (address >> 16) as usize;
             let addr = (address & 0xFFFF) as u16;
-            
+
             if (addr as usize) < MEMPAK_SIZE {
                 let offset = (channel * MEMPAK_SIZE) + addr as usize;
                 let bytes = value.to_be_bytes();
@@ -232,7 +233,9 @@ impl Memory {
             return;
         }
 
-        if address >= self.size as u64 { return }
+        if address >= self.size as u64 {
+            return;
+        }
 
         if let Some(callback) = self.write_callback {
             if callback(address, value) {
@@ -246,7 +249,7 @@ impl Memory {
         } else {
             value.to_be_bytes()
         };
-        
+
         // Apply mask if needed
         if mask != 0xFFFFFFFF {
             let mut current = self.read_u32(address);
@@ -265,7 +268,7 @@ impl Memory {
     // pub fn read_str(&self, address: u64, length: usize) -> String {
     //     let start = address as usize & self.mask.unwrap_or(0);
     //     let end = start + length;
-        
+
     //     if end > self.size {
     //         return String::new();
     //     }
@@ -294,7 +297,7 @@ impl From<Vec<u8>> for Memory {
 
 impl std::ops::Index<usize> for Memory {
     type Output = u8;
-    
+
     fn index(&self, index: usize) -> &Self::Output {
         &self.data[index]
     }
@@ -309,7 +312,7 @@ impl std::ops::IndexMut<usize> for Memory {
 // Keep existing range implementations
 impl std::ops::Index<std::ops::Range<usize>> for Memory {
     type Output = [u8];
-    
+
     fn index(&self, range: std::ops::Range<usize>) -> &Self::Output {
         &self.data[range]
     }

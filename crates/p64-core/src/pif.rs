@@ -1,7 +1,16 @@
 use crate::serial;
 
 // use crate::{n64, serial};
-use super::{cartridge, mmu::{add_cycles, MmuRegister}, events::{create_event, EventType}, memory::{self, masked_write_32}, mempak, peripheral::{self, PakHandler}, serial::{DmaDir, SerialRegister, SerialStatus}, N64};
+use super::{
+    cartridge,
+    mmu::{add_cycles, MmuRegister},
+    events::{create_event, EventType},
+    memory::{self, masked_write_32},
+    mempak,
+    peripheral::{self, PakHandler},
+    serial::{DmaDir, SerialRegister, SerialStatus},
+    N64,
+};
 
 pub const NTSC_PIF_ROM: [u8; 1984] = [
     60, 9, 52, 0, 64, 137, 96, 0, 60, 9, 0, 6, 53, 41, 228, 99, 64, 137, 128, 0, 60, 8, 164, 4,
@@ -182,39 +191,37 @@ pub const PAL_PIF_ROM: [u8; 1984] = [
 ];
 
 /// PIF Memory Layout
-pub const PIF_RAM_SIZE: usize      = 64;
-const PIF_RAM_OFFSET: usize        = 0x7C0;
-const PIF_MASK: usize             = 0xFFFF;
-const PIF_CHANNELS_COUNT: usize   = 5;
+pub const PIF_RAM_SIZE: usize = 64;
+const PIF_RAM_OFFSET: usize = 0x7C0;
+const PIF_MASK: usize = 0xFFFF;
+const PIF_CHANNELS_COUNT: usize = 5;
 
 /// PIF RAM Command Values
 const PIF_RAM_COMMAND_ADDR: usize = 0x3F;
-const PIF_CIC_SEED_ADDR1: usize  = 0x26;
-const PIF_CIC_SEED_ADDR2: usize  = 0x27;
+const PIF_CIC_SEED_ADDR1: usize = 0x26;
+const PIF_CIC_SEED_ADDR2: usize = 0x27;
 
 /// Channel Configuration
-const CONTROLLER_CHANNEL: usize   = 0;
-const CART_CHANNEL: usize        = 4;
+const CONTROLLER_CHANNEL: usize = 0;
+const CART_CHANNEL: usize = 4;
 
 /// RAM Control Bytes
-const RAM_EMPTY: u8      = 0x00;
+const RAM_EMPTY: u8 = 0x00;
 const RAM_TERMINATOR: u8 = 0xFE;
-const RAM_SKIP: u8       = 0xFF;
-const RAM_DISABLE: u8    = 0xFD;
+const RAM_SKIP: u8 = 0xFF;
+const RAM_DISABLE: u8 = 0xFD;
 
 /// CIC Challenge Parameters
-const CIC_CHALLENGE_SIZE: usize   = 15;
-const CIC_RAM_OFFSET: usize      = 0x30;
+const CIC_CHALLENGE_SIZE: usize = 15;
+const CIC_RAM_OFFSET: usize = 0x30;
 const CIC_RESPONSE_LENGTH: usize = 28;
 
 /// CIC Challenge Lookup Tables
 const LUT0: [u8; 16] = [
-    0x4, 0x7, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1,
-    0xC, 0xF, 0x8, 0xF, 0x6, 0x3, 0x6, 0x9
+    0x4, 0x7, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1, 0xC, 0xF, 0x8, 0xF, 0x6, 0x3, 0x6, 0x9,
 ];
 const LUT1: [u8; 16] = [
-    0x4, 0x1, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1,
-    0xC, 0x9, 0x8, 0x5, 0x6, 0x3, 0xC, 0x9
+    0x4, 0x1, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1, 0xC, 0x9, 0x8, 0x5, 0x6, 0x3, 0xC, 0x9,
 ];
 
 #[derive(Clone, Copy)]
@@ -271,8 +278,7 @@ pub struct PifChannel {
     pub pak_handler: Option<peripheral::PakHandler>,
 }
 
-pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize,
-) -> u32 {
+pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
     add_cycles(n64, 3000);
 
     let masked_address = address as usize & PIF_MASK;
@@ -292,11 +298,13 @@ pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize,
     }
 }
 
-pub fn write_mem(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_mem(n64: &mut N64, address: u64, value: u32, mask: u32) {
     let masked_address = address as usize & PIF_MASK;
 
     // Hack so n64-systemtest runs.
-    if masked_address < PIF_RAM_OFFSET { return; }
+    if masked_address < PIF_RAM_OFFSET {
+        return;
+    }
 
     let ram_address = masked_address - PIF_RAM_OFFSET;
     let mut data = u32::from_be_bytes(
@@ -308,11 +316,17 @@ pub fn write_mem(n64: &mut N64,address: u64, value: u32, mask: u32) {
     n64.pif.ram[ram_address..ram_address + 4].copy_from_slice(&data.to_be_bytes());
 
     n64.serial.dma_dir = DmaDir::Write;
-    create_event(n64, EventType::SI, n64.cpu.mmu.regs[MmuRegister::Count as usize] + 3200, serial::dma_event);
-    n64.serial.regs[SerialRegister::Status as usize] |= SerialStatus::DMA_BUSY.bits() | SerialStatus::IO_BUSY.bits();
+    create_event(
+        n64,
+        EventType::SI,
+        n64.cpu.mmu.regs[MmuRegister::Count as usize] + 3200,
+        serial::dma_event,
+    );
+    n64.serial.regs[SerialRegister::Status as usize] |=
+        SerialStatus::DMA_BUSY.bits() | SerialStatus::IO_BUSY.bits();
 }
 
-fn process_channel(n64: &mut N64,channel: usize) -> usize {
+fn process_channel(n64: &mut N64, channel: usize) -> usize {
     let pif_channel = &mut n64.pif.channels[channel];
     if pif_channel.tx.is_none() {
         return 0;
@@ -344,7 +358,7 @@ fn disable_pif_channel(channel: &mut PifChannel) {
     channel.rx_buf = None;
 }
 
-fn setup_pif_channel(n64: &mut N64,channel: usize, buf: usize) -> usize {
+fn setup_pif_channel(n64: &mut N64, channel: usize, buf: usize) -> usize {
     let tx = n64.pif.ram[buf] & 0x3f;
     let rx = n64.pif.ram[buf + 1] & 0x3f;
 
@@ -403,38 +417,40 @@ pub fn process_ram(n64: &mut N64) {
     let command = n64.pif.ram[PIF_RAM_COMMAND_ADDR];
 
     // Process commands using bit patterns
-    [(PifCommand::SetupChannels, 0x01),
-     (PifCommand::ProcessChallenge, 0x02),
-     (PifCommand::Unknown, 0x08),
-     (PifCommand::ClearRom, 0x10),
-     (PifCommand::SetStatusBit, 0x20)]
-        .into_iter()
-        .for_each(|(cmd, mask)| {
-            if command & mask != 0 {
-                match cmd {
-                    PifCommand::SetupChannels => {
-                        setup_channels_format(n64);
-                        clrmask |= mask;
-                    },
-                    PifCommand::ProcessChallenge => {
-                        n64.pif.channels[..PIF_CHANNELS_COUNT]
-                            .iter_mut()
-                            .for_each(disable_pif_channel);
-                        process_cic_challenge(n64);
-                        clrmask |= mask;
-                    },
-                    PifCommand::Unknown => {
-                        clrmask |= mask;
-                    },
-                    PifCommand::ClearRom => {
-                        n64.pif.rom.fill(0);
-                    },
-                    PifCommand::SetStatusBit => {
-                        n64.pif.ram[PIF_RAM_COMMAND_ADDR] = 0x80;
-                    },
+    [
+        (PifCommand::SetupChannels, 0x01),
+        (PifCommand::ProcessChallenge, 0x02),
+        (PifCommand::Unknown, 0x08),
+        (PifCommand::ClearRom, 0x10),
+        (PifCommand::SetStatusBit, 0x20),
+    ]
+    .into_iter()
+    .for_each(|(cmd, mask)| {
+        if command & mask != 0 {
+            match cmd {
+                PifCommand::SetupChannels => {
+                    setup_channels_format(n64);
+                    clrmask |= mask;
+                }
+                PifCommand::ProcessChallenge => {
+                    n64.pif.channels[..PIF_CHANNELS_COUNT]
+                        .iter_mut()
+                        .for_each(disable_pif_channel);
+                    process_cic_challenge(n64);
+                    clrmask |= mask;
+                }
+                PifCommand::Unknown => {
+                    clrmask |= mask;
+                }
+                PifCommand::ClearRom => {
+                    n64.pif.rom.fill(0);
+                }
+                PifCommand::SetStatusBit => {
+                    n64.pif.ram[PIF_RAM_COMMAND_ADDR] = 0x80;
                 }
             }
-        });
+        }
+    });
 
     n64.pif.ram[PIF_RAM_COMMAND_ADDR] &= !clrmask;
 }
@@ -455,7 +471,8 @@ fn process_cic_challenge(n64: &mut N64) {
     let mut response = [0u8; 30];
 
     // Pack bytes into nibbles
-    challenge.chunks_mut(2)
+    challenge
+        .chunks_mut(2)
         .zip(n64.pif.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE].iter())
         .for_each(|(chunk, &byte)| {
             chunk[0] = (byte >> 4) & 0xf;
@@ -471,9 +488,8 @@ fn process_cic_challenge(n64: &mut N64) {
     n64.pif.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE]
         .iter_mut()
         .zip(response.chunks(2))
-        .for_each(|(byte, nibbles)| {*byte = (nibbles[0] << 4) | nibbles[1]});
+        .for_each(|(byte, nibbles)| *byte = (nibbles[0] << 4) | nibbles[1]);
 }
-
 
 fn n64_cic_nus_6105(challenge: [u8; 30], response: &mut [u8; 30], len: usize) {
     let mut key = 0xB;

@@ -23,32 +23,36 @@ impl Default for Rdram {
                 .is_little_endian()
                 .is_rdram()
                 .calculate_cycles_from_addr_size()
-                .build()
+                .build(),
         }
     }
 }
 
-pub fn rdram_calculate_cycles(length: u64) -> u64 { 31 + (length / 3) }
-
-pub fn read_mem_fast(n64: &mut N64, address: u64, _access_size: AccessSize) -> u32 {
-   n64.rdram.mem.read_mem_fast(address) 
+pub fn rdram_calculate_cycles(length: u64) -> u64 {
+    31 + (length / 3)
 }
 
-pub fn read_mem(n64: &mut N64, address: u64, access_size: AccessSize) -> u32 {
-    add_cycles(n64, rdram_calculate_cycles(access_size as u64) / (access_size as u64 / 4));
+pub fn read_mem_fast(n64: &mut N64, address: u64, _access_size: AccessSize) -> u32 {
     n64.rdram.mem.read_mem_fast(address)
 }
 
-pub fn write_mem(n64: &mut N64,address: u64, value: u32, _mask: u32) {
+pub fn read_mem(n64: &mut N64, address: u64, access_size: AccessSize) -> u32 {
+    add_cycles(
+        n64,
+        rdram_calculate_cycles(access_size as u64) / (access_size as u64 / 4),
+    );
+    n64.rdram.mem.read_mem_fast(address)
+}
+
+pub fn write_mem(n64: &mut N64, address: u64, value: u32, _mask: u32) {
     n64.rdram.mem.write_mem(address, value);
 }
 
 pub fn get_rdram_shared_pointer(n64: &mut N64) -> (*mut u8, usize) {
     let data_ptr = n64.rdram.mem.data_mut().as_mut_ptr();
-    
+
     (data_ptr, RDRAM_SIZE)
 }
-
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
@@ -59,14 +63,13 @@ pub enum RiReg {
 
 #[derive(Clone)]
 pub struct RdramInterface {
-    pub regs: Memory
+    pub regs: Memory,
 }
 
 impl Default for RdramInterface {
     fn default() -> Self {
         Self {
-            regs: Memory::new()
-                .with_size(RiReg::RegsCount as usize)
+            regs: Memory::new().with_size(RiReg::RegsCount as usize),
         }
     }
 }
@@ -90,6 +93,6 @@ pub fn read_regs(n64: &mut N64, address: u64, access_size: AccessSize) -> u32 {
     n64.rdram_interface.clone().read(address, access_size)
 }
 
-pub fn write_regs(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
     n64.rdram_interface.write(address, value, mask)
 }

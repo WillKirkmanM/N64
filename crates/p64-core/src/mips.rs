@@ -1,4 +1,11 @@
-use super::{builder::registers::Registers, mmu::{MmuCause, MmuRegister}, events::{create_event, EventType}, exceptions::{self, check_pending_interrupts}, memory::{self, AccessSize}, N64};
+use super::{
+    builder::registers::Registers,
+    mmu::{MmuCause, MmuRegister},
+    events::{create_event, EventType},
+    exceptions::{self, check_pending_interrupts},
+    memory::{self, AccessSize},
+    N64,
+};
 
 const MI_INIT_MODE_REG: u32 = 0;
 const MI_VERSION_REG: u32 = 1;
@@ -57,7 +64,7 @@ impl Default for Mips {
                 .with_write_mask(MI_INIT_LENGTH_MASK)
                 .build(),
         };
-        
+
         mips.regs[MI_VERSION_REG as usize] = 0x02020102;
         mips
     }
@@ -66,18 +73,16 @@ impl Default for Mips {
 // Macro to handle common register operations
 macro_rules! update_cause_reg {
     ($n64: expr) => {{
-        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] &=
-            !(MmuCause::ExccodeMask as u64);
-        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= 
-            MmuCause::IP2 as u64;
+        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
+        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= MmuCause::IP2 as u64;
     }};
 }
 
-pub fn read_regs(n64: &mut N64,address: u64, access_size: AccessSize) -> u32 {
+pub fn read_regs(n64: &mut N64, address: u64, access_size: AccessSize) -> u32 {
     n64.mips.regs.read(n64, address, access_size)
 }
 
-pub fn write_regs(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
     let reg = (address & 0xFFFF) >> 2;
     match reg as u32 {
         MI_INIT_MODE_REG => update_init_mode(n64, value),
@@ -86,12 +91,10 @@ pub fn write_regs(n64: &mut N64,address: u64, value: u32, mask: u32) {
     }
 
     if n64.mips.regs[MI_INTR_REG as usize] & n64.mips.regs[MI_INTR_MASK_REG as usize] != 0 {
-        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &=
-            !(MmuCause::ExccodeMask as u64);
+        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
         n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= MmuCause::IP2 as u64;
     } else {
-        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &=
-            !(MmuCause::IP2 as u64);
+        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::IP2 as u64);
     }
     check_pending_interrupts(n64)
 }
@@ -109,13 +112,16 @@ macro_rules! handle_bits {
     };
 }
 
-fn update_init_mode(n64: &mut N64,w: u32) {
+fn update_init_mode(n64: &mut N64, w: u32) {
     // Handle INIT_LENGTH separately as it's a special case
-    n64.mips.regs[MI_INIT_MODE_REG as usize] = 
-        (n64.mips.regs[MI_INIT_MODE_REG as usize] & !MI_INIT_LENGTH_MASK) | 
-        (w & MI_INIT_LENGTH_MASK);
+    n64.mips.regs[MI_INIT_MODE_REG as usize] = (n64.mips.regs[MI_INIT_MODE_REG as usize]
+        & !MI_INIT_LENGTH_MASK)
+        | (w & MI_INIT_LENGTH_MASK);
 
-    handle_bits!(n64, MI_INIT_MODE_REG, w,
+    handle_bits!(
+        n64,
+        MI_INIT_MODE_REG,
+        w,
         (MI_CLR_INIT, MI_SET_INIT, MI_INIT_MODE),
         (MI_CLR_EBUS, MI_SET_EBUS, MI_EBUS_MODE),
         (MI_CLR_RDRAM, MI_SET_RDRAM, MI_RDRAM_MODE)
@@ -126,8 +132,11 @@ fn update_init_mode(n64: &mut N64,w: u32) {
     }
 }
 
-fn update_intr_mask(n64: &mut N64,w: u32) {
-    handle_bits!(n64, MI_INTR_MASK_REG, w,
+fn update_intr_mask(n64: &mut N64, w: u32) {
+    handle_bits!(
+        n64,
+        MI_INTR_MASK_REG,
+        w,
         (MI_CLR_SP, MI_SET_SP, MI_INTR_SP),
         (MI_CLR_SI, MI_SET_SI, MI_INTR_SI),
         (MI_CLR_AI, MI_SET_AI, MI_INTR_AI),
@@ -137,18 +146,16 @@ fn update_intr_mask(n64: &mut N64,w: u32) {
     );
 }
 
-pub fn clear_rcp_interrupt(n64: &mut N64,interrupt: u32) {
+pub fn clear_rcp_interrupt(n64: &mut N64, interrupt: u32) {
     n64.mips.regs[MI_INTR_REG as usize] &= !interrupt;
 
     if n64.mips.regs[MI_INTR_REG as usize] & n64.mips.regs[MI_INTR_MASK_REG as usize] == 0 {
-        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &=
-            !(MmuCause::IP2 as u64);    
+        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::IP2 as u64);
     }
     check_pending_interrupts(n64)
 }
 
-
-fn handle_interrupt_common(n64: &mut N64,interrupt: u32) {
+fn handle_interrupt_common(n64: &mut N64, interrupt: u32) {
     n64.mips.regs[MI_INTR_REG as usize] |= interrupt;
 
     if n64.mips.regs[MI_INTR_REG as usize] & n64.mips.regs[MI_INTR_MASK_REG as usize] != 0 {
@@ -156,12 +163,17 @@ fn handle_interrupt_common(n64: &mut N64,interrupt: u32) {
     }
 }
 
-pub fn set_rcp_interrupt(n64: &mut N64,interrupt: u32) {
+pub fn set_rcp_interrupt(n64: &mut N64, interrupt: u32) {
     handle_interrupt_common(n64, interrupt);
     check_pending_interrupts(n64)
 }
 
-pub fn schedule_rcp_interrupt(n64: &mut N64,interrupt: u32) {
+pub fn schedule_rcp_interrupt(n64: &mut N64, interrupt: u32) {
     handle_interrupt_common(n64, interrupt);
-    create_event(n64, EventType::InterruptCheck, n64.cpu.mmu.regs[MmuRegister::Count as usize], exceptions::check_pending_interrupts)
+    create_event(
+        n64,
+        EventType::InterruptCheck,
+        n64.cpu.mmu.regs[MmuRegister::Count as usize],
+        exceptions::check_pending_interrupts,
+    )
 }

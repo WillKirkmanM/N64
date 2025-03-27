@@ -1,38 +1,3 @@
-/*
-    The AI (Audio Interface) is one of the I/O interfaces of the RCP which playbacks audio samples
-    It fetches samples via DMA (Direct Memory Access) from the RDRAM (Rambus Dynamic Random Access Memory)
-    at a specific rate and outputs the audio samples.
-
-    It does not perform any processing on the audio samples (Decompression, Mixing...), that is performed
-    by the CPU or RSP (Reality Signal Processor)
-
-    For playback through a DMA channel, the CPU prepares buffers of samples in the RDRAM, subsequently
-    writing them to the AI's registers to setup a dma transfer
-
-    Like the RSP and the RDP DMAs the AI DMAs have a double-buffering mechanism, allowing 
-    to enqueue a second buffer while the first one is playing back and thus having continuous 
-    playback; As soon as a buffer is finished, a second is ready for playback so that 
-    the audio is uninterrupted.  
-
-    The AI does not have internal RAM for storing samples as it is connected to the DAC (Digital to Analog Converter)
-    which is responsible for converting digital audio signals into analog audio signals which are outputted
-    through speakers or headphones.
-
-    https://www.copetti.org/images/consoles/nintendo64/Audio.07d6a36f3757e76528002b27dba5152ccfd0d24a2aa10fa6e0c1b563597503ea.png
-        Process of ROM to Audio DAC
-        Copetti: http://www.copetti.org/
-
-    The sampling rate can be up to 44.1 kHz, but using the top rate will steal lots of CPU cycles.
-    There’s no strict limit on the number of channels, it all depends on how much the RSP is capable of mixing (often around 16-24 channels if processing ADPCM or ~100 if PCM).
-    Memory is another concern, while competitors relied on larger mediums (i.e. CD-ROM) and dedicated audio memory, Nintendo 64 cartridges hold much less data (let alone music data) and have to share main memory with other components.
-
-    For those reasons, players may notice that N64 ports contain lesser-quality music or repeated scores. Although, a common workaround is to implement a music sequencer that ‘constructs’ samples at runtime using a pre-populated set of sounds (similar to MIDI music).
-
-    Works Cited:
-        - https://n64brew.dev/wiki/Audio_Interface
-        - https://www.copetti.org/writings/consoles/nintendo-64/
-
-*/
 
 use p64_gui::audio;
 use crate::events::Event;
@@ -58,8 +23,6 @@ pub enum AiRegister {
     DacRate = 4,
     RegsCount = 6,
 }
-
-        
 
 /// Audio Interface Status Flags
 #[repr(u32)]
@@ -96,18 +59,29 @@ pub struct AiDma {
 }
 
 impl Audio {
-    fn is_busy(&self) -> bool { (self.registers[AiRegister::Status as usize] & AiStatus::Busy as u32) != 0 }
-    fn is_full(&self) -> bool { (self.registers[AiRegister::Status as usize] & AiStatus::Full as u32) != 0 }
-    fn set_status_flag(&mut self, flag: AiStatus) { self.registers[AiRegister::Status as usize] |= flag as u32; }
-    fn clear_status_flag(&mut self, flag: AiStatus) { self.registers[AiRegister::Status as usize] &= !(flag as u32); }
+    fn is_busy(&self) -> bool {
+        (self.registers[AiRegister::Status as usize] & AiStatus::Busy as u32) != 0
+    }
+    fn is_full(&self) -> bool {
+        (self.registers[AiRegister::Status as usize] & AiStatus::Full as u32) != 0
+    }
+    fn set_status_flag(&mut self, flag: AiStatus) {
+        self.registers[AiRegister::Status as usize] |= flag as u32;
+    }
+    fn clear_status_flag(&mut self, flag: AiStatus) {
+        self.registers[AiRegister::Status as usize] &= !(flag as u32);
+    }
 
     fn update_fifo_entry(&mut self, index: usize, duration: u64, rdram_mask: u64) {
-        self.fifo[index].address = self.registers[AiRegister::DramAddr as usize] as u64 & rdram_mask;
+        self.fifo[index].address =
+            self.registers[AiRegister::DramAddr as usize] as u64 & rdram_mask;
         self.fifo[index].length = (self.registers[AiRegister::Len as usize] & !7) as u64;
         self.fifo[index].duration = duration;
     }
 
-    fn shift_fifo(&mut self) { self.fifo[0] = self.fifo[1]; }
+    fn shift_fifo(&mut self) {
+        self.fifo[0] = self.fifo[1];
+    }
 
     fn get_aligned_dma_length(&self) -> u64 {
         const ALIGNMENT_MASK: u64 = !7;
@@ -124,18 +98,25 @@ impl Audio {
 
         let dma_length = self.get_aligned_dma_length();
         let sample_rate = self.calculate_sample_rate(vi_clock);
-        
+
         dma_length * cpu_clock / (BYTES_PER_SAMPLE * sample_rate)
     }
 
-    fn calculate_remaining_fifo_length(&self, fifo_index: usize, cpu_count: u64, next_event: Option<Event>) -> u64 {
+    fn calculate_remaining_fifo_length(
+        &self,
+        fifo_index: usize,
+        cpu_count: u64,
+        next_event: Option<Event>,
+    ) -> u64 {
         let fifo = &self.fifo[fifo_index];
-        
-        if fifo.duration == 0 || next_event.is_none() { return 0; }
+
+        if fifo.duration == 0 || next_event.is_none() {
+            return 0;
+        }
 
         let time_remaining = next_event.unwrap().count.saturating_sub(cpu_count);
         let bytes_remaining = time_remaining * fifo.length / fifo.duration;
-        
+
         bytes_remaining & !7 // 8-byte alignment
     }
 
@@ -162,7 +143,7 @@ impl Audio {
         } else {
             self.set_status_flag(AiStatus::Busy);
         }
-        
+
         fifo_index
     }
 
@@ -207,54 +188,69 @@ impl Audio {
     }
 
     fn calculate_audio_dma_duration(n64: &N64) -> u64 {
-        n64.audio.calculate_dma_duration(n64.video.clock, n64.cpu.clock_rate)
+        n64.audio
+            .calculate_dma_duration(n64.video.clock, n64.cpu.clock_rate)
     }
-    
+
     fn start_audio_dma(n64: &mut N64) {
         n64.audio.process_dma_transfer();
-    
+
         let current_count = n64.cpu.mmu.regs[MmuRegister::Count as usize];
         let completion_time = current_count + n64.audio.fifo[0].duration;
-        
+
         create_event(n64, EventType::AI, completion_time, Audio::handle_dma_event);
         schedule_rcp_interrupt(n64, MI_INTR_AI);
     }
-    
+
     fn queue_audio_data(n64: &mut N64) {
         let duration = Audio::calculate_audio_dma_duration(n64);
         let fifo_index = n64.audio.push_to_fifo(duration, RDRAM_MASK as u64);
-        
-        if fifo_index == 0 { Audio::start_audio_dma(n64); }
+
+        if fifo_index == 0 {
+            Audio::start_audio_dma(n64);
+        }
     }
-    
-    fn complete_audio_dma(n64: &mut N64) { if n64.audio.pop_from_fifo() { Audio::start_audio_dma(n64) } }
+
+    fn complete_audio_dma(n64: &mut N64) {
+        if n64.audio.pop_from_fifo() {
+            Audio::start_audio_dma(n64)
+        }
+    }
 }
 
-pub fn handle_ai_register_read(n64: &mut N64,address: u64, _access_size: AccessSize) -> u32 {
+pub fn handle_ai_register_read(n64: &mut N64, address: u64, _access_size: AccessSize) -> u32 {
     let reg_index = (address & 0xFFFF) >> 2;
-    
-    if reg_index as u32 != AiRegister::Len as u32 { return n64.audio.read_register(reg_index as usize) }
+
+    if reg_index as u32 != AiRegister::Len as u32 {
+        return n64.audio.read_register(reg_index as usize);
+    }
 
     let cpu_count = n64.cpu.mmu.regs[MmuRegister::Count as usize];
     let next_event = get_event(n64, EventType::AI).copied();
-    
+
     // Calculate DMA length
-    let current_dma_length = n64.audio.calculate_remaining_fifo_length(0, cpu_count, next_event);
+    let current_dma_length = n64
+        .audio
+        .calculate_remaining_fifo_length(0, cpu_count, next_event);
 
     // Handle audio playback
-    if let Some((addr, len)) = n64.audio.play_audio_data(current_dma_length) { play_audio(n64, addr, len) }
+    if let Some((addr, len)) = n64.audio.play_audio_data(current_dma_length) {
+        play_audio(n64, addr, len)
+    }
 
     current_dma_length as u32
 }
 
-pub fn handle_ai_register_write(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn handle_ai_register_write(n64: &mut N64, address: u64, value: u32, mask: u32) {
     let reg_index = (address & 0xFFFF) >> 2;
-    
+
     match reg_index as u32 {
         x if x == AiRegister::Len as u32 => {
             n64.audio.write_register(reg_index as usize, value, mask);
-            if n64.audio.read_register(AiRegister::Len as usize) != 0 { Audio::queue_audio_data(n64) }
-        },
+            if n64.audio.read_register(AiRegister::Len as usize) != 0 {
+                Audio::queue_audio_data(n64)
+            }
+        }
         x if x == AiRegister::Status as u32 => clear_rcp_interrupt(n64, MI_INTR_AI),
         x if x == AiRegister::DacRate as u32 => {
             if n64.audio.read_register(reg_index as usize) != value & mask {
@@ -262,7 +258,7 @@ pub fn handle_ai_register_write(n64: &mut N64,address: u64, value: u32, mask: u3
                 audio::set_frequency(&mut n64.ui, frequency);
             }
             n64.audio.write_register(reg_index as usize, value, mask);
-        },
+        }
         _ => n64.audio.write_register(reg_index as usize, value, mask),
     }
 }
@@ -274,8 +270,10 @@ pub fn play_audio(device: &mut N64, dram_addr: usize, length: u64) {
 
     for (i, chunk) in primary_buffer.chunks_mut(2).enumerate() {
         let base_addr = dram_addr + i * 4;
-        chunk[0] = device.rdram.mem[base_addr + 2] as i16 | (device.rdram.mem[base_addr + 3] as i16) << 8;
-        chunk[1] = device.rdram.mem[base_addr] as i16 | (device.rdram.mem[base_addr + 1] as i16) << 8;
+        chunk[0] =
+            device.rdram.mem[base_addr + 2] as i16 | (device.rdram.mem[base_addr + 3] as i16) << 8;
+        chunk[1] =
+            device.rdram.mem[base_addr] as i16 | (device.rdram.mem[base_addr + 1] as i16) << 8;
     }
 
     let audio_queued = audio_device.size() as f64;

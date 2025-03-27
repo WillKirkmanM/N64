@@ -65,8 +65,12 @@ pub struct Rdp {
 impl Default for Rdp {
     fn default() -> Self {
         let mut rdp = Self {
-            regs_dpc: Registers::default().with_size(DpcReg::RegsCount as usize).build(),
-            regs_dps: Registers::default().with_size(DpcReg::RegsCount as usize).build(),
+            regs_dpc: Registers::default()
+                .with_size(DpcReg::RegsCount as usize)
+                .build(),
+            regs_dps: Registers::default()
+                .with_size(DpcReg::RegsCount as usize)
+                .build(),
             wait_frozen: false,
         };
 
@@ -83,27 +87,23 @@ pub fn read_regs_dpc(n64: &mut N64, address: u64, _access_size: memory::AccessSi
     n64.rdp.regs_dpc[((address & 0xFFFF) >> 2) as usize]
 }
 
-pub fn write_regs_dpc(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_regs_dpc(n64: &mut N64, address: u64, value: u32, mask: u32) {
     let reg = (address & 0xFFFF) >> 2;
     match reg as u32 {
-        x if x == DpcReg::Current as u32 || x == DpcReg::Clock as u32 || x == DpcReg::BufBusy as u32 || x == DpcReg::PipeBusy as u32 || x == DpcReg::Tmem as u32 => {}
+        x if x == DpcReg::Current as u32
+            || x == DpcReg::Clock as u32
+            || x == DpcReg::BufBusy as u32
+            || x == DpcReg::PipeBusy as u32
+            || x == DpcReg::Tmem as u32 => {}
         x if x == DpcReg::Status as u32 => update_dpc_status(n64, value & mask),
         x if x == DpcReg::Start as u32 => {
             if (n64.rdp.regs_dpc[DpcReg::Status as usize] & DpcStatus::START_VALID.bits()) == 0 {
-                memory::masked_write_32(
-                    &mut n64.rdp.regs_dpc[reg as usize],
-                    value & 0xFFFFF8,
-                    mask,
-                )
+                memory::masked_write_32(&mut n64.rdp.regs_dpc[reg as usize], value & 0xFFFFF8, mask)
             }
             n64.rdp.regs_dpc[DpcReg::Status as usize] |= DpcStatus::START_VALID.bits()
         }
         x if x == DpcReg::End as u32 => {
-            memory::masked_write_32(
-                &mut n64.rdp.regs_dpc[reg as usize],
-                value & 0xFFFFF8,
-                mask,
-            );
+            memory::masked_write_32(&mut n64.rdp.regs_dpc[reg as usize], value & 0xFFFFF8, mask);
             if (n64.rdp.regs_dpc[DpcReg::Status as usize] & DpcStatus::START_VALID.bits()) != 0 {
                 n64.rdp.regs_dpc[DpcReg::Current as usize] =
                     n64.rdp.regs_dpc[DpcReg::Start as usize];
@@ -120,9 +120,17 @@ pub fn write_regs_dpc(n64: &mut N64,address: u64, value: u32, mask: u32) {
 }
 
 fn run_rdp(n64: &mut N64) {
-    let timer = video::process_rdp_list(&mut n64.rdp.regs_dpc.try_as_array_mut().unwrap(), &mut n64.rsp.memory.mem.data);
+    let timer = video::process_rdp_list(
+        &mut n64.rdp.regs_dpc.try_as_array_mut().unwrap(),
+        &mut n64.rsp.memory.mem.data,
+    );
     if timer != 0 {
-        create_event(n64, EventType::DP, n64.cpu.mmu.regs[MmuRegister::Count as usize] + timer, rdp_interrupt_event)
+        create_event(
+            n64,
+            EventType::DP,
+            n64.cpu.mmu.regs[MmuRegister::Count as usize] + timer,
+            rdp_interrupt_event,
+        )
     }
 }
 
@@ -130,7 +138,7 @@ pub fn read_regs_dps(n64: &mut N64, address: u64, _access_size: memory::AccessSi
     n64.rdp.regs_dps[((address & 0xFFFF) >> 2) as usize]
 }
 
-pub fn write_regs_dps(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_regs_dps(n64: &mut N64, address: u64, value: u32, mask: u32) {
     memory::masked_write_32(
         &mut n64.rdp.regs_dps[((address & 0xFFFF) >> 2) as usize],
         value,
@@ -140,12 +148,15 @@ pub fn write_regs_dps(n64: &mut N64,address: u64, value: u32, mask: u32) {
 
 macro_rules! update_status {
     ($write_status:expr, $status:expr, $clr_flag:ident, $set_flag:ident, $status_flag:ident) => {
-        if $write_status.contains(DpcStatusWrite::$clr_flag) { $status.remove(DpcStatus::$status_flag); }
-        if $write_status.contains(DpcStatusWrite::$set_flag) { $status.insert(DpcStatus::$status_flag); }
+        if $write_status.contains(DpcStatusWrite::$clr_flag) {
+            $status.remove(DpcStatus::$status_flag);
+        }
+        if $write_status.contains(DpcStatusWrite::$set_flag) {
+            $status.insert(DpcStatus::$status_flag);
+        }
     };
     ($write_status:expr, $status:expr, $clr_flag:ident, $status_flag:ident, $n64:expr, $reg:ident) => {
-        if $write_status.contains(DpcStatusWrite::$clr_flag) {
-        }
+        if $write_status.contains(DpcStatusWrite::$clr_flag) {}
     };
 }
 
@@ -153,7 +164,13 @@ fn update_dpc_status(n64: &mut N64, w: u32) {
     let mut status = DpcStatus::from_bits_truncate(n64.rdp.regs_dpc[DpcReg::Status as usize]);
     let write_status = DpcStatusWrite::from_bits_truncate(w);
 
-    update_status!(write_status, status, CLR_XBUS_DMEM_DMA, SET_XBUS_DMEM_DMA, XBUS_DMEM_DMA);
+    update_status!(
+        write_status,
+        status,
+        CLR_XBUS_DMEM_DMA,
+        SET_XBUS_DMEM_DMA,
+        XBUS_DMEM_DMA
+    );
     update_status!(write_status, status, CLR_FREEZE, SET_FREEZE, FREEZE);
     update_status!(write_status, status, CLR_FLUSH, SET_FLUSH, FLUSH);
 

@@ -44,37 +44,37 @@ fn format_memory(memory: &mut Vec<u8>, size: usize) {
     }
 }
 
-fn dma_read_sram(
-    n64: &mut N64,
-    mut cart_addr: u32,
-    mut dram_addr: u32,
-    length: u32,
-) {
+fn dma_read_sram(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length: u32) {
     dram_addr &= RDRAM_MASK as u32;
     cart_addr &= SRAM_MASK as u32;
 
     format_memory(&mut n64.ui.save_data.data.sram.0, SRAM_SIZE);
 
     for i in 0..length {
-        n64.ui.save_data.data.sram.0[(cart_addr + i) as usize] = n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap];
+        n64.ui.save_data.data.sram.0[(cart_addr + i) as usize] =
+            n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap];
     }
 
     n64.ui.save_data.data.sram.1 = true;
 }
 
-fn dma_read_flash(n64: &mut N64,cart_addr: u32, dram_addr: u32, length: u32) {
+fn dma_read_flash(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) {
     format_memory(&mut n64.ui.save_data.data.flash.0, FLASHRAM_SIZE);
 
-    if (cart_addr & 0x1ffff) == 0x00000 && length == 128 && n64.flashram.mode == FlashramMode::PageProgram {
+    if (cart_addr & 0x1ffff) == 0x00000
+        && length == 128
+        && n64.flashram.mode == FlashramMode::PageProgram
+    {
         for i in 0..length {
-            n64.flashram.page_buf[i as usize] = n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap];
+            n64.flashram.page_buf[i as usize] =
+                n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap];
         }
     } else {
         panic!("unknown flash dma read");
     }
 }
 
-pub fn dma_read(n64: &mut N64,cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
+pub fn dma_read(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
     if n64.ui.save_data.save_type.contains(&SaveTypes::Sram) {
         dma_read_sram(n64, cart_addr, dram_addr, length)
     } else {
@@ -90,11 +90,12 @@ fn dma_write_sram(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length:
     format_memory(&mut n64.ui.save_data.data.sram.0, SRAM_SIZE);
 
     for i in 0..length {
-        n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap] = n64.ui.save_data.data.sram.0[(cart_addr + i) as usize];
+        n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap] =
+            n64.ui.save_data.data.sram.0[(cart_addr + i) as usize];
     }
 }
 
-fn dma_write_flash(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length: u32,) {
+fn dma_write_flash(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length: u32) {
     dram_addr &= RDRAM_MASK as u32;
 
     match (cart_addr & 0x1ffff, length, n64.flashram.mode.clone()) {
@@ -118,7 +119,7 @@ fn dma_write_flash(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length
     }
 }
 
-pub fn dma_write(n64: &mut N64,cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
+pub fn dma_write(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
     if n64.ui.save_data.save_type.contains(&SaveTypes::Sram) {
         dma_write_sram(n64, cart_addr, dram_addr, length)
     } else {

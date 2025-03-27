@@ -5,15 +5,13 @@ use crate::fpu::Fpu;
 use crate::rcp::Rcp;
 use crate::{cache, events, exceptions, tlb};
 
-use crate::mmu::{ MMU_INSTRUCTIONS, MMU_SECONDARY_INSTRUCTIONS, write_mmu_registers, Mmu};
+use crate::mmu::{MMU_INSTRUCTIONS, MMU_SECONDARY_INSTRUCTIONS, write_mmu_registers, Mmu};
 use crate::{mmu, fpu};
 
 use super::mmu::{add_cycles, MmuRegister};
 use super::events::EventType;
 use super::{rcp, memory, N64};
 use crate::cpu;
-
-
 
 #[derive(Default, PartialEq)]
 pub enum State {
@@ -109,56 +107,148 @@ impl Default for Cpu {
             next_event_count: u64::MAX,
             next_event: 0,
         };
-        
+
         info!("CPU has Initialised");
 
         cpu
-        
     }
 }
 
-pub fn decode_opcode(n64: &N64, opcode: u32) -> fn(&mut N64,u32) {
+pub fn decode_opcode(n64: &N64, opcode: u32) -> fn(&mut N64, u32) {
     match opcode >> 26 {
         0 => n64.cpu.special_instrs[(opcode & 0x3F) as usize],
         1 => n64.cpu.regimm_instrs[((opcode >> 16) & 0x1F) as usize],
-        16..=18 => [&n64.cpu.mmu.instrs, &n64.cpu.fpu.instrs, &n64.cpu.rcp.instrs]
-            [(opcode >> 26) as usize - 16][((opcode >> 21) & 0x1F) as usize],
+        16..=18 => [
+            &n64.cpu.mmu.instrs,
+            &n64.cpu.fpu.instrs,
+            &n64.cpu.rcp.instrs,
+        ][(opcode >> 26) as usize - 16][((opcode >> 21) & 0x1F) as usize],
         _ => n64.cpu.instrs[(opcode >> 26) as usize],
     }
 }
 type InstrFn = for<'a> fn(&'a mut N64, u32);
 
 const MAIN_OPS: [(usize, InstrFn); 48] = [
-    (2, j), (3, jal), (4, beq), (5, bne), (6, blez), (7, bgtz),
-    (8, addi), (9, addiu), (10, slti), (11, sltiu), (12, andi),
-    (13, ori), (14, xori), (15, lui), (20, beql), (21, bnel),
-    (22, blezl), (23, bgtzl), (24, daddi), (25, daddiu),
-    (26, ldl), (27, ldr), (32, lb), (33, lh), (34, lwl),
-    (35, lw), (36, lbu), (37, lhu), (38, lwr), (39, lwu),
-    (40, sb), (41, sh), (42, swl), (43, sw), (44, sdl),
-    (45, sdr), (46, swr), (47, cache), (48, ll), (49, fpu::lwc1),
-    (52, lld), (53, fpu::ldc1), (55, ld), (56, sc),
-    (57, fpu::swc1), (60, scd), (61, fpu::sdc1), (63, sd)
+    (2, j),
+    (3, jal),
+    (4, beq),
+    (5, bne),
+    (6, blez),
+    (7, bgtz),
+    (8, addi),
+    (9, addiu),
+    (10, slti),
+    (11, sltiu),
+    (12, andi),
+    (13, ori),
+    (14, xori),
+    (15, lui),
+    (20, beql),
+    (21, bnel),
+    (22, blezl),
+    (23, bgtzl),
+    (24, daddi),
+    (25, daddiu),
+    (26, ldl),
+    (27, ldr),
+    (32, lb),
+    (33, lh),
+    (34, lwl),
+    (35, lw),
+    (36, lbu),
+    (37, lhu),
+    (38, lwr),
+    (39, lwu),
+    (40, sb),
+    (41, sh),
+    (42, swl),
+    (43, sw),
+    (44, sdl),
+    (45, sdr),
+    (46, swr),
+    (47, cache),
+    (48, ll),
+    (49, fpu::lwc1),
+    (52, lld),
+    (53, fpu::ldc1),
+    (55, ld),
+    (56, sc),
+    (57, fpu::swc1),
+    (60, scd),
+    (61, fpu::sdc1),
+    (63, sd),
 ];
 
 const SPECIAL_OPS: [(usize, InstrFn); 52] = [
-    (0, sll), (2, srl), (3, sra), (4, sllv), (6, srlv), (7, srav),
-    (8, jr), (9, jalr), (12, mmu::syscall), (13, mmu::break_),
-    (15, sync), (16, mfhi), (17, mthi), (18, mflo), (19, mtlo),
-    (20, dsllv), (22, dsrlv), (23, dsrav), (24, mult), (25, multu),
-    (26, div), (27, divu), (28, dmult), (29, dmultu), (30, ddiv),
-    (31, ddivu), (32, add), (33, addu), (34, sub), (35, subu),
-    (36, and), (37, or), (38, xor), (39, nor), (42, slt),
-    (43, sltu), (44, dadd), (45, daddu), (46, dsub), (47, dsubu),
-    (48, tge), (49, tgeu), (50, tlt), (51, tltu), (52, teq),
-    (54, tne), (56, dsll), (58, dsrl), (59, dsra), (60, dsll32),
-    (62, dsrl32), (63, dsra32)
+    (0, sll),
+    (2, srl),
+    (3, sra),
+    (4, sllv),
+    (6, srlv),
+    (7, srav),
+    (8, jr),
+    (9, jalr),
+    (12, mmu::syscall),
+    (13, mmu::break_),
+    (15, sync),
+    (16, mfhi),
+    (17, mthi),
+    (18, mflo),
+    (19, mtlo),
+    (20, dsllv),
+    (22, dsrlv),
+    (23, dsrav),
+    (24, mult),
+    (25, multu),
+    (26, div),
+    (27, divu),
+    (28, dmult),
+    (29, dmultu),
+    (30, ddiv),
+    (31, ddivu),
+    (32, add),
+    (33, addu),
+    (34, sub),
+    (35, subu),
+    (36, and),
+    (37, or),
+    (38, xor),
+    (39, nor),
+    (42, slt),
+    (43, sltu),
+    (44, dadd),
+    (45, daddu),
+    (46, dsub),
+    (47, dsubu),
+    (48, tge),
+    (49, tgeu),
+    (50, tlt),
+    (51, tltu),
+    (52, teq),
+    (54, tne),
+    (56, dsll),
+    (58, dsrl),
+    (59, dsra),
+    (60, dsll32),
+    (62, dsrl32),
+    (63, dsra32),
 ];
 
 const REGIMM_OPS: [(usize, InstrFn); 14] = [
-    (0, bltz), (1, bgez), (2, bltzl), (3, bgezl), (8, tgei),
-    (9, tgeiu), (10, tlti), (11, tltiu), (12, teqi), (14, tnei),
-    (16, bltzal), (17, bgezal), (18, bltzall), (19, bgezall)
+    (0, bltz),
+    (1, bgez),
+    (2, bltzl),
+    (3, bgezl),
+    (8, tgei),
+    (9, tgeiu),
+    (10, tlti),
+    (11, tltiu),
+    (12, teqi),
+    (14, tnei),
+    (16, bltzal),
+    (17, bgezal),
+    (18, bltzall),
+    (19, bgezall),
 ];
 
 pub fn start_cpu(n64: &mut N64) {
@@ -168,26 +258,31 @@ pub fn start_cpu(n64: &mut N64) {
     n64.cpu.instrs = {
         let reserved_fn: InstrFn = mmu::reserved as fn(&mut N64, u32);
         let mut arr = [reserved_fn; 64];
-        for &(i, f) in MAIN_OPS.iter() { arr[i] = f; }
+        for &(i, f) in MAIN_OPS.iter() {
+            arr[i] = f;
+        }
         arr
     };
     info!("CPU instructions initialized");
-    
 
     info!("Initializing CPU special instructions...");
     n64.cpu.special_instrs = {
-        let reserved_fn: InstrFn = mmu::reserved as fn(&mut N64,u32);
+        let reserved_fn: InstrFn = mmu::reserved as fn(&mut N64, u32);
         let mut arr = [reserved_fn; 64];
-        for &(i, f) in SPECIAL_OPS.iter() { arr[i] = f; }
+        for &(i, f) in SPECIAL_OPS.iter() {
+            arr[i] = f;
+        }
         arr
     };
     info!("CPU special instructions initialized");
 
     info!("Initializing CPU regimm instructions...");
     n64.cpu.regimm_instrs = {
-        let reserved_fn: InstrFn = mmu::reserved as fn(&mut N64,u32);
+        let reserved_fn: InstrFn = mmu::reserved as fn(&mut N64, u32);
         let mut arr = [reserved_fn; 32];
-        for &(i, f) in REGIMM_OPS.iter() { arr[i] = f; }
+        for &(i, f) in REGIMM_OPS.iter() {
+            arr[i] = f;
+        }
         arr
     };
     info!("CPU regimm instructions initialized");
@@ -195,21 +290,27 @@ pub fn start_cpu(n64: &mut N64) {
     write_mmu_registers(n64);
 }
 
-pub fn in_delay_slot(n64: &N64) -> bool { matches!(n64.cpu.branch_state.state, State::DelaySlotTaken | State::DelaySlotNotTaken) }
-fn in_delay_slot_taken(n64: &N64) -> bool { matches!(n64.cpu.branch_state.state, State::DelaySlotTaken) }
+pub fn in_delay_slot(n64: &N64) -> bool {
+    matches!(
+        n64.cpu.branch_state.state,
+        State::DelaySlotTaken | State::DelaySlotNotTaken
+    )
+}
+fn in_delay_slot_taken(n64: &N64) -> bool {
+    matches!(n64.cpu.branch_state.state, State::DelaySlotTaken)
+}
 
 pub fn run(n64: &mut N64) {
     n64.cpu.running = 1;
     while n64.cpu.running == 1 {
         n64.cpu.gpr[0] = 0; // gpr 0 is read only
         let (cached, err);
-        (n64.cpu.pc_phys, cached, err) = memory::translate_address(
-            n64,
-            n64.cpu.pc,
-            memory::AccessType::Read,
-        );
+        (n64.cpu.pc_phys, cached, err) =
+            memory::translate_address(n64, n64.cpu.pc, memory::AccessType::Read);
 
-        if err { continue; } // TLB exception}
+        if err {
+            continue;
+        } // TLB exception}
 
         if cached {
             cache::icache_fetch(n64, n64.cpu.pc_phys)
@@ -228,13 +329,12 @@ pub fn run(n64: &mut N64) {
             State::Exception => (),
             _ => n64.cpu.pc += 4,
         }
-        
+
         n64.cpu.branch_state.state = match n64.cpu.branch_state.state {
             State::Take => State::DelaySlotTaken,
             State::NotTaken => State::DelaySlotNotTaken,
             _ => State::Step,
         };
-
 
         add_cycles(n64, 1);
 
@@ -244,19 +344,43 @@ pub fn run(n64: &mut N64) {
     }
 }
 
-pub fn rd(opcode: u32) -> u32 { (opcode >> 11) & 0x1F }
-pub fn rs(opcode: u32) -> u32 { (opcode >> 21) & 0x1F }
-pub fn rt(opcode: u32) -> u32 { (opcode >> 16) & 0x1F }
-fn sa(opcode: u32) -> u32 { (opcode >> 6) & 0x1F }
-pub fn imm(opcode: u32) -> u16 { opcode as u16 }
-pub fn se32(value: i32) -> u64 { value as i64 as u64 }
-pub fn se16(value: i16) -> u64 { value as i64 as u64 }
-fn se8(value: i8) -> u64 { value as i64 as u64 }
+pub fn rd(opcode: u32) -> u32 {
+    (opcode >> 11) & 0x1F
+}
+pub fn rs(opcode: u32) -> u32 {
+    (opcode >> 21) & 0x1F
+}
+pub fn rt(opcode: u32) -> u32 {
+    (opcode >> 16) & 0x1F
+}
+fn sa(opcode: u32) -> u32 {
+    (opcode >> 6) & 0x1F
+}
+pub fn imm(opcode: u32) -> u16 {
+    opcode as u16
+}
+pub fn se32(value: i32) -> u64 {
+    value as i64 as u64
+}
+pub fn se16(value: i16) -> u64 {
+    value as i64 as u64
+}
+fn se8(value: i8) -> u64 {
+    value as i64 as u64
+}
 
-fn bshift<T: Into<u64>>(address: T) -> u64 { ((address.into() & 3) ^ 3) << 3 }
-fn hshift<T: Into<u64>>(address: T) -> u64 { ((address.into() & 2) ^ 2) << 3 }
-fn bits_below_mask<T: Into<u64>>(x: T) -> u64 { (1 << x.into()) - 1 }
-fn bits_above_mask<T: Into<u64>>(x: T) -> u64 { !bits_below_mask(x) }
+fn bshift<T: Into<u64>>(address: T) -> u64 {
+    ((address.into() & 3) ^ 3) << 3
+}
+fn hshift<T: Into<u64>>(address: T) -> u64 {
+    ((address.into() & 2) ^ 2) << 3
+}
+fn bits_below_mask<T: Into<u64>>(x: T) -> u64 {
+    (1 << x.into()) - 1
+}
+fn bits_above_mask<T: Into<u64>>(x: T) -> u64 {
+    !bits_below_mask(x)
+}
 
 #[macro_export]
 macro_rules! check_idle_loop {
@@ -273,10 +397,17 @@ macro_rules! check_idle_loop {
     };
 }
 
-pub fn check_relative_idle_loop(n64: &mut N64,opcode: u32) { check_idle_loop!(n64, imm(opcode) as i16 == -1); }
-fn check_absolute_idle_loop(n64: &mut N64,opcode: u32) { check_idle_loop!(n64, (opcode & 0x3FFFFFF) as u64 == (n64.cpu.pc_phys & 0x0FFFFFFF) >> 2); }
+pub fn check_relative_idle_loop(n64: &mut N64, opcode: u32) {
+    check_idle_loop!(n64, imm(opcode) as i16 == -1);
+}
+fn check_absolute_idle_loop(n64: &mut N64, opcode: u32) {
+    check_idle_loop!(
+        n64,
+        (opcode & 0x3FFFFFF) as u64 == (n64.cpu.pc_phys & 0x0FFFFFFF) >> 2
+    );
+}
 
-fn j(n64: &mut N64,opcode: u32) {
+fn j(n64: &mut N64, opcode: u32) {
     if cpu::in_delay_slot_taken(n64) {
         return;
     }
@@ -286,7 +417,7 @@ fn j(n64: &mut N64,opcode: u32) {
         (n64.cpu.pc + 4) & 0xFFFFFFFFF0000000 | ((opcode & 0x3FFFFFF) << 2) as u64
 }
 
-fn jal(n64: &mut N64,opcode: u32) {
+fn jal(n64: &mut N64, opcode: u32) {
     if cpu::in_delay_slot_taken(n64) {
         n64.cpu.gpr[31] = n64.cpu.branch_state.pc + 4
     } else {
@@ -304,11 +435,12 @@ fn jal(n64: &mut N64,opcode: u32) {
 
 macro_rules! branch_instruction {
     ($name:ident, $condition:expr) => {
-        fn $name(n64: &mut N64,opcode: u32) {
+        fn $name(n64: &mut N64, opcode: u32) {
             if $condition(n64, opcode) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc =
+                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
             } else {
                 n64.cpu.branch_state.state = State::NotTaken;
             }
@@ -316,34 +448,50 @@ macro_rules! branch_instruction {
     };
 }
 
-branch_instruction!(beq, |n64: &mut N64,opcode| n64.cpu.gpr[rs(opcode) as usize] == n64.cpu.gpr[rt(opcode) as usize]);
-branch_instruction!(bne, |n64: &mut N64,opcode| n64.cpu.gpr[rs(opcode) as usize] != n64.cpu.gpr[rt(opcode) as usize]);
-branch_instruction!(blez, |n64: &mut N64,opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 <= 0); 
-branch_instruction!(bgtz, |n64: &mut N64,opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 > 0);
-
+branch_instruction!(beq, |n64: &mut N64, opcode| n64.cpu.gpr
+    [rs(opcode) as usize]
+    == n64.cpu.gpr[rt(opcode) as usize]);
+branch_instruction!(bne, |n64: &mut N64, opcode| n64.cpu.gpr
+    [rs(opcode) as usize]
+    != n64.cpu.gpr[rt(opcode) as usize]);
+branch_instruction!(
+    blez,
+    |n64: &mut N64, opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 <= 0
+);
+branch_instruction!(
+    bgtz,
+    |n64: &mut N64, opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 > 0
+);
 
 macro_rules! impl_immediate_op {
     ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64,opcode: u32) {
-            n64.cpu.gpr[rt(opcode) as usize] = $op(
-                n64.cpu.gpr[rs(opcode) as usize],
-                imm(opcode)
-            );
+        fn $name(n64: &mut N64, opcode: u32) {
+            n64.cpu.gpr[rt(opcode) as usize] = $op(n64.cpu.gpr[rs(opcode) as usize], imm(opcode));
         }
     };
 }
 
-impl_immediate_op!(addi, |rs, imm| se32(rs as i32).wrapping_add(se16(imm as i16)));
-impl_immediate_op!(addiu, |rs, imm| se32(rs as i32).wrapping_add(se16(imm as i16)));
+impl_immediate_op!(addi, |rs, imm| se32(rs as i32)
+    .wrapping_add(se16(imm as i16)));
+impl_immediate_op!(addiu, |rs, imm| se32(rs as i32)
+    .wrapping_add(se16(imm as i16)));
 impl_immediate_op!(slti, |rs, imm| ((rs as i64) < (imm as i16 as i64)) as u64);
 impl_immediate_op!(sltiu, |rs, imm| (rs < se16(imm as i16)) as u64);
 
-fn andi(n64: &mut N64,opcode: u32) { n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] & imm(opcode) as u64 }
-fn ori(n64: &mut N64,opcode: u32) { n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] | imm(opcode) as u64 }
-fn xori(n64: &mut N64,opcode: u32) { n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] ^ imm(opcode) as u64 }
-fn lui(n64: &mut N64,opcode: u32) { n64.cpu.gpr[rt(opcode) as usize] = se32(((imm(opcode) as u32) << 16) as i32) }
+fn andi(n64: &mut N64, opcode: u32) {
+    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] & imm(opcode) as u64
+}
+fn ori(n64: &mut N64, opcode: u32) {
+    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] | imm(opcode) as u64
+}
+fn xori(n64: &mut N64, opcode: u32) {
+    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] ^ imm(opcode) as u64
+}
+fn lui(n64: &mut N64, opcode: u32) {
+    n64.cpu.gpr[rt(opcode) as usize] = se32(((imm(opcode) as u32) << 16) as i32)
+}
 
-fn beql(n64: &mut N64,opcode: u32) {
+fn beql(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rs(opcode) as usize] == n64.cpu.gpr[rt(opcode) as usize] {
         check_relative_idle_loop(n64, opcode);
         n64.cpu.branch_state.state = State::Take;
@@ -353,7 +501,7 @@ fn beql(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn bnel(n64: &mut N64,opcode: u32) {
+fn bnel(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rs(opcode) as usize] != n64.cpu.gpr[rt(opcode) as usize] {
         check_relative_idle_loop(n64, opcode);
         n64.cpu.branch_state.state = State::Take;
@@ -363,7 +511,7 @@ fn bnel(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn blezl(n64: &mut N64,opcode: u32) {
+fn blezl(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rs(opcode) as usize] as i64 <= 0 {
         check_relative_idle_loop(n64, opcode);
         n64.cpu.branch_state.state = State::Take;
@@ -373,7 +521,7 @@ fn blezl(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn bgtzl(n64: &mut N64,opcode: u32) {
+fn bgtzl(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rs(opcode) as usize] as i64 > 0 {
         check_relative_idle_loop(n64, opcode);
         n64.cpu.branch_state.state = State::Take;
@@ -383,17 +531,17 @@ fn bgtzl(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn daddi(n64: &mut N64,opcode: u32) {
+fn daddi(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rt(opcode) as usize] =
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16))
 }
 
-fn daddiu(n64: &mut N64,opcode: u32) {
+fn daddiu(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rt(opcode) as usize] =
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16))
 }
 
-fn ldl(n64: &mut N64,opcode: u32) {
+fn ldl(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 7;
     let shift = 8 * n;
@@ -408,23 +556,13 @@ fn ldl(n64: &mut N64,opcode: u32) {
     phys_address &= !7;
 
     let mut w = [0; 2];
-    w[0] = memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Dword,
-        cached,
-    );
-    w[1] = memory::read_data(
-        n64,
-        phys_address + 4,
-        memory::AccessSize::Dword,
-        cached,
-    );
+    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
+    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
     n64.cpu.gpr[rt(opcode) as usize] = (n64.cpu.gpr[rt(opcode) as usize] & mask)
         | (((((w[0]) as u64) << 32) | (w[1]) as u64) << shift)
 }
 
-fn ldr(n64: &mut N64,opcode: u32) {
+fn ldr(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 7;
     let shift = 8 * (7 - n);
@@ -443,23 +581,13 @@ fn ldr(n64: &mut N64,opcode: u32) {
     phys_address &= !7;
 
     let mut w = [0; 2];
-    w[0] = memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Dword,
-        cached,
-    );
-    w[1] = memory::read_data(
-        n64,
-        phys_address + 4,
-        memory::AccessSize::Dword,
-        cached,
-    );
+    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
+    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
     n64.cpu.gpr[rt(opcode) as usize] = (n64.cpu.gpr[rt(opcode) as usize] & mask)
         | (((((w[0]) as u64) << 32) | (w[1]) as u64) >> shift)
 }
 
-fn lb(n64: &mut N64,opcode: u32) {
+fn lb(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -470,15 +598,14 @@ fn lb(n64: &mut N64,opcode: u32) {
     }
 
     let shift = bshift(phys_address);
-    n64.cpu.gpr[rt(opcode) as usize] = se8((memory::read_data(
-        n64,
-        phys_address & !0x3,
-        memory::AccessSize::Word,
-        cached,
-    ) >> shift) as u8 as i8)
+    n64.cpu.gpr[rt(opcode) as usize] =
+        se8(
+            (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
+                as u8 as i8,
+        )
 }
 
-fn lh(n64: &mut N64,opcode: u32) {
+fn lh(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -490,16 +617,12 @@ fn lh(n64: &mut N64,opcode: u32) {
 
     let shift = hshift(phys_address);
     n64.cpu.gpr[rt(opcode) as usize] = se16(
-        (memory::read_data(
-            n64,
-            phys_address & !0x3,
-            memory::AccessSize::Word,
-            cached,
-        ) >> shift) as u16 as i16,
+        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
+            as u16 as i16,
     )
 }
 
-fn lwl(n64: &mut N64,opcode: u32) {
+fn lwl(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 3;
     let shift = 8 * n;
@@ -515,16 +638,12 @@ fn lwl(n64: &mut N64,opcode: u32) {
 
     n64.cpu.gpr[rt(opcode) as usize] = se32(
         ((n64.cpu.gpr[rt(opcode) as usize] as u32) & mask
-            | memory::read_data(
-                n64,
-                phys_address,
-                memory::AccessSize::Word,
-                cached,
-            ) << shift) as i32,
+            | memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) << shift)
+            as i32,
     )
 }
 
-fn lw(n64: &mut N64,opcode: u32) {
+fn lw(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -534,15 +653,11 @@ fn lw(n64: &mut N64,opcode: u32) {
         return;
     }
 
-    n64.cpu.gpr[rt(opcode) as usize] = se32(memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Word,
-        cached,
-    ) as i32)
+    n64.cpu.gpr[rt(opcode) as usize] =
+        se32(memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as i32)
 }
 
-fn lbu(n64: &mut N64,opcode: u32) {
+fn lbu(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -553,15 +668,12 @@ fn lbu(n64: &mut N64,opcode: u32) {
     }
 
     let shift = bshift(phys_address);
-    n64.cpu.gpr[rt(opcode) as usize] = (memory::read_data(
-        n64,
-        phys_address & !0x3,
-        memory::AccessSize::Word,
-        cached,
-    ) >> shift) as u8 as u64
+    n64.cpu.gpr[rt(opcode) as usize] =
+        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
+            as u8 as u64
 }
 
-fn lhu(n64: &mut N64,opcode: u32) {
+fn lhu(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -572,15 +684,12 @@ fn lhu(n64: &mut N64,opcode: u32) {
     }
 
     let shift = hshift(phys_address);
-    n64.cpu.gpr[rt(opcode) as usize] = (memory::read_data(
-        n64,
-        phys_address & !0x3,
-        memory::AccessSize::Word,
-        cached,
-    ) >> shift) as u16 as u64
+    n64.cpu.gpr[rt(opcode) as usize] =
+        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
+            as u16 as u64
 }
 
-fn lwr(n64: &mut N64,opcode: u32) {
+fn lwr(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 3;
     let shift = 8 * (3 - n);
@@ -600,16 +709,12 @@ fn lwr(n64: &mut N64,opcode: u32) {
 
     n64.cpu.gpr[rt(opcode) as usize] = se32(
         ((n64.cpu.gpr[rt(opcode) as usize] as u32) & (mask as u32)
-            | memory::read_data(
-                n64,
-                phys_address,
-                memory::AccessSize::Word,
-                cached,
-            ) >> shift) as i32,
+            | memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) >> shift)
+            as i32,
     )
 }
 
-fn lwu(n64: &mut N64,opcode: u32) {
+fn lwu(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -619,15 +724,11 @@ fn lwu(n64: &mut N64,opcode: u32) {
         return;
     }
 
-    n64.cpu.gpr[rt(opcode) as usize] = memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Word,
-        cached,
-    ) as u64
+    n64.cpu.gpr[rt(opcode) as usize] =
+        memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as u64
 }
 
-fn sb(n64: &mut N64,opcode: u32) {
+fn sb(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -648,7 +749,7 @@ fn sb(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn sh(n64: &mut N64,opcode: u32) {
+fn sh(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -669,7 +770,7 @@ fn sh(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn swl(n64: &mut N64,opcode: u32) {
+fn swl(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 3;
     let shift = 8 * n;
@@ -696,7 +797,7 @@ fn swl(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn sw(n64: &mut N64,opcode: u32) {
+fn sw(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -715,7 +816,7 @@ fn sw(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn sdl(n64: &mut N64,opcode: u32) {
+fn sdl(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 7;
     let shift = 8 * n;
@@ -744,7 +845,7 @@ fn sdl(n64: &mut N64,opcode: u32) {
     memory::write_data(n64, phys_address + 4, value as u32, mask as u32, cached)
 }
 
-fn sdr(n64: &mut N64,opcode: u32) {
+fn sdr(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 7;
     let shift = 8 * (7 - n);
@@ -769,7 +870,7 @@ fn sdr(n64: &mut N64,opcode: u32) {
     memory::write_data(n64, phys_address + 4, value as u32, mask as u32, cached)
 }
 
-fn swr(n64: &mut N64,opcode: u32) {
+fn swr(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
     let n = addr & 3;
     let shift = 8 * (3 - n);
@@ -792,7 +893,7 @@ fn swr(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn cache(n64: &mut N64,opcode: u32) {
+fn cache(n64: &mut N64, opcode: u32) {
     let (phys_address, _, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -820,11 +921,7 @@ fn cache(n64: &mut N64,opcode: u32) {
                 valid << 7,
                 0x80,
             );
-            memory::masked_write_64(
-                &mut n64.cpu.mmu.regs[MmuRegister::TagLo as usize],
-                0,
-                0x40,
-            );
+            memory::masked_write_64(&mut n64.cpu.mmu.regs[MmuRegister::TagLo as usize], 0, 0x40);
             memory::masked_write_64(
                 &mut n64.cpu.mmu.regs[MmuRegister::TagLo as usize],
                 (n64.memory.icache[icache_line].tag >> 4) as u64,
@@ -836,8 +933,7 @@ fn cache(n64: &mut N64,opcode: u32) {
             n64.memory.icache[icache_line].valid =
                 (n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0x80) >> 7 != 0;
             n64.memory.icache[icache_line].tag =
-                ((n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0xFFFFF00) << 4)
-                    as u32
+                ((n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0xFFFFF00) << 4) as u32
         }
         0x10 => {
             //icache hit invalidate
@@ -895,8 +991,7 @@ fn cache(n64: &mut N64,opcode: u32) {
             n64.memory.dcache[dcache_line].dirty =
                 (n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0x40) >> 6 != 0;
             n64.memory.dcache[dcache_line].tag =
-                ((n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0xFFFFF00) << 4)
-                    as u32
+                ((n64.cpu.mmu.regs[MmuRegister::TagLo as usize] & 0xFFFFF00) << 4) as u32
         }
         0x0D => {
             //dcache create dirty exclusive
@@ -939,7 +1034,7 @@ fn cache(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn ll(n64: &mut N64,opcode: u32) {
+fn ll(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -949,17 +1044,13 @@ fn ll(n64: &mut N64,opcode: u32) {
         return;
     }
 
-    n64.cpu.gpr[rt(opcode) as usize] = se32(memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Word,
-        cached,
-    ) as i32);
+    n64.cpu.gpr[rt(opcode) as usize] =
+        se32(memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as i32);
     n64.cpu.llbit = true;
     n64.cpu.mmu.regs[MmuRegister::LLAddr as usize] = phys_address >> 4
 }
 
-fn lld(n64: &mut N64,opcode: u32) {
+fn lld(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -970,25 +1061,15 @@ fn lld(n64: &mut N64,opcode: u32) {
     }
 
     let mut w = [0; 2];
-    w[0] = memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Dword,
-        cached,
-    );
-    w[1] = memory::read_data(
-        n64,
-        phys_address + 4,
-        memory::AccessSize::Dword,
-        cached,
-    );
+    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
+    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
     n64.cpu.gpr[rt(opcode) as usize] = ((w[0] as u64) << 32) | (w[1]) as u64;
 
     n64.cpu.llbit = true;
     n64.cpu.mmu.regs[MmuRegister::LLAddr as usize] = phys_address >> 4
 }
 
-fn ld(n64: &mut N64,opcode: u32) {
+fn ld(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -999,22 +1080,12 @@ fn ld(n64: &mut N64,opcode: u32) {
     }
 
     let mut w = [0; 2];
-    w[0] = memory::read_data(
-        n64,
-        phys_address,
-        memory::AccessSize::Dword,
-        cached,
-    );
-    w[1] = memory::read_data(
-        n64,
-        phys_address + 4,
-        memory::AccessSize::Dword,
-        cached,
-    );
+    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
+    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
     n64.cpu.gpr[rt(opcode) as usize] = ((w[0] as u64) << 32) | (w[1]) as u64
 }
 
-fn sc(n64: &mut N64,opcode: u32) {
+fn sc(n64: &mut N64, opcode: u32) {
     if n64.cpu.llbit {
         let (phys_address, cached, err) = memory::translate_address(
             n64,
@@ -1039,7 +1110,7 @@ fn sc(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn scd(n64: &mut N64,opcode: u32) {
+fn scd(n64: &mut N64, opcode: u32) {
     if n64.cpu.llbit {
         let (phys_address, cached, err) = memory::translate_address(
             n64,
@@ -1071,7 +1142,7 @@ fn scd(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn sd(n64: &mut N64,opcode: u32) {
+fn sd(n64: &mut N64, opcode: u32) {
     let (phys_address, cached, err) = memory::translate_address(
         n64,
         n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
@@ -1097,43 +1168,43 @@ fn sd(n64: &mut N64,opcode: u32) {
     )
 }
 
-fn sll(n64: &mut N64,opcode: u32) {
+fn sll(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         se32(((n64.cpu.gpr[rt(opcode) as usize] as u32) << sa(opcode)) as i32)
 }
 
-fn srl(n64: &mut N64,opcode: u32) {
+fn srl(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         se32(((n64.cpu.gpr[rt(opcode) as usize] as u32) >> sa(opcode)) as i32)
 }
 
-fn sra(n64: &mut N64,opcode: u32) {
+fn sra(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         se32(((n64.cpu.gpr[rt(opcode) as usize] as i64) >> sa(opcode)) as i32)
 }
 
-fn sllv(n64: &mut N64,opcode: u32) {
+fn sllv(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = se32(
         ((n64.cpu.gpr[rt(opcode) as usize] as u32)
             << (n64.cpu.gpr[rs(opcode) as usize] as u32 & 31)) as i32,
     )
 }
 
-fn srlv(n64: &mut N64,opcode: u32) {
+fn srlv(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = se32(
         ((n64.cpu.gpr[rt(opcode) as usize] as u32)
             >> (n64.cpu.gpr[rs(opcode) as usize] as u32 & 31)) as i32,
     )
 }
 
-fn srav(n64: &mut N64,opcode: u32) {
+fn srav(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = se32(
         ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> (n64.cpu.gpr[rs(opcode) as usize] & 31))
             as i32,
     )
 }
 
-fn jr(n64: &mut N64,opcode: u32) {
+fn jr(n64: &mut N64, opcode: u32) {
     if !cpu::in_delay_slot_taken(n64) {
         check_relative_idle_loop(n64, opcode);
         n64.cpu.branch_state.state = State::Take;
@@ -1143,7 +1214,7 @@ fn jr(n64: &mut N64,opcode: u32) {
     }
 }
 
-fn jalr(n64: &mut N64,opcode: u32) {
+fn jalr(n64: &mut N64, opcode: u32) {
     let in_delay_slot_taken = cpu::in_delay_slot_taken(n64);
 
     if !in_delay_slot_taken {
@@ -1163,39 +1234,38 @@ fn jalr(n64: &mut N64,opcode: u32) {
 
 fn sync(_device: &mut N64, _opcode: u32) {}
 
-fn mfhi(n64: &mut N64,opcode: u32) {
+fn mfhi(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.hi
 }
 
-fn mthi(n64: &mut N64,opcode: u32) {
+fn mthi(n64: &mut N64, opcode: u32) {
     n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize]
 }
 
-fn mflo(n64: &mut N64,opcode: u32) {
+fn mflo(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.lo
 }
 
-fn mtlo(n64: &mut N64,opcode: u32) {
+fn mtlo(n64: &mut N64, opcode: u32) {
     n64.cpu.lo = n64.cpu.gpr[rs(opcode) as usize]
 }
 
-fn dsllv(n64: &mut N64,opcode: u32) {
+fn dsllv(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         n64.cpu.gpr[rt(opcode) as usize] << (n64.cpu.gpr[rs(opcode) as usize] & 63)
 }
 
-fn dsrlv(n64: &mut N64,opcode: u32) {
+fn dsrlv(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         n64.cpu.gpr[rt(opcode) as usize] >> (n64.cpu.gpr[rs(opcode) as usize] & 63)
 }
 
-fn dsrav(n64: &mut N64,opcode: u32) {
+fn dsrav(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = ((n64.cpu.gpr[rt(opcode) as usize] as i64)
-        >> (n64.cpu.gpr[rs(opcode) as usize] & 63))
-        as u64
+        >> (n64.cpu.gpr[rs(opcode) as usize] & 63)) as u64
 }
 
-fn div(n64: &mut N64,opcode: u32) {
+fn div(n64: &mut N64, opcode: u32) {
     if (n64.cpu.gpr[rt(opcode) as usize]) as i32 != 0 {
         n64.cpu.lo = se32(
             (n64.cpu.gpr[rs(opcode) as usize] as i32)
@@ -1217,15 +1287,15 @@ fn div(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 36)
 }
 
-fn divu(n64: &mut N64,opcode: u32) {
+fn divu(n64: &mut N64, opcode: u32) {
     if (n64.cpu.gpr[rt(opcode) as usize]) as u32 != 0 {
         n64.cpu.lo = se32(
-            ((n64.cpu.gpr[rs(opcode) as usize] as u32)
-                / (n64.cpu.gpr[rt(opcode) as usize] as u32)) as i32,
+            ((n64.cpu.gpr[rs(opcode) as usize] as u32) / (n64.cpu.gpr[rt(opcode) as usize] as u32))
+                as i32,
         );
         n64.cpu.hi = se32(
-            ((n64.cpu.gpr[rs(opcode) as usize] as u32)
-                % (n64.cpu.gpr[rt(opcode) as usize] as u32)) as i32,
+            ((n64.cpu.gpr[rs(opcode) as usize] as u32) % (n64.cpu.gpr[rt(opcode) as usize] as u32))
+                as i32,
         );
     } else {
         n64.cpu.lo = u64::MAX;
@@ -1235,7 +1305,7 @@ fn divu(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 36)
 }
 
-fn mult(n64: &mut N64,opcode: u32) {
+fn mult(n64: &mut N64, opcode: u32) {
     let result = ((n64.cpu.gpr[rs(opcode) as usize]) as i32 as i64)
         .wrapping_mul(n64.cpu.gpr[rt(opcode) as usize] as i32 as i64);
 
@@ -1245,7 +1315,7 @@ fn mult(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 4);
 }
 
-fn multu(n64: &mut N64,opcode: u32) {
+fn multu(n64: &mut N64, opcode: u32) {
     let result = (n64.cpu.gpr[rs(opcode) as usize] as u32 as u64)
         .wrapping_mul(n64.cpu.gpr[rt(opcode) as usize] as u32 as u64);
 
@@ -1255,8 +1325,7 @@ fn multu(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 4);
 }
 
-
-fn dmult(n64: &mut N64,opcode: u32) {
+fn dmult(n64: &mut N64, opcode: u32) {
     let result = ((n64.cpu.gpr[rs(opcode) as usize] as i64 as i128)
         * (n64.cpu.gpr[rt(opcode) as usize] as i64 as i128)) as u128;
     n64.cpu.lo = result as u64;
@@ -1264,15 +1333,15 @@ fn dmult(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 7)
 }
 
-fn dmultu(n64: &mut N64,opcode: u32) {
-    let result = (n64.cpu.gpr[rs(opcode) as usize] as u128)
-        * (n64.cpu.gpr[rt(opcode) as usize] as u128);
+fn dmultu(n64: &mut N64, opcode: u32) {
+    let result =
+        (n64.cpu.gpr[rs(opcode) as usize] as u128) * (n64.cpu.gpr[rt(opcode) as usize] as u128);
     n64.cpu.lo = result as u64;
     n64.cpu.hi = (result >> 64) as u64;
     add_cycles(n64, 7)
 }
 
-fn ddiv(n64: &mut N64,opcode: u32) {
+fn ddiv(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rt(opcode) as usize] as i64 != 0 {
         n64.cpu.lo = (((n64.cpu.gpr[rs(opcode) as usize] as i64) as i128)
             / (n64.cpu.gpr[rt(opcode) as usize] as i64) as i128) as u64;
@@ -1289,7 +1358,7 @@ fn ddiv(n64: &mut N64,opcode: u32) {
     add_cycles(n64, 68);
 }
 
-fn ddivu(n64: &mut N64,opcode: u32) {
+fn ddivu(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rt(opcode) as usize] != 0 {
         n64.cpu.lo = n64.cpu.gpr[rs(opcode) as usize] / n64.cpu.gpr[rt(opcode) as usize];
         n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize] % n64.cpu.gpr[rt(opcode) as usize]
@@ -1302,7 +1371,7 @@ fn ddivu(n64: &mut N64,opcode: u32) {
 
 macro_rules! cpu_arithmetic_op {
     ($name:ident, $op:tt) => {
-        fn $name(n64: &mut N64,opcode: u32) {
+        fn $name(n64: &mut N64, opcode: u32) {
             n64.cpu.gpr[rd(opcode) as usize] = se32(
                 (n64.cpu.gpr[rs(opcode) as usize] as u32)
                     .$op(n64.cpu.gpr[rt(opcode) as usize] as u32) as i32,
@@ -1320,7 +1389,7 @@ cpu_arithmetic_op!(subu, wrapping_sub);
 macro_rules! impl_bitwise_op {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            n64.cpu.gpr[rd(opcode) as usize] = 
+            n64.cpu.gpr[rd(opcode) as usize] =
                 n64.cpu.gpr[rs(opcode) as usize] $op n64.cpu.gpr[rt(opcode) as usize]
         }
     };
@@ -1331,26 +1400,25 @@ impl_bitwise_op!(or, |);
 impl_bitwise_op!(xor, ^);
 
 // NOR needs special handling due to the NOT operation
-fn nor(n64: &mut N64,opcode: u32) {
+fn nor(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         !(n64.cpu.gpr[rs(opcode) as usize] | n64.cpu.gpr[rt(opcode) as usize])
 }
 
-fn slt(n64: &mut N64,opcode: u32) {
+fn slt(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = ((n64.cpu.gpr[rs(opcode) as usize] as i64)
-        < (n64.cpu.gpr[rt(opcode) as usize] as i64))
-        as u64
+        < (n64.cpu.gpr[rt(opcode) as usize] as i64)) as u64
 }
 
-fn sltu(n64: &mut N64,opcode: u32) {
+fn sltu(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         (n64.cpu.gpr[rs(opcode) as usize] < n64.cpu.gpr[rt(opcode) as usize]) as u64
 }
 
 macro_rules! def_d_arithmetic {
     ($name:ident, $op:tt) => {
-        fn $name(n64: &mut N64,opcode: u32) {
-            n64.cpu.gpr[rd(opcode) as usize] = 
+        fn $name(n64: &mut N64, opcode: u32) {
+            n64.cpu.gpr[rd(opcode) as usize] =
                 n64.cpu.gpr[rs(opcode) as usize].$op(n64.cpu.gpr[rt(opcode) as usize])
         }
     };
@@ -1387,39 +1455,40 @@ def_trap_reg!(tltu, <, unsigned);
 def_trap_reg!(teq, ==, unsigned);
 def_trap_reg!(tne, !=, unsigned);
 
-fn dsll(n64: &mut N64,opcode: u32) {
+fn dsll(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] << sa(opcode)
 }
 
-fn dsrl(n64: &mut N64,opcode: u32) {
+fn dsrl(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] >> sa(opcode)
 }
 
-fn dsra(n64: &mut N64,opcode: u32) {
+fn dsra(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> sa(opcode)) as u64
 }
 
-fn dsll32(n64: &mut N64,opcode: u32) {
+fn dsll32(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] << (32 + sa(opcode))
 }
 
-fn dsrl32(n64: &mut N64,opcode: u32) {
+fn dsrl32(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] >> (32 + sa(opcode))
 }
 
-fn dsra32(n64: &mut N64,opcode: u32) {
+fn dsra32(n64: &mut N64, opcode: u32) {
     n64.cpu.gpr[rd(opcode) as usize] =
         ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> (32 + sa(opcode))) as u64
 }
 
 macro_rules! branch_instruction {
     ($name:ident, $cmp:expr, $not_taken_state:expr) => {
-        fn $name(n64: &mut N64,opcode: u32) {
+        fn $name(n64: &mut N64, opcode: u32) {
             if $cmp(n64.cpu.gpr[rs(opcode) as usize] as i64) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc =
+                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
             } else {
                 n64.cpu.branch_state.state = $not_taken_state;
             }
@@ -1460,14 +1529,15 @@ def_trap_imm!(tnei, !=);
 
 macro_rules! impl_branch_and_link {
     ($name:ident, $condition:expr, $discard_on_false:literal) => {
-        fn $name(n64: &mut N64,opcode: u32) {
+        fn $name(n64: &mut N64, opcode: u32) {
             let rs_val = n64.cpu.gpr[rs(opcode) as usize] as i64;
             let in_delay_slot = cpu::in_delay_slot(n64);
-            
+
             if $condition(rs_val) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc =
+                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
             } else {
                 n64.cpu.branch_state.state = if $discard_on_false {
                     State::Discard

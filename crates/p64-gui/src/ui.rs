@@ -58,11 +58,8 @@ impl Default for Ui {
         let audio_subsystem = sdl_context.audio().unwrap();
         let joystick_subsystem = sdl_context.joystick().unwrap();
         let controller_subsystem = sdl_context.game_controller().unwrap();
-    
-        let file_path = dirs::config_dir()
-            .unwrap()
-            .join("p64")
-            .join("config.json");
+
+        let file_path = dirs::config_dir().unwrap().join("p64").join("config.json");
         let config_file = std::fs::read(file_path.clone());
         let mut config_map = config::Config::new();
         if config_file.is_ok() {
@@ -71,7 +68,7 @@ impl Default for Ui {
                 config_map = result.unwrap();
             }
         }
-    
+
         let mut ui = Ui {
             config: Config {
                 file_path,
@@ -105,17 +102,22 @@ impl Default for Ui {
                 audio_device: None,
             },
         };
-    
+
         let desired_spec = sdl2::audio::AudioSpecDesired {
             freq: Some(44100),
             channels: Some(2),
             samples: None,
         };
         ui.window_audio.audio_device = Some(
-            ui.sdl_context.audio_subsystem.as_mut().unwrap().open_queue::<i16, _>(None, &desired_spec).unwrap(),
+            ui.sdl_context
+                .audio_subsystem
+                .as_mut()
+                .unwrap()
+                .open_queue::<i16, _>(None, &desired_spec)
+                .unwrap(),
         );
         ui.window_audio.audio_device.as_mut().unwrap().resume();
-    
+
         let joystick_subsystem = ui.input_controllers.joystick_subsystem.as_ref().unwrap();
         let mut taken = [false; 4];
         for i in 0..4 {
@@ -143,7 +145,8 @@ impl Default for Ui {
                             .unwrap()
                             .open(joystick_index);
                         if controller_result.is_ok() {
-                            ui.input_controllers.controllers[i].controller = Some(controller_result.unwrap());
+                            ui.input_controllers.controllers[i].controller =
+                                Some(controller_result.unwrap());
                         }
                     }
                     if ui.input_controllers.controllers[i].controller.is_none() {
@@ -158,7 +161,8 @@ impl Default for Ui {
                         if joystick_result.is_err() {
                             println!("could not connect joystick")
                         } else {
-                            ui.input_controllers.controllers[i].joystick = Some(joystick_result.unwrap());
+                            ui.input_controllers.controllers[i].joystick =
+                                Some(joystick_result.unwrap());
                         }
                     }
                 } else {
@@ -166,13 +170,13 @@ impl Default for Ui {
                 }
             }
         }
-    
+
         let id = ui.game_info.id.as_str();
         ui.save_data.save_type = get_save_type(id);
-    
+
         let base_path = data_dir().unwrap().join("p64/saves");
         create_dir_all(&base_path).expect("could not create save dir");
-    
+
         let file_names = ["eep", "sra", "fla", "mpk", "romsave"];
         let mut paths = [
             &mut ui.save_data.data.eeprom_path,
@@ -181,37 +185,37 @@ impl Default for Ui {
             &mut ui.save_data.data.mempak_path,
             &mut ui.save_data.data.romsave_path,
         ];
-    
+
         for (path, &name) in paths.iter_mut().zip(&file_names) {
             path.clone_from(&base_path);
-            path.push(format!("{}-{}.{}", ui.game_info.id, ui.game_info.hash, name));
+            path.push(format!(
+                "{}-{}.{}",
+                ui.game_info.id, ui.game_info.hash, name
+            ));
         }
-    
+
         ui
     }
 }
 
 pub fn get_save_type(game_id: &str) -> Vec<SaveTypes> {
     const EEPROM4K_GAMES: [&str; 45] = [
-        "NAB", "NAD", "NAL", "NBC", "NCG", "NCT", "NDU", "NFW", "NGE", "NGL", 
-        "NHS", "NHY", "NIJ", "NKG", "NKT", "NLR", "NM9", "NMF", "NML", "NMR", 
-        "NMW", "NMZ", "NOS", "NP2", "NPL", "NPM", "NPW", "NRA", "NRC", "NSI", 
-        "NSL", "NSM", "NSU", "NSV", "NTJ", "NTM", "NTN", "NTP", "NTR", "NTX", 
-        "NVL", "NVP", "NVY", "NWL", "NWR"
+        "NAB", "NAD", "NAL", "NBC", "NCG", "NCT", "NDU", "NFW", "NGE", "NGL", "NHS", "NHY", "NIJ",
+        "NKG", "NKT", "NLR", "NM9", "NMF", "NML", "NMR", "NMW", "NMZ", "NOS", "NP2", "NPL", "NPM",
+        "NPW", "NRA", "NRC", "NSI", "NSL", "NSM", "NSU", "NSV", "NTJ", "NTM", "NTN", "NTP", "NTR",
+        "NTX", "NVL", "NVP", "NVY", "NWL", "NWR",
     ];
 
     const EEPROM16K_GAMES: [&str; 35] = [
-        "NB7", "NGT", "NFU", "NCW", "NCZ", "ND6", "NDO", "ND2", "N3D", "NMX",
-        "NGC", "NIM", "NNB", "NMV", "NM8", "NEV", "NPP", "NUB", "NPD", "NRZ",
-        "NR7", "NEP", "NYS", "NAK", "NBK", "NDY", "NGU", "NJG", "NRP", "NWQ",
-        "NYW", "NB5", "NBM", "NCR", "NDR"
+        "NB7", "NGT", "NFU", "NCW", "NCZ", "ND6", "NDO", "ND2", "N3D", "NMX", "NGC", "NIM", "NNB",
+        "NMV", "NM8", "NEV", "NPP", "NUB", "NPD", "NRZ", "NR7", "NEP", "NYS", "NAK", "NBK", "NDY",
+        "NGU", "NJG", "NRP", "NWQ", "NYW", "NB5", "NBM", "NCR", "NDR",
     ];
-    
+
     const FLASH_GAMES: [&str; 34] = [
-        "NCC", "NDA", "NAF", "NJF", "NKJ", "NZS", "NM6", "NCK", "NMQ", "NPN",
-        "NPF", "NPO", "CP2", "NP3", "NRH", "NSQ", "NT9", "NW4", "NDP", "NLB",
-        "NMS", "NMT", "NRC", "NSM", "NSS", "NTC", "NTD", "NTE", "NTF", "NTG",
-        "NTH", "NTI", "NTJ", "NTK"
+        "NCC", "NDA", "NAF", "NJF", "NKJ", "NZS", "NM6", "NCK", "NMQ", "NPN", "NPF", "NPO", "CP2",
+        "NP3", "NRH", "NSQ", "NT9", "NW4", "NDP", "NLB", "NMS", "NMT", "NRC", "NSM", "NSS", "NTC",
+        "NTD", "NTE", "NTF", "NTG", "NTH", "NTI", "NTJ", "NTK",
     ];
 
     match game_id {
@@ -223,20 +227,35 @@ pub fn get_save_type(game_id: &str) -> Vec<SaveTypes> {
     }
 }
 
-
 pub fn load_saves(ui: &mut Ui) {
     let mut paths = [
-        (&mut ui.save_data.data.eeprom_path, &mut ui.save_data.data.eeprom.0),
-        (&mut ui.save_data.data.sram_path, &mut ui.save_data.data.sram.0),
-        (&mut ui.save_data.data.flash_path, &mut ui.save_data.data.flash.0),
-        (&mut ui.save_data.data.mempak_path, &mut ui.save_data.data.mempak.0),
+        (
+            &mut ui.save_data.data.eeprom_path,
+            &mut ui.save_data.data.eeprom.0,
+        ),
+        (
+            &mut ui.save_data.data.sram_path,
+            &mut ui.save_data.data.sram.0,
+        ),
+        (
+            &mut ui.save_data.data.flash_path,
+            &mut ui.save_data.data.flash.0,
+        ),
+        (
+            &mut ui.save_data.data.mempak_path,
+            &mut ui.save_data.data.mempak.0,
+        ),
     ];
 
     for (path, save) in paths.iter_mut() {
-        if let Ok(data) = read(path) { **save = data; }
+        if let Ok(data) = read(path) {
+            **save = data;
+        }
     }
 
-    if let Ok(data) = read(&ui.save_data.data.romsave_path) { ui.save_data.data.romsave.0 = from_slice(&data).unwrap(); }
+    if let Ok(data) = read(&ui.save_data.data.romsave_path) {
+        ui.save_data.data.romsave.0 = from_slice(&data).unwrap();
+    }
 }
 
 impl Drop for Ui {
@@ -247,14 +266,16 @@ impl Drop for Ui {
 }
 
 pub fn write_saves(ui: &Ui) {
-    [(SaveTypes::Eeprom16k, ui.save_data.data.eeprom.1),
-     (SaveTypes::Sram, ui.save_data.data.sram.1),
-     (SaveTypes::Flash, ui.save_data.data.flash.1),
-     (SaveTypes::Mempak, ui.save_data.data.mempak.1),
-     (SaveTypes::Romsave, ui.save_data.data.romsave.1)]
-        .iter()
-        .filter(|&&(_, flag)| flag)
-        .for_each(|&(save_type, _)| write_save(ui, save_type));
+    [
+        (SaveTypes::Eeprom16k, ui.save_data.data.eeprom.1),
+        (SaveTypes::Sram, ui.save_data.data.sram.1),
+        (SaveTypes::Flash, ui.save_data.data.flash.1),
+        (SaveTypes::Mempak, ui.save_data.data.mempak.1),
+        (SaveTypes::Romsave, ui.save_data.data.romsave.1),
+    ]
+    .iter()
+    .filter(|&&(_, flag)| flag)
+    .for_each(|&(save_type, _)| write_save(ui, save_type));
 }
 
 fn write_config(ui: &Ui) {

@@ -83,5 +83,6 @@ pub fn read_rom(file_path: &Path) -> Vec<u8> {
         contents = fs::read(file_path).expect("Unable to read the ROM file");
     }
 
-    set_correct_rom_format(contents).expect("Could not read the ROM format? is it a z64, n64, or v64?")
+    set_correct_rom_format(contents)
+        .expect("Could not read the ROM format? is it a z64, n64, or v64?")
 }

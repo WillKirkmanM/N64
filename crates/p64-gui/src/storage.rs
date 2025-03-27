@@ -1,4 +1,7 @@
-use std::{fs::{write, File}, path::PathBuf};
+use std::{
+    fs::{write, File},
+    path::PathBuf,
+};
 
 use serde_json::{to_writer, Map};
 
@@ -35,7 +38,9 @@ pub fn write_save(ui: &Ui, save_type: SaveTypes) {
             to_writer(f, &ui.save_data.data.romsave).unwrap();
             return;
         }
-        SaveTypes::Eeprom4k | SaveTypes::Eeprom16k => (&ui.save_data.data.eeprom_path, &ui.save_data.data.eeprom.0),
+        SaveTypes::Eeprom4k | SaveTypes::Eeprom16k => {
+            (&ui.save_data.data.eeprom_path, &ui.save_data.data.eeprom.0)
+        }
         SaveTypes::Sram => (&ui.save_data.data.sram_path, &ui.save_data.data.sram.0),
         SaveTypes::Flash => (&ui.save_data.data.flash_path, &ui.save_data.data.flash.0),
         SaveTypes::Mempak => (&ui.save_data.data.mempak_path, &ui.save_data.data.mempak.0),

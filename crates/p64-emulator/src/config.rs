@@ -54,7 +54,12 @@ impl Default for ControllerSettings {
     fn default() -> Self {
         Self {
             selected_controller: [-1; 4],
-            selected_profile: ["Default".to_string(), "Default".to_string(), "Default".to_string(), "Default".to_string()],
+            selected_profile: [
+                "Default".to_string(),
+                "Default".to_string(),
+                "Default".to_string(),
+                "Default".to_string(),
+            ],
         }
     }
 }

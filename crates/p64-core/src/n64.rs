@@ -43,13 +43,26 @@ use std::time::Instant;
 
 use tracing::info;
 
-pub fn run_game(file_path: &std::path::Path, device: &mut N64, width: u32, height: u32, fullscreen: bool) {
+pub fn run_game(
+    file_path: &std::path::Path,
+    device: &mut N64,
+    width: u32,
+    height: u32,
+    fullscreen: bool,
+) {
     write_cartridge_to_memory(device, read_rom(file_path));
-    
+
     let (rdram_ptr, rdram_size) = get_rdram_shared_pointer(device);
-    
+
     let start_video = Instant::now();
-    start_window(&mut device.ui, rdram_ptr, rdram_size, width, height, fullscreen);
+    start_window(
+        &mut device.ui,
+        rdram_ptr,
+        rdram_size,
+        width,
+        height,
+        fullscreen,
+    );
     let duration_video = start_video.elapsed();
     info!("Video init took: {:?}", duration_video);
 
@@ -104,7 +117,7 @@ impl N64 {
         if u32::from_le_bytes(test) == u32::from_ne_bytes(test) {
             byte_swap = 3;
         }
-        
+
         N64 {
             byte_swap,
             ..Default::default()

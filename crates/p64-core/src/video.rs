@@ -33,9 +33,7 @@ pub struct Video {
 impl Default for Video {
     fn default() -> Self {
         Self {
-            regs: Registers::new()
-                .with_size(VI_REGS_COUNT as usize)
-                .build(),
+            regs: Registers::new().with_size(VI_REGS_COUNT as usize).build(),
             clock: 0,
             delay: 0,
             field: 0,
@@ -53,7 +51,7 @@ pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) 
     n64.video.regs[reg as usize]
 }
 
-pub fn write_regs(n64: &mut N64,address: u64, value: u32, mask: u32) {
+pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
     let reg = (address & 0xFFFF) >> 2;
     match reg as u32 {
         x if x == ViRegister::Current as u32 => clear_rcp_interrupt(n64, mips::MI_INTR_VI),
@@ -74,7 +72,13 @@ pub fn write_regs(n64: &mut N64,address: u64, value: u32, mask: u32) {
     }
 }
 
-pub fn set_cpu_clock_speed(n64: &mut N64) { n64.video.clock = if n64.cartridge.pal { 49656530 } else { 48681812 } }
+pub fn set_cpu_clock_speed(n64: &mut N64) {
+    n64.video.clock = if n64.cartridge.pal {
+        49656530
+    } else {
+        48681812
+    }
+}
 
 fn set_expected_refresh_rate(n64: &mut N64) {
     let expected_refresh_rate = n64.video.clock as f64
@@ -94,7 +98,12 @@ fn set_expected_refresh_rate(n64: &mut N64) {
 
 fn set_vertical_interrupt(n64: &mut N64) {
     if events::get_event(n64, EventType::VI).is_none() {
-        create_event(n64, EventType::VI, n64.cpu.mmu.regs[MmuRegister::Count as usize] + n64.video.delay, vertical_interrupt_event)
+        create_event(
+            n64,
+            EventType::VI,
+            n64.cpu.mmu.regs[MmuRegister::Count as usize] + n64.video.delay,
+            vertical_interrupt_event,
+        )
     }
 }
 
@@ -102,13 +111,19 @@ fn set_current_line(n64: &mut N64) {
     let delay = n64.video.delay;
     let next_vi = events::get_event(n64, EventType::VI);
     if let Some(next_vi) = next_vi {
-        n64.video.regs[ViRegister::Current as usize] = ((delay - (next_vi.count - n64.cpu.mmu.regs[MmuRegister::Count as usize])) / n64.video.count_per_scanline) as u32;
+        n64.video.regs[ViRegister::Current as usize] =
+            ((delay - (next_vi.count - n64.cpu.mmu.regs[MmuRegister::Count as usize]))
+                / n64.video.count_per_scanline) as u32;
 
-        if n64.video.regs[ViRegister::Current as usize] >= n64.video.regs[ViRegister::VSync as usize] {
-            n64.video.regs[ViRegister::Current as usize] -= n64.video.regs[ViRegister::VSync as usize];
+        if n64.video.regs[ViRegister::Current as usize]
+            >= n64.video.regs[ViRegister::VSync as usize]
+        {
+            n64.video.regs[ViRegister::Current as usize] -=
+                n64.video.regs[ViRegister::VSync as usize];
         }
     }
-    n64.video.regs[ViRegister::Current as usize] = (n64.video.regs[ViRegister::Current as usize] & !1) | n64.video.field;
+    n64.video.regs[ViRegister::Current as usize] =
+        (n64.video.regs[ViRegister::Current as usize] & !1) | n64.video.field;
 }
 
 fn vertical_interrupt_event(n64: &mut N64) {
@@ -116,7 +131,12 @@ fn vertical_interrupt_event(n64: &mut N64) {
     speed_limiter(n64);
     n64.video.field ^= (n64.video.regs[ViRegister::Status as usize] >> 6) & 0x1;
     mips::set_rcp_interrupt(n64, mips::MI_INTR_VI);
-    create_event(n64, EventType::VI, n64.cpu.next_event_count + n64.video.delay, vertical_interrupt_event)
+    create_event(
+        n64,
+        EventType::VI,
+        n64.cpu.next_event_count + n64.video.delay,
+        vertical_interrupt_event,
+    )
 }
 
 fn speed_limiter(n64: &N64) {

@@ -4,23 +4,20 @@ pub const MEMPAK_SIZE: usize = 0x8000;
 pub const MPK_PAGE_SIZE: usize = 256;
 
 const LABEL_AREA: [u8; 32] = [
-    0x81, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-    0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
-    0x1e, 0x1f,
+    0x81, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
 ];
 
 const MAIN_ID_AREA: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0x05, 0x1a, 0x5f, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0xff, 0x66, 0x25,
-    0x99, 0xcd,
+    0xff, 0xff, 0xff, 0xff, 0x05, 0x1a, 0x5f, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0xff, 0x66, 0x25, 0x99, 0xcd,
 ];
 
 const UNUSED_AREA: [u8; 32] = [0x00; 32];
 
 const ID_AREA_BACKUP: [u8; 32] = [
-    0xff, 0xff, 0xff, 0xff, 0x05, 0x1a, 0x5f, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0xff, 0x66, 0x25,
-    0x99, 0xcd,
+    0xff, 0xff, 0xff, 0xff, 0x05, 0x1a, 0x5f, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0xff, 0x66, 0x25, 0x99, 0xcd,
 ];
 
 fn copy_slice(dest: &mut [u8], src: &[u8], start: usize) {
@@ -44,12 +41,12 @@ fn initialize_page_0() -> [u8; MPK_PAGE_SIZE] {
     page
 }
 
-fn fill_page_0(n64: &mut N64,offset: usize) {
+fn fill_page_0(n64: &mut N64, offset: usize) {
     let page_0 = initialize_page_0();
     n64.ui.save_data.data.mempak.0[offset..offset + MPK_PAGE_SIZE].copy_from_slice(&page_0);
 }
 
-fn fill_inode_page(n64: &mut N64,offset: usize) {
+fn fill_inode_page(n64: &mut N64, offset: usize) {
     let start_page = 5;
     for i in MPK_PAGE_SIZE..2 * start_page {
         n64.ui.save_data.data.mempak.0[offset + i] = 0;
@@ -61,7 +58,7 @@ fn fill_inode_page(n64: &mut N64,offset: usize) {
     n64.ui.save_data.data.mempak.0[offset + (MPK_PAGE_SIZE + 1)] = 0x71;
 }
 
-fn fill_remaining_pages(n64: &mut N64,offset: usize) {
+fn fill_remaining_pages(n64: &mut N64, offset: usize) {
     for i in 3 * MPK_PAGE_SIZE..MEMPAK_SIZE - 3 * MPK_PAGE_SIZE {
         n64.ui.save_data.data.mempak.0[offset + i] = 0;
     }
@@ -80,14 +77,22 @@ fn format_mempak(n64: &mut N64) {
             let page1 = offset + MPK_PAGE_SIZE;
             let page2 = offset + 2 * MPK_PAGE_SIZE;
             let page1data = n64.ui.save_data.data.mempak.0[page1..page1 + MPK_PAGE_SIZE].to_vec();
-            n64.ui.save_data.data.mempak.0[page2..page2 + MPK_PAGE_SIZE].copy_from_slice(&page1data);
+            n64.ui.save_data.data.mempak.0[page2..page2 + MPK_PAGE_SIZE]
+                .copy_from_slice(&page1data);
 
             fill_remaining_pages(n64, offset);
         }
     }
 }
 
-fn handle_read_write(n64: &mut N64, channel: usize, address: u16, data: usize, size: usize, is_write: bool) {
+fn handle_read_write(
+    n64: &mut N64,
+    channel: usize,
+    address: u16,
+    data: usize,
+    size: usize,
+    is_write: bool,
+) {
     if (address as usize) < MEMPAK_SIZE {
         format_mempak(n64);
 
@@ -107,10 +112,10 @@ fn handle_read_write(n64: &mut N64, channel: usize, address: u16, data: usize, s
     }
 }
 
-pub fn read(n64: &mut N64,channel: usize, address: u16, data: usize, size: usize) {
+pub fn read(n64: &mut N64, channel: usize, address: u16, data: usize, size: usize) {
     handle_read_write(n64, channel, address, data, size, false);
 }
 
-pub fn write(n64: &mut N64,channel: usize, address: u16, data: usize, size: usize) {
+pub fn write(n64: &mut N64, channel: usize, address: u16, data: usize, size: usize) {
     handle_read_write(n64, channel, address, data, size, true);
 }

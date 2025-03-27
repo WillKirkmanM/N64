@@ -1,29 +1,55 @@
 use crate::cpu;
 
-use super::{mmu::{add_cycles, MmuCause, MmuRegister, MmuStatus, MmuXContext::{BadVPN2Mask, RegionMask}}, cpu::{in_delay_slot, State}, memory::{self, masked_write_64, AccessType}, N64};
+use super::{
+    mmu::{
+        add_cycles, MmuCause, MmuRegister, MmuStatus,
+        MmuXContext::{BadVPN2Mask, RegionMask},
+    },
+    cpu::{in_delay_slot, State},
+    memory::{self, masked_write_64, AccessType},
+    N64,
+};
 
 pub fn check_pending_interrupts(n64: &mut N64) {
     let status = n64.cpu.mmu.regs[MmuRegister::Status as usize];
     let cause = n64.cpu.mmu.regs[MmuRegister::Cause as usize];
 
     // interrupt disabled, or no pending interrupts
-    if (status & cause & MmuCause::IPMask as u64) == 0 { return; }
+    if (status & cause & MmuCause::IPMask as u64) == 0 {
+        return;
+    }
 
     // interrupts disabled globally, or error/exception is already set
-    if (status & (MmuStatus::IE as u64 | MmuStatus::EXL as u64 | MmuStatus::ERL as u64)) != MmuStatus::IE as u64 { return; }
+    if (status & (MmuStatus::IE as u64 | MmuStatus::EXL as u64 | MmuStatus::ERL as u64))
+        != MmuStatus::IE as u64
+    {
+        return;
+    }
 
     exception_general(n64, 0x180);
 }
 
-pub fn floating_point_exception(n64: &mut N64) { set_cause_and_exception(n64, MmuCause::ExccodeFPE as u64); }
-pub fn trap_exception(n64: &mut N64) { set_cause_and_exception(n64, MmuCause::ExccodeTR as u64) }
-pub fn syscall_exception(n64: &mut N64) { set_cause_and_exception(n64, MmuCause::ExccodeSys as u64) }
-pub fn break_exception(n64: &mut N64) { set_cause_and_exception(n64, MmuCause::ExccodeBP as u64) }
-pub fn reserved_exception(n64: &mut N64,cop: u64) { set_cause_and_exception(n64, (MmuCause::ExccodeRI as u64) | cop) }
+pub fn floating_point_exception(n64: &mut N64) {
+    set_cause_and_exception(n64, MmuCause::ExccodeFPE as u64);
+}
+pub fn trap_exception(n64: &mut N64) {
+    set_cause_and_exception(n64, MmuCause::ExccodeTR as u64)
+}
+pub fn syscall_exception(n64: &mut N64) {
+    set_cause_and_exception(n64, MmuCause::ExccodeSys as u64)
+}
+pub fn break_exception(n64: &mut N64) {
+    set_cause_and_exception(n64, MmuCause::ExccodeBP as u64)
+}
+pub fn reserved_exception(n64: &mut N64, cop: u64) {
+    set_cause_and_exception(n64, (MmuCause::ExccodeRI as u64) | cop)
+}
 
-pub fn cop_unusable_exception(n64: &mut N64,cop: u64) { set_cause_and_exception(n64, (MmuCause::ExccodeCPU as u64) | cop); }
+pub fn cop_unusable_exception(n64: &mut N64, cop: u64) {
+    set_cause_and_exception(n64, (MmuCause::ExccodeCPU as u64) | cop);
+}
 
-pub fn tlb_miss_exception(n64: &mut N64,address: u64, access_type: memory::AccessType) {
+pub fn tlb_miss_exception(n64: &mut N64, address: u64, access_type: memory::AccessType) {
     let cause = if access_type == memory::AccessType::Read {
         MmuCause::ExccodeTLBL as u64
     } else {
@@ -64,12 +90,12 @@ pub fn tlb_miss_exception(n64: &mut N64,address: u64, access_type: memory::Acces
     exception_general(n64, vector_offset);
 }
 
-fn set_cause_and_exception(n64: &mut N64,cause: u64) {
+fn set_cause_and_exception(n64: &mut N64, cause: u64) {
     n64.cpu.mmu.regs[MmuRegister::Cause as usize] = cause;
     exception_general(n64, 0x180);
 }
 
-fn update_context_registers(n64: &mut N64,address: u64) {
+fn update_context_registers(n64: &mut N64, address: u64) {
     masked_write_64(
         &mut n64.cpu.mmu.regs[MmuRegister::Context as usize],
         address >> 9,
@@ -92,9 +118,11 @@ fn update_context_registers(n64: &mut N64,address: u64) {
     );
 }
 
-fn is_address_in_range(address: u64, start: u64, end: u64) -> bool { address & !3 >= start && address & !3 <= end }
+fn is_address_in_range(address: u64, start: u64, end: u64) -> bool {
+    address & !3 >= start && address & !3 <= end
+}
 
-fn exception_general(n64: &mut N64,vector_offset: u32) {
+fn exception_general(n64: &mut N64, vector_offset: u32) {
     let status = n64.cpu.mmu.regs[MmuRegister::Status as usize];
 
     if status & (MmuStatus::EXL as u64) == 0 {
