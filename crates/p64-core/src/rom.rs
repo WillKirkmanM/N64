@@ -6,58 +6,63 @@ use std::{
 
 use zip::ZipArchive;
 
-const Z64_MAGIC: u32 = 0x80371240;
-const V64_MAGIC: u32 = 0x37804012;
-const N64_MAGIC: u32 = 0x40123780;
+pub const MAX_ROM_BYTES: usize = 128 * 1024 * 1024;
 
-// N64 ROMs can come in 3 formats based on byte ordering:
-//
-// 1. Z64 (.z64) - Big-endian (native N64 format)
-//    Bytes are in order: [1,2,3,4]
-//    No swapping needed
-//
-// 2. V64 (.v64) - Byte-swapped in pairs
-//    Bytes are stored as: [2,1,4,3]
-//    Need to swap each pair of bytes
-//
-// 3. N64 (.n64) - Little-endian/word-swapped
-//    Bytes are stored as: [4,3,2,1]
-//    Need to swap each group of 4 bytes
-//
-// The first 4 bytes of the ROM contain a magic number that identifies the format.
-// This function detects the format and converts it to native Z64 format.
-//
-// Example for word size = 0x12345678:
-// Z64: 12 34 56 78 (native/big-endian)
-// V64: 21 43 65 87 (byte-swapped)
-// N64: 78 56 34 12 (word-swapped/little-endian)
+const ROM_HEADER_BYTES: usize = 64;
 
-fn set_correct_rom_format(contents: Vec<u8>) -> io::Result<Vec<u8>> {
-    let magic = u32::from_be_bytes(
-        contents[..4]
-            .try_into()
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "Invalid ROM header"))?,
-    );
+const ROM_WORD_BYTES: usize = std::mem::size_of::<u32>();
+
+const ROM_BYTE_PAIR_BYTES: usize = std::mem::size_of::<u16>();
+
+const Z64_MAGIC: [u8; 4] = [0x80, 0x37, 0x12, 0x40];
+
+const V64_MAGIC: [u8; 4] = [0x37, 0x80, 0x40, 0x12];
+
+const N64_MAGIC: [u8; 4] = [0x40, 0x12, 0x37, 0x80];
+
+fn valid_size(contents: &[u8]) -> bool {
+    (ROM_HEADER_BYTES..=MAX_ROM_BYTES).contains(&contents.len())
+        && contents.len().is_multiple_of(ROM_WORD_BYTES)
+}
+
+pub(crate) fn is_canonical(contents: &[u8]) -> bool {
+    valid_size(contents) && contents.starts_with(&Z64_MAGIC)
+}
+
+/// Convert V64 byte pairs and N64 words to canonical big-endian Z64.
+pub fn normalize_rom(mut contents: Vec<u8>) -> io::Result<Vec<u8>> {
+    if !valid_size(&contents) {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "ROM must contain a 64-byte header, be word aligned, and be at most 128 MiB",
+        ));
+    }
+
+    let magic = *contents
+        .first_chunk::<ROM_WORD_BYTES>()
+        .expect("ROM header length validated");
 
     match magic {
-        Z64_MAGIC => Ok(contents),
+        Z64_MAGIC => {}
         V64_MAGIC => {
-            let swapped: Vec<u8> = contents
-                .chunks_exact(2)
-                .flat_map(|chunk| chunk.iter().rev().cloned())
-                .collect();
-            Ok(swapped)
+            for pair in contents.chunks_exact_mut(ROM_BYTE_PAIR_BYTES) {
+                pair.swap(0, 1);
+            }
         }
         N64_MAGIC => {
-            // n64 format - bytes need to be swapped in groups of four
-            let swapped: Vec<u8> = contents
-                .chunks_exact(4)
-                .flat_map(|chunk| chunk.iter().rev().cloned())
-                .collect();
-            Ok(swapped)
+            for word in contents.chunks_exact_mut(ROM_WORD_BYTES) {
+                word.reverse();
+            }
         }
-        _ => Err(Error::new(ErrorKind::InvalidData, "Unknown ROM format")),
+        _ => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Unknown ROM byte order (expected z64, v64, or n64)",
+            ));
+        }
     }
+
+    Ok(contents)
 }
 
 pub fn read_rom(file_path: &Path) -> Vec<u8> {
@@ -83,6 +88,6 @@ pub fn read_rom(file_path: &Path) -> Vec<u8> {
         contents = fs::read(file_path).expect("Unable to read the ROM file");
     }
 
-    set_correct_rom_format(contents)
+    normalize_rom(contents)
         .expect("Could not read the ROM format? is it a z64, n64, or v64?")
 }
