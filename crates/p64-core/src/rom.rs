@@ -120,3 +120,6 @@ pub fn read_rom(path: &Path) -> Vec<u8> {
     try_read_rom(path)
         .unwrap_or_else(|error| panic!("Unable to read ROM {}: {error}", path.display()))
 }
+
+#[cfg(test)]
+mod tests;
