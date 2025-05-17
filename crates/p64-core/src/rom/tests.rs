@@ -23,3 +23,18 @@ fn every_rom_order_preserves_every_byte_after_normalization() {
         assert_eq!(normalize_rom(input).unwrap(), expected);
     }
 }
+
+#[test]
+fn malformed_headers_and_trailing_bytes_are_errors() {
+    for contents in [
+        vec![],
+        vec![0; 3],
+        vec![0; 64],
+        canonical_rom()[..127].to_vec(),
+    ] {
+        assert_eq!(
+            normalize_rom(contents).unwrap_err().kind(),
+            ErrorKind::InvalidData
+        );
+    }
+}
