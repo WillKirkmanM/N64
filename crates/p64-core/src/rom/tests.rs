@@ -38,3 +38,22 @@ fn malformed_headers_and_trailing_bytes_are_errors() {
         );
     }
 }
+
+#[test]
+fn zip_reader_skips_directories_and_extensionless_entries() {
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    zip.add_directory("folder/", options).unwrap();
+    zip.start_file("README", options).unwrap();
+    zip.write_all(b"notes").unwrap();
+    zip.start_file("folder/TEST.Z64", options).unwrap();
+    let expected = canonical_rom();
+    zip.write_all(&expected).unwrap();
+    let bytes = zip.finish().unwrap().into_inner();
+    let path = std::env::temp_dir().join(format!("p64-rom-test-{}.zip", std::process::id()));
+    fs::write(&path, bytes).unwrap();
+    let result = try_read_rom(&path);
+    fs::remove_file(&path).unwrap();
+
+    assert_eq!(result.unwrap(), expected);
+}
