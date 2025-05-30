@@ -126,3 +126,5 @@ impl N64 {
 }
 
 mod bits;
+
+mod opcode;
