@@ -17,7 +17,24 @@ pub(crate) enum Cop1Opcode {
 }
 
 impl Cop1Opcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Mfc1 as usize => Some(Self::Mfc1),
+            value if value == Self::Dmfc1 as usize => Some(Self::Dmfc1),
+            value if value == Self::Cfc1 as usize => Some(Self::Cfc1),
+            value if value == Self::Dcfc1 as usize => Some(Self::Dcfc1),
+            value if value == Self::Mtc1 as usize => Some(Self::Mtc1),
+            value if value == Self::Dmtc1 as usize => Some(Self::Dmtc1),
+            value if value == Self::Ctc1 as usize => Some(Self::Ctc1),
+            value if value == Self::Dctc1 as usize => Some(Self::Dctc1),
+            value if value == Self::Branch as usize => Some(Self::Branch),
+            value if value == Self::Single as usize => Some(Self::Single),
+            value if value == Self::Double as usize => Some(Self::Double),
+            value if value == Self::Word as usize => Some(Self::Word),
+            value if value == Self::Long as usize => Some(Self::Long),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +47,15 @@ pub(crate) enum FpuBranchOpcode {
 }
 
 impl FpuBranchOpcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Bc1f as usize => Some(Self::Bc1f),
+            value if value == Self::Bc1t as usize => Some(Self::Bc1t),
+            value if value == Self::Bc1fl as usize => Some(Self::Bc1fl),
+            value if value == Self::Bc1tl as usize => Some(Self::Bc1tl),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
