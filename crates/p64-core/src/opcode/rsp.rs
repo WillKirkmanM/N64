@@ -69,7 +69,23 @@ pub(crate) enum VectorLoadOpcode {
 }
 
 impl VectorLoadOpcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Lbv as usize => Some(Self::Lbv),
+            value if value == Self::Lsv as usize => Some(Self::Lsv),
+            value if value == Self::Llv as usize => Some(Self::Llv),
+            value if value == Self::Ldv as usize => Some(Self::Ldv),
+            value if value == Self::Lqv as usize => Some(Self::Lqv),
+            value if value == Self::Lrv as usize => Some(Self::Lrv),
+            value if value == Self::Lpv as usize => Some(Self::Lpv),
+            value if value == Self::Luv as usize => Some(Self::Luv),
+            value if value == Self::Lhv as usize => Some(Self::Lhv),
+            value if value == Self::Lfv as usize => Some(Self::Lfv),
+            value if value == Self::Lwv as usize => Some(Self::Lwv),
+            value if value == Self::Ltv as usize => Some(Self::Ltv),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +106,23 @@ pub(crate) enum VectorStoreOpcode {
 }
 
 impl VectorStoreOpcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Sbv as usize => Some(Self::Sbv),
+            value if value == Self::Ssv as usize => Some(Self::Ssv),
+            value if value == Self::Slv as usize => Some(Self::Slv),
+            value if value == Self::Sdv as usize => Some(Self::Sdv),
+            value if value == Self::Sqv as usize => Some(Self::Sqv),
+            value if value == Self::Srv as usize => Some(Self::Srv),
+            value if value == Self::Spv as usize => Some(Self::Spv),
+            value if value == Self::Suv as usize => Some(Self::Suv),
+            value if value == Self::Shv as usize => Some(Self::Shv),
+            value if value == Self::Sfv as usize => Some(Self::Sfv),
+            value if value == Self::Swv as usize => Some(Self::Swv),
+            value if value == Self::Stv as usize => Some(Self::Stv),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
