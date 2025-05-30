@@ -12,7 +12,17 @@ pub(crate) enum Cop2Opcode {
 }
 
 impl Cop2Opcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Mfc2 as usize => Some(Self::Mfc2),
+            value if value == Self::Dmfc2 as usize => Some(Self::Dmfc2),
+            value if value == Self::Cfc2 as usize => Some(Self::Cfc2),
+            value if value == Self::Mtc2 as usize => Some(Self::Mtc2),
+            value if value == Self::Dmtc2 as usize => Some(Self::Dmtc2),
+            value if value == Self::Ctc2 as usize => Some(Self::Ctc2),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +36,19 @@ pub(crate) enum RspCop2Opcode {
 }
 
 impl RspCop2Opcode {
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        if encoding >= Self::Vector as usize && encoding < COPROCESSOR_ENCODING_COUNT {
+            return Some(Self::Vector);
+        }
 
+        match encoding {
+            value if value == Self::Mfc2 as usize => Some(Self::Mfc2),
+            value if value == Self::Cfc2 as usize => Some(Self::Cfc2),
+            value if value == Self::Mtc2 as usize => Some(Self::Mtc2),
+            value if value == Self::Ctc2 as usize => Some(Self::Ctc2),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
