@@ -262,5 +262,23 @@ pub(crate) enum RegImmOpcode {
 }
 
 impl RegImmOpcode {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Bltz as usize => Some(Self::Bltz),
+            value if value == Self::Bgez as usize => Some(Self::Bgez),
+            value if value == Self::Bltzl as usize => Some(Self::Bltzl),
+            value if value == Self::Bgezl as usize => Some(Self::Bgezl),
+            value if value == Self::Tgei as usize => Some(Self::Tgei),
+            value if value == Self::Tgeiu as usize => Some(Self::Tgeiu),
+            value if value == Self::Tlti as usize => Some(Self::Tlti),
+            value if value == Self::Tltiu as usize => Some(Self::Tltiu),
+            value if value == Self::Teqi as usize => Some(Self::Teqi),
+            value if value == Self::Tnei as usize => Some(Self::Tnei),
+            value if value == Self::Bltzal as usize => Some(Self::Bltzal),
+            value if value == Self::Bgezal as usize => Some(Self::Bgezal),
+            value if value == Self::Bltzall as usize => Some(Self::Bltzall),
+            value if value == Self::Bgezall as usize => Some(Self::Bgezall),
+            _ => None,
+        }
+    }
 }
