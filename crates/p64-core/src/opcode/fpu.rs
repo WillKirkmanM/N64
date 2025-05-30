@@ -100,5 +100,45 @@ pub(crate) enum FpuFunction {
 }
 
 impl FpuFunction {
-
+    pub(crate) const fn from_encoding(encoding: usize) -> Option<Self> {
+        match encoding {
+            value if value == Self::Add as usize => Some(Self::Add),
+            value if value == Self::Sub as usize => Some(Self::Sub),
+            value if value == Self::Mul as usize => Some(Self::Mul),
+            value if value == Self::Div as usize => Some(Self::Div),
+            value if value == Self::Sqrt as usize => Some(Self::Sqrt),
+            value if value == Self::Abs as usize => Some(Self::Abs),
+            value if value == Self::Mov as usize => Some(Self::Mov),
+            value if value == Self::Neg as usize => Some(Self::Neg),
+            value if value == Self::RoundL as usize => Some(Self::RoundL),
+            value if value == Self::TruncL as usize => Some(Self::TruncL),
+            value if value == Self::CeilL as usize => Some(Self::CeilL),
+            value if value == Self::FloorL as usize => Some(Self::FloorL),
+            value if value == Self::RoundW as usize => Some(Self::RoundW),
+            value if value == Self::TruncW as usize => Some(Self::TruncW),
+            value if value == Self::CeilW as usize => Some(Self::CeilW),
+            value if value == Self::FloorW as usize => Some(Self::FloorW),
+            value if value == Self::CvtS as usize => Some(Self::CvtS),
+            value if value == Self::CvtD as usize => Some(Self::CvtD),
+            value if value == Self::CvtW as usize => Some(Self::CvtW),
+            value if value == Self::CvtL as usize => Some(Self::CvtL),
+            value if value == Self::Cf as usize => Some(Self::Cf),
+            value if value == Self::CUn as usize => Some(Self::CUn),
+            value if value == Self::CEq as usize => Some(Self::CEq),
+            value if value == Self::CUeq as usize => Some(Self::CUeq),
+            value if value == Self::COlt as usize => Some(Self::COlt),
+            value if value == Self::CUlt as usize => Some(Self::CUlt),
+            value if value == Self::COle as usize => Some(Self::COle),
+            value if value == Self::CUle as usize => Some(Self::CUle),
+            value if value == Self::CSf as usize => Some(Self::CSf),
+            value if value == Self::CNgle as usize => Some(Self::CNgle),
+            value if value == Self::CSeq as usize => Some(Self::CSeq),
+            value if value == Self::CNgl as usize => Some(Self::CNgl),
+            value if value == Self::CLt as usize => Some(Self::CLt),
+            value if value == Self::CNge as usize => Some(Self::CNge),
+            value if value == Self::CLe as usize => Some(Self::CLe),
+            value if value == Self::CNgt as usize => Some(Self::CNgt),
+            _ => None,
+        }
+    }
 }
