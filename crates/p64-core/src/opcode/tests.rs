@@ -26,3 +26,24 @@ fn opcode_decoders_round_trip_known_encodings_and_reject_truncation() {
         }
     }
 }
+
+#[test]
+fn coprocessor_operation_bits_preserve_aliases_without_accepting_invalid_fields() {
+    for raw in 16..32 {
+        assert_eq!(Cp0Opcode::from_encoding(raw), Some(Cp0Opcode::Co));
+        assert_eq!(
+            RspCop2Opcode::from_encoding(raw),
+            Some(RspCop2Opcode::Vector)
+        );
+    }
+
+    for raw in [32, 48, 256, usize::MAX] {
+        assert_eq!(Cp0Opcode::from_encoding(raw), None);
+        assert_eq!(RspCop2Opcode::from_encoding(raw), None);
+    }
+
+    assert_eq!(Cp0Opcode::from_encoding(0), Some(Cp0Opcode::Mfc0));
+    assert_eq!(RspCop2Opcode::from_encoding(6), Some(RspCop2Opcode::Ctc2));
+    assert_eq!(Cp0Opcode::from_encoding(3), None);
+    assert_eq!(RspCop2Opcode::from_encoding(1), None);
+}
