@@ -47,3 +47,27 @@ fn coprocessor_operation_bits_preserve_aliases_without_accepting_invalid_fields(
     assert_eq!(Cp0Opcode::from_encoding(3), None);
     assert_eq!(RspCop2Opcode::from_encoding(1), None);
 }
+
+#[test]
+fn hardware_fields_distinguish_reserved_slots_formats_and_vector_aliases() {
+    assert_eq!(
+        PrimaryOpcode::from_encoding(0x09),
+        Some(PrimaryOpcode::Addiu)
+    );
+    assert_eq!(
+        PrimaryOpcode::from_encoding(0x10),
+        Some(PrimaryOpcode::Cop0)
+    );
+    assert_eq!(
+        PrimaryOpcode::from_encoding(0x32),
+        Some(PrimaryOpcode::Lwc2)
+    );
+    assert_eq!(SpecialOpcode::from_encoding(1), None);
+    assert_eq!(RegImmOpcode::from_encoding(4), None);
+    assert_eq!(Cp0Function::from_encoding(0x10), Some(Cp0Function::Rfe));
+    assert_eq!(Cp0Function::from_encoding(0x18), Some(Cp0Function::Eret));
+    assert_eq!(Cop1Opcode::from_encoding(0x11), Some(Cop1Opcode::Double));
+    assert_eq!(FpuFunction::from_encoding(0x3f), Some(FpuFunction::CNgt));
+    assert_eq!(VectorOpcode::from_encoding(0x37), Some(VectorOpcode::Vnop));
+    assert_eq!(VectorOpcode::from_encoding(0x3f), Some(VectorOpcode::Vnull));
+}
