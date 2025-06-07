@@ -1564,3 +1564,6 @@ impl_branch_and_link!(bltzal, BLTZ, false);
 impl_branch_and_link!(bgezal, BGEZ, false);
 impl_branch_and_link!(bltzall, BLTZ, true);
 impl_branch_and_link!(bgezall, BGEZ, true);
+
+mod instruction;
+pub(crate) use instruction::Instruction;
