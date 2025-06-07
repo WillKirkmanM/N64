@@ -84,6 +84,25 @@ impl Instruction {
                 ))
     }
 
+    /// Integer loads and CP0 transfers participate in the following interlock.
+    #[inline]
+    pub fn load_destination(self) -> Option<u8> {
+        (matches!(self.primary(), 26 | 27 | 32..=39 | 48 | 52 | 55)
+            || (self.primary() == 16 && self.rs <= 1))
+            .then_some(self.rt as u8)
+    }
+
+    #[inline]
+    pub fn interlock_read_mask(self) -> u32 {
+        match self.primary() {
+            2 | 3 => 0,
+            49 | 50 | 53 | 54 | 57 | 58 | 61 | 62 => 1 << self.rs,
+            17 if self.rs <= 6 => 1 << self.rt,
+            17 if self.rs >= 16 => 0,
+            // VR4300 compares both encoded source fields even when unused.
+            _ => (1 << self.rs) | (1 << self.rt),
+        }
+    }
 }
 
 pub fn rd(opcode: u32) -> u32 {
@@ -110,3 +129,6 @@ pub fn se16(value: i16) -> u64 {
     value as i64 as u64
 }
 
+pub(super) fn gpr_read_mask(opcode: u32) -> u32 {
+    Instruction::decode(opcode).interlock_read_mask()
+}
