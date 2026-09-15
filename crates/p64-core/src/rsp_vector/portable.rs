@@ -62,3 +62,13 @@ pub fn bit_xor(a: Vector, b: Vector) -> Vector {
 pub fn and_not(a: Vector, b: Vector) -> Vector {
     !a & b
 }
+
+#[inline(always)]
+pub fn add_wrapping(a: Vector, b: Vector) -> Vector {
+    Vector(a.0 + b.0)
+}
+
+#[inline(always)]
+pub fn sub_wrapping(a: Vector, b: Vector) -> Vector {
+    Vector(a.0 - b.0)
+}
