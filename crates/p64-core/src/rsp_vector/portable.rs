@@ -15,3 +15,30 @@ pub fn vector_from_bits(bits: u128) -> Vector {
 pub fn vector_to_bits(value: Vector) -> u128 {
     u128::from_le_bytes(value.to_le_bytes())
 }
+
+#[inline(always)]
+fn lanes(x: Vector) -> [u16; LANE_COUNT] {
+    x.0.to_array().map(|x| x as u16)
+}
+
+#[inline(always)]
+fn pack(x: [u16; LANE_COUNT]) -> Vector {
+    Vector(wide::i16x8::new(x.map(|x| x as i16)))
+}
+
+#[inline(always)]
+pub fn zero() -> Vector {
+    Vector(wide::i16x8::ZERO)
+}
+
+#[inline(always)]
+pub fn splat_bytes(a: i8) -> Vector {
+    Vector::from_le_bytes([a as u8; VECTOR_BYTES])
+}
+
+#[inline(always)]
+pub fn splat_words(a: i32) -> Vector {
+    let bytes = a.to_le_bytes();
+
+    Vector::from_le_bytes(core::array::from_fn(|i| bytes[i % WORD_BYTES]))
+}
