@@ -42,3 +42,23 @@ pub fn splat_words(a: i32) -> Vector {
 
     Vector::from_le_bytes(core::array::from_fn(|i| bytes[i % WORD_BYTES]))
 }
+
+#[inline(always)]
+pub fn bit_and(a: Vector, b: Vector) -> Vector {
+    a & b
+}
+
+#[inline(always)]
+pub fn bit_or(a: Vector, b: Vector) -> Vector {
+    a | b
+}
+
+#[inline(always)]
+pub fn bit_xor(a: Vector, b: Vector) -> Vector {
+    a ^ b
+}
+
+#[inline(always)]
+pub fn and_not(a: Vector, b: Vector) -> Vector {
+    !a & b
+}
