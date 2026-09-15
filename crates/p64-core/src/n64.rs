@@ -128,3 +128,5 @@ impl N64 {
 mod bits;
 
 mod opcode;
+
+mod rsp_vector;

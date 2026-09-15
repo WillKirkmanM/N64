@@ -9,6 +9,7 @@ path = "src/n64.rs"
 crate-type = ["lib"]
 
 [dependencies]
+wide = "=1.7.1"
 p64-proc-macros = { path = "../p64-proc-macros" }
 p64-gui = { path = "../p64-gui" }
 
