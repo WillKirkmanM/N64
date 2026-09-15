@@ -72,3 +72,31 @@ pub fn add_wrapping(a: Vector, b: Vector) -> Vector {
 pub fn sub_wrapping(a: Vector, b: Vector) -> Vector {
     Vector(a.0 - b.0)
 }
+
+#[inline(always)]
+pub fn add_saturating_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.saturating_add(b.0))
+}
+
+#[inline(always)]
+pub fn sub_saturating_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.saturating_sub(b.0))
+}
+
+#[inline(always)]
+pub fn add_saturating_unsigned(a: Vector, b: Vector) -> Vector {
+    Vector(
+        a.0.cast_unsigned()
+            .saturating_add(b.0.cast_unsigned())
+            .cast_signed(),
+    )
+}
+
+#[inline(always)]
+pub fn sub_saturating_unsigned(a: Vector, b: Vector) -> Vector {
+    Vector(
+        a.0.cast_unsigned()
+            .saturating_sub(b.0.cast_unsigned())
+            .cast_signed(),
+    )
+}
