@@ -144,3 +144,18 @@ pub fn min_signed(a: Vector, b: Vector) -> Vector {
 pub fn max_signed(a: Vector, b: Vector) -> Vector {
     Vector(a.0.max(b.0))
 }
+
+#[inline(always)]
+pub fn shift_left(a: Vector, n: i32) -> Vector {
+    pack(lanes(a).map(|a| if n >= LANE_BITS as i32 { 0 } else { a << n }))
+}
+
+#[inline(always)]
+pub fn shift_right_unsigned(a: Vector, n: i32) -> Vector {
+    pack(lanes(a).map(|a| if n >= LANE_BITS as i32 { 0 } else { a >> n }))
+}
+
+#[inline(always)]
+pub fn shift_right_signed(a: Vector, n: i32) -> Vector {
+    pack(lanes(a).map(|a| ((a as i16) >> n.min(LANE_BITS as i32 - 1)) as u16))
+}
