@@ -206,3 +206,33 @@ pub fn byte_sign_mask(a: Vector) -> i32 {
         .enumerate()
         .fold(0, |v, (i, x)| v | (((x >> BYTE_SIGN_SHIFT) as i32) << i))
 }
+
+#[inline(always)]
+pub fn pack_signed_bytes(a: Vector, b: Vector) -> Vector {
+    let a = lanes(a);
+    let b = lanes(b);
+
+    Vector::from_le_bytes(core::array::from_fn(|i| {
+        (if i < LANE_COUNT {
+            a[i]
+        } else {
+            b[i - LANE_COUNT]
+        } as i16)
+            .clamp(i8::MIN as i16, i8::MAX as i16) as i8 as u8
+    }))
+}
+
+#[inline(always)]
+pub fn pack_signed_lanes(a: Vector, b: Vector) -> Vector {
+    let a = lanes(a);
+    let b = lanes(b);
+
+    pack(core::array::from_fn(|i| {
+        let x = if i < HALF_LANE_COUNT { a } else { b };
+
+        let low = (i % HALF_LANE_COUNT) * 2;
+        let word = u32::from(x[low]) | (u32::from(x[low + 1]) << LANE_BITS);
+
+        (word as i32).clamp(i16::MIN as i32, i16::MAX as i32) as u16
+    }))
+}
