@@ -119,3 +119,28 @@ pub fn mul_high_unsigned(a: Vector, b: Vector) -> Vector {
             .cast_signed(),
     )
 }
+
+#[inline(always)]
+pub fn equal_lanes(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.simd_eq(b.0))
+}
+
+#[inline(always)]
+pub fn greater_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.simd_gt(b.0))
+}
+
+#[inline(always)]
+pub fn less_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.simd_lt(b.0))
+}
+
+#[inline(always)]
+pub fn min_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.min(b.0))
+}
+
+#[inline(always)]
+pub fn max_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.max(b.0))
+}
