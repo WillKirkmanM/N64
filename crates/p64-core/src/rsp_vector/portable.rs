@@ -100,3 +100,22 @@ pub fn sub_saturating_unsigned(a: Vector, b: Vector) -> Vector {
             .cast_signed(),
     )
 }
+
+#[inline(always)]
+pub fn mul_low(a: Vector, b: Vector) -> Vector {
+    Vector(a.0 * b.0)
+}
+
+#[inline(always)]
+pub fn mul_high_signed(a: Vector, b: Vector) -> Vector {
+    Vector(a.0.mul_keep_high(b.0))
+}
+
+#[inline(always)]
+pub fn mul_high_unsigned(a: Vector, b: Vector) -> Vector {
+    Vector(
+        a.0.cast_unsigned()
+            .mul_keep_high(b.0.cast_unsigned())
+            .cast_signed(),
+    )
+}
