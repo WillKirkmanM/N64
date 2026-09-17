@@ -130,3 +130,5 @@ mod bits;
 mod opcode;
 
 mod rsp_vector;
+
+pub mod recompiler;
