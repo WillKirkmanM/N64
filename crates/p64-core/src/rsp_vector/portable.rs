@@ -262,3 +262,19 @@ pub fn interleave_low(a: Vector, b: Vector) -> Vector {
 pub fn interleave_high(a: Vector, b: Vector) -> Vector {
     interleave(a, b, HALF_LANE_COUNT)
 }
+
+/// Build bytes listed from the most significant to the least significant byte.
+#[inline(always)]
+pub fn from_bytes_reversed(mut bytes: [i8; VECTOR_BYTES]) -> Vector {
+    bytes.reverse();
+
+    Vector::from_le_bytes(bytes.map(|byte| byte as u8))
+}
+
+/// Build lanes listed from the most significant to the least significant lane.
+#[inline(always)]
+pub fn from_lanes_reversed(mut lanes: [i16; LANE_COUNT]) -> Vector {
+    lanes.reverse();
+
+    pack(lanes.map(|lane| lane as u16))
+}
