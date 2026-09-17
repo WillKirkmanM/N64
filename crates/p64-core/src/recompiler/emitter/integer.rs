@@ -1,4 +1,6 @@
-use super::{MAX_BLOCK_INSTRUCTIONS};
+use super::{
+    supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS,
+};
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 
 use super::{

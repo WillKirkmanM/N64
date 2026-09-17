@@ -1,4 +1,7 @@
-use super::{NativeMemoryContext, NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS};
+use super::{
+    supported_memory_opcode, supported_opcode, NativeMemoryContext, NativeMemoryExit,
+    MAX_BLOCK_INSTRUCTIONS,
+};
 
 use super::{
     encoding::{Condition, GUEST_INSTRUCTION_BYTES, GUEST_REGISTER_BYTES},

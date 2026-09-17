@@ -36,3 +36,94 @@ pub use types::{
     NativeMemoryContext, NativeMemoryExit,
 };
 use types::{BlockMetadata, NativeBranchFunction, NativeFunction, NativeMemoryFunction};
+
+pub fn supported_opcode(opcode: u32) -> bool {
+    match PrimaryOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).primary() as usize) {
+        Some(PrimaryOpcode::Special) => matches!(
+            SpecialOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).function()),
+            Some(
+                SpecialOpcode::Sll
+                    | SpecialOpcode::Srl
+                    | SpecialOpcode::Sra
+                    | SpecialOpcode::Sllv
+                    | SpecialOpcode::Srlv
+                    | SpecialOpcode::Srav
+                    | SpecialOpcode::Dsllv
+                    | SpecialOpcode::Dsrlv
+                    | SpecialOpcode::Dsrav
+                    | SpecialOpcode::Addu
+                    | SpecialOpcode::Subu
+                    | SpecialOpcode::And
+                    | SpecialOpcode::Or
+                    | SpecialOpcode::Xor
+                    | SpecialOpcode::Nor
+                    | SpecialOpcode::Slt
+                    | SpecialOpcode::Sltu
+                    | SpecialOpcode::Daddu
+                    | SpecialOpcode::Dsubu
+                    | SpecialOpcode::Dsll
+                    | SpecialOpcode::Dsrl
+                    | SpecialOpcode::Dsra
+                    | SpecialOpcode::Dsll32
+                    | SpecialOpcode::Dsrl32
+                    | SpecialOpcode::Dsra32
+            )
+        ),
+        Some(
+            PrimaryOpcode::Addiu
+            | PrimaryOpcode::Slti
+            | PrimaryOpcode::Sltiu
+            | PrimaryOpcode::Andi
+            | PrimaryOpcode::Ori
+            | PrimaryOpcode::Xori
+            | PrimaryOpcode::Lui
+            | PrimaryOpcode::Daddiu,
+        ) => true,
+        _ => false,
+    }
+}
+
+/// Nonlinking, nonlikely branches with an ordinary scalar delay slot.
+pub fn supported_branch_opcode(opcode: u32) -> bool {
+    matches!(
+        PrimaryOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).primary() as usize),
+        Some(
+            PrimaryOpcode::J
+                | PrimaryOpcode::Beq
+                | PrimaryOpcode::Bne
+                | PrimaryOpcode::Blez
+                | PrimaryOpcode::Bgtz
+        )
+    )
+}
+
+pub fn supported_memory_opcode(opcode: u32) -> bool {
+    matches!(
+        PrimaryOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).primary() as usize),
+        Some(PrimaryOpcode::Lw | PrimaryOpcode::Sw | PrimaryOpcode::Ld | PrimaryOpcode::Sd)
+    )
+}
+
+fn is_wide_opcode(opcode: u32) -> bool {
+    matches!(
+        PrimaryOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).primary() as usize),
+        Some(PrimaryOpcode::Daddiu | PrimaryOpcode::Ld | PrimaryOpcode::Sd)
+    ) || (PrimaryOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).primary() as usize)
+        == Some(PrimaryOpcode::Special)
+        && matches!(
+            SpecialOpcode::from_encoding(crate::cpu::Instruction::decode(opcode).function()),
+            Some(
+                SpecialOpcode::Dsllv
+                    | SpecialOpcode::Dsrlv
+                    | SpecialOpcode::Dsrav
+                    | SpecialOpcode::Daddu
+                    | SpecialOpcode::Dsubu
+                    | SpecialOpcode::Dsll
+                    | SpecialOpcode::Dsrl
+                    | SpecialOpcode::Dsra
+                    | SpecialOpcode::Dsll32
+                    | SpecialOpcode::Dsrl32
+                    | SpecialOpcode::Dsra32
+            )
+        ))
+}

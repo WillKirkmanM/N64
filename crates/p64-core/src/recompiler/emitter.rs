@@ -1,4 +1,7 @@
-use super::{NativeMemoryContext, NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS};
+use super::{
+    supported_branch_opcode, supported_memory_opcode, supported_opcode, NativeMemoryContext,
+    NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS,
+};
 
 mod branch;
 mod encoding;
