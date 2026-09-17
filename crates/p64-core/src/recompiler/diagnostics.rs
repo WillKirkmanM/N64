@@ -10,7 +10,17 @@ pub struct ExecutionDiagnostics {
     pub native_reject_counts: [u64; NATIVE_REJECT_COUNT],
 }
 
-impl ExecutionDiagnostics {}
+impl ExecutionDiagnostics {
+    pub(super) fn extend_branch(&mut self, branch_length: usize) {
+        for histogram in [
+            &mut self.native_block_length_counts,
+            &mut self.native_branch_length_counts,
+        ] {
+            histogram[branch_length] -= 1;
+            histogram[branch_length + 1] += 1;
+        }
+    }
+}
 
 impl Default for ExecutionDiagnostics {
     fn default() -> Self {
