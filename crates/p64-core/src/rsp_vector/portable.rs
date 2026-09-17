@@ -236,3 +236,29 @@ pub fn pack_signed_lanes(a: Vector, b: Vector) -> Vector {
         (word as i32).clamp(i16::MIN as i32, i16::MAX as i32) as u16
     }))
 }
+
+#[inline(always)]
+fn interleave(a: Vector, b: Vector, start: usize) -> Vector {
+    let a = lanes(a);
+    let b = lanes(b);
+
+    pack(core::array::from_fn(|i| {
+        let lane = start + i / 2;
+
+        if i % 2 == 0 {
+            a[lane]
+        } else {
+            b[lane]
+        }
+    }))
+}
+
+#[inline(always)]
+pub fn interleave_low(a: Vector, b: Vector) -> Vector {
+    interleave(a, b, 0)
+}
+
+#[inline(always)]
+pub fn interleave_high(a: Vector, b: Vector) -> Vector {
+    interleave(a, b, HALF_LANE_COUNT)
+}
