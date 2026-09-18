@@ -12,6 +12,9 @@ use super::{
 };
 
 mod encoding;
+use encoding::{
+    arithmetic_immediate, compare_result, load_guest, load_memory, mov_register, store_memory,
+};
 
 const CACHED_HOST_REGISTER_COUNT: usize = 4;
 const FIRST_CACHED_HOST_REGISTER: u8 = 8; // Volatile R8..R11 on both native ABIs.
