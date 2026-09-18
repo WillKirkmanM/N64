@@ -32,3 +32,81 @@ const EXTRA: usize = offset_of!(Context, extra_cycles);
 const DATA: usize = offset_of!(Context, last_data_address);
 const PENDING: usize = offset_of!(Context, pending_load);
 const EXIT: usize = offset_of!(Context, side_exit);
+
+fn jump(code: &mut Vec<u8>, condition: Option<Condition>) -> usize {
+    if let Some(condition) = condition {
+        code.extend_from_slice(&[0x0F, condition.jump_opcode()]);
+    } else {
+        code.push(0xE9);
+    }
+
+    let patch = code.len();
+    code.extend_from_slice(&[0; RELATIVE_JUMP_BYTES]);
+
+    patch
+}
+
+fn patch(code: &mut [u8], at: usize, target: usize) {
+    code[at..at + RELATIVE_JUMP_BYTES].copy_from_slice(
+        &((target as isize - (at + RELATIVE_JUMP_BYTES) as isize) as i32).to_le_bytes(),
+    );
+}
+
+fn load_gpr(code: &mut Vec<u8>, guest: u32, rcx: bool, word: bool) {
+    if guest == 0 {
+        code.extend_from_slice(if rcx { &[0x31, 0xC9] } else { &[0x31, 0xC0] });
+    } else {
+        if !word {
+            code.push(0x48);
+        }
+
+        code.extend_from_slice(&[0x8B, if rcx { 0x8A } else { 0x82 }]);
+        displacement(code, guest as usize * GUEST_REGISTER_BYTES);
+    }
+}
+
+fn interlock(code: &mut Vec<u8>, opcode: u32) {
+    let operands = Operands::decode(opcode);
+    let (rs, rt) = (operands.rs as u8, operands.rt as u8);
+    code.extend_from_slice(&[0x0F, 0xB6, 0x83]);
+    displacement(code, PENDING);
+    code.extend_from_slice(&[0x85, 0xC0]);
+    let zero = jump(code, Some(Condition::Equal));
+    code.extend_from_slice(&[0x83, 0xF8, rs]);
+    let rs_match = jump(code, Some(Condition::Equal));
+    code.extend_from_slice(&[0x83, 0xF8, rt]);
+    let mismatch = jump(code, Some(Condition::NotEqual));
+    let increment = code.len();
+
+    if EXTRA <= SHORT_DISPLACEMENT_MAX {
+        code.extend_from_slice(&[0x48, 0x83, 0x43, EXTRA as u8, 1]);
+    } else {
+        code.extend_from_slice(&[0x48, 0x83, 0x83]);
+        displacement(code, EXTRA);
+        code.push(1);
+    }
+
+    let clear = code.len();
+
+    if PENDING <= SHORT_DISPLACEMENT_MAX {
+        code.extend_from_slice(&[0xC6, 0x43, PENDING as u8, 0]);
+    } else {
+        code.extend_from_slice(&[0xC6, 0x83]);
+        displacement(code, PENDING);
+        code.push(0);
+    }
+
+    patch(code, zero, clear);
+    patch(code, rs_match, increment);
+    patch(code, mismatch, clear);
+}
+
+fn retire(code: &mut Vec<u8>, count: usize) {
+    if RETIRED <= SHORT_DISPLACEMENT_MAX {
+        code.extend_from_slice(&[0x48, 0x83, 0x43, RETIRED as u8, count as u8]);
+    } else {
+        code.extend_from_slice(&[0x48, 0x83, 0x83]);
+        displacement(code, RETIRED);
+        code.push(count as u8);
+    }
+}
