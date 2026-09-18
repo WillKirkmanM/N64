@@ -82,6 +82,15 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
                     },
                     0xc0,
                 ]),
+                Some(SpecialOpcode::And) => code.extend_from_slice(&[0x4c, 0x21, 0xc0]),
+                Some(SpecialOpcode::Or | SpecialOpcode::Nor) => {
+                    code.extend_from_slice(&[0x4c, 0x09, 0xc0]);
+
+                    if function == Some(SpecialOpcode::Nor) {
+                        code.extend_from_slice(&[0x48, 0xf7, 0xd0]);
+                    }
+                }
+                Some(SpecialOpcode::Xor) => code.extend_from_slice(&[0x4c, 0x31, 0xc0]),
 
                 _ => return None,
             }
