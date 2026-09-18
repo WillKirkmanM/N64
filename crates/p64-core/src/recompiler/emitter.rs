@@ -8,3 +8,5 @@ mod encoding;
 mod integer;
 mod memory;
 mod operands;
+
+pub use integer::{compile_opcode};

@@ -22,4 +22,73 @@ impl Operands {
             shift: instruction.shift_amount() as u8,
         }
     }
+
+    pub(super) fn destination(self) -> usize {
+        if self.primary == Some(PrimaryOpcode::Special) {
+            self.rd
+        } else {
+            self.rt
+        }
+    }
+
+    pub(super) fn is_shift(self) -> bool {
+        matches!(
+            self.function,
+            Some(
+                SpecialOpcode::Sll
+                    | SpecialOpcode::Srl
+                    | SpecialOpcode::Sra
+                    | SpecialOpcode::Sllv
+                    | SpecialOpcode::Srlv
+                    | SpecialOpcode::Srav
+                    | SpecialOpcode::Dsllv
+                    | SpecialOpcode::Dsrlv
+                    | SpecialOpcode::Dsrav
+                    | SpecialOpcode::Dsll
+                    | SpecialOpcode::Dsrl
+                    | SpecialOpcode::Dsra
+                    | SpecialOpcode::Dsll32
+                    | SpecialOpcode::Dsrl32
+                    | SpecialOpcode::Dsra32
+            )
+        )
+    }
+
+    pub(super) fn is_variable_shift(self) -> bool {
+        matches!(
+            self.function,
+            Some(
+                SpecialOpcode::Sllv
+                    | SpecialOpcode::Srlv
+                    | SpecialOpcode::Srav
+                    | SpecialOpcode::Dsllv
+                    | SpecialOpcode::Dsrlv
+                    | SpecialOpcode::Dsrav
+            )
+        )
+    }
+
+    pub(super) fn is_wide_shift(self) -> bool {
+        matches!(
+            self.function,
+            Some(
+                SpecialOpcode::Dsllv
+                    | SpecialOpcode::Dsrlv
+                    | SpecialOpcode::Dsrav
+                    | SpecialOpcode::Dsll
+                    | SpecialOpcode::Dsrl
+                    | SpecialOpcode::Dsra
+                    | SpecialOpcode::Dsll32
+                    | SpecialOpcode::Dsrl32
+                    | SpecialOpcode::Dsra32
+            )
+        )
+    }
+
+    pub(super) fn is_high_shift(self) -> bool {
+        matches!(
+            self.function,
+            Some(SpecialOpcode::Dsll32 | SpecialOpcode::Dsrl32 | SpecialOpcode::Dsra32)
+        )
+    }
 }

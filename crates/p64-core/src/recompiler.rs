@@ -1,6 +1,7 @@
 //! Native code is keyed by fetched opcodes. The CPU dispatcher handles timing,
 //! privilege checks and exceptions.
 mod emitter;
+pub use emitter::{compile_opcode};
 
 #[cfg(target_arch = "x86_64")]
 mod executable;
