@@ -4,7 +4,10 @@ use super::{
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 
 use super::{
-    encoding::{ArithmeticOperation, Condition, GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT},
+    encoding::{
+        load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition,
+        GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT,
+    },
     operands::Operands,
 };
 

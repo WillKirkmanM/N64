@@ -13,4 +13,12 @@ pub(in crate::recompiler::emitter) enum Condition {
     Greater = 0xf,
 }
 
-impl Condition {}
+impl Condition {
+    pub(in crate::recompiler::emitter) const fn set_opcode(self) -> u8 {
+        SET_CONDITION_BASE | self as u8
+    }
+
+    pub(in crate::recompiler::emitter) const fn jump_opcode(self) -> u8 {
+        JUMP_CONDITION_BASE | self as u8
+    }
+}

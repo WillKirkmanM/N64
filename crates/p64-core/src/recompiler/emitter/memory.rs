@@ -4,7 +4,7 @@ use super::{
 };
 
 use super::{
-    encoding::{Condition, GUEST_INSTRUCTION_BYTES, GUEST_REGISTER_BYTES},
+    encoding::{displacement, Condition, GUEST_INSTRUCTION_BYTES, GUEST_REGISTER_BYTES},
     operands::Operands,
 };
 
