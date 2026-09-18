@@ -91,7 +91,9 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
                     }
                 }
                 Some(SpecialOpcode::Xor) => code.extend_from_slice(&[0x4c, 0x31, 0xc0]),
-
+                Some(SpecialOpcode::Slt | SpecialOpcode::Sltu) => {
+                    compare(&mut code, function == Some(SpecialOpcode::Sltu))
+                }
                 _ => return None,
             }
         }
@@ -110,6 +112,10 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
         code.extend_from_slice(&immediate.to_le_bytes());
 
         match primary {
+            Some(PrimaryOpcode::Slti | PrimaryOpcode::Sltiu) => {
+                compare(&mut code, primary == Some(PrimaryOpcode::Sltiu))
+            }
+
             _ => return None,
         }
     }
