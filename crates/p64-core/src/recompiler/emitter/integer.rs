@@ -55,7 +55,65 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
 
     if primary == Some(PrimaryOpcode::Special) {
         if operands.is_shift() {
-            return None;
+            load_operand(&mut code, rt, false);
+            let variable = operands.is_variable_shift();
+            let wide = operands.is_wide_shift();
+            let arithmetic = matches!(
+                function,
+                Some(
+                    SpecialOpcode::Sra
+                        | SpecialOpcode::Srav
+                        | SpecialOpcode::Dsrav
+                        | SpecialOpcode::Dsra
+                        | SpecialOpcode::Dsra32
+                )
+            );
+            let left = matches!(
+                function,
+                Some(
+                    SpecialOpcode::Sll
+                        | SpecialOpcode::Sllv
+                        | SpecialOpcode::Dsllv
+                        | SpecialOpcode::Dsll
+                        | SpecialOpcode::Dsll32
+                )
+            );
+            let operation = if left {
+                0xe0
+            } else if arithmetic {
+                0xf8
+            } else {
+                0xe8
+            };
+
+            if variable {
+                load_operand(&mut code, rs, true);
+                code.extend_from_slice(&[0x44, 0x89, 0xc1]); // ecx = r8d
+                if !wide {
+                    code.extend_from_slice(&[0x83, 0xe1, 0x1f]);
+                }
+            }
+            // VR4300 word arithmetic shifts consume the full signed 64-bit
+            // operand before truncating/sign extending the result.
+            if wide || arithmetic {
+                code.push(0x48);
+            }
+
+            code.extend_from_slice(&[if variable { 0xd3 } else { 0xc1 }, operation]);
+            if !variable {
+                code.push(
+                    operands.shift
+                        + if operands.is_high_shift() {
+                            HIGH_SHIFT_OFFSET
+                        } else {
+                            0
+                        },
+                );
+            }
+
+            if !wide {
+                sign_extend_word(&mut code);
+            }
         } else {
             load_operand(&mut code, rs, false);
             load_operand(&mut code, rt, true);
@@ -94,7 +152,7 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
                 Some(SpecialOpcode::Slt | SpecialOpcode::Sltu) => {
                     compare(&mut code, function == Some(SpecialOpcode::Sltu))
                 }
-                _ => return None,
+                _ => unreachable!(),
             }
         }
     } else {
@@ -130,7 +188,7 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
                 sign_extend_word(&mut code);
             }
             Some(PrimaryOpcode::Daddiu) => code.extend_from_slice(&[0x4c, 0x01, 0xc0]),
-            _ => return None,
+            _ => unreachable!(),
         }
     }
 
