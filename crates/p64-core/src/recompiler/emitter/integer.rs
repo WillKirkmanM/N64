@@ -112,10 +112,24 @@ pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
         code.extend_from_slice(&immediate.to_le_bytes());
 
         match primary {
+            Some(PrimaryOpcode::Addiu) => {
+                code.extend_from_slice(&[0x44, 0x01, 0xc0]);
+                sign_extend_word(&mut code);
+            }
             Some(PrimaryOpcode::Slti | PrimaryOpcode::Sltiu) => {
                 compare(&mut code, primary == Some(PrimaryOpcode::Sltiu))
             }
-
+            Some(PrimaryOpcode::Andi) => code.extend_from_slice(&[0x4c, 0x21, 0xc0]),
+            Some(PrimaryOpcode::Ori) => code.extend_from_slice(&[0x4c, 0x09, 0xc0]),
+            Some(PrimaryOpcode::Xori) => code.extend_from_slice(&[0x4c, 0x31, 0xc0]),
+            Some(PrimaryOpcode::Lui) => {
+                code.push(0xb8);
+                code.extend_from_slice(
+                    &((opcode & IMMEDIATE_MASK) << IMMEDIATE_HIGH_SHIFT).to_le_bytes(),
+                );
+                sign_extend_word(&mut code);
+            }
+            Some(PrimaryOpcode::Daddiu) => code.extend_from_slice(&[0x4c, 0x01, 0xc0]),
             _ => return None,
         }
     }
