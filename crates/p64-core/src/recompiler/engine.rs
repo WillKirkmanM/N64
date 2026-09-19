@@ -51,6 +51,19 @@ impl Engine {
         }
     }
 
+    pub fn aot(opcodes: impl IntoIterator<Item = u32>) -> Self {
+        let mut engine = Self {
+            backend: Backend::Aot,
+            ..Self::interpreter()
+        };
+
+        for opcode in opcodes {
+            engine.precompile(opcode);
+        }
+
+        engine
+    }
+
     pub fn compiled_instructions(&self) -> usize {
         self.code.cache.len()
     }
@@ -71,6 +84,119 @@ impl Engine {
     /// Also changes if an executable-memory error invalidates existing code.
     pub fn generation(&self) -> u64 {
         self.code.generation
+    }
+
+    /// Validate every record against the local emitter before allocating executable memory.
+    pub fn from_aot_codes(codes: Vec<(u32, Vec<u8>)>) -> Result<Self, String> {
+        if codes.len() > MAX_SCALAR_RECORDS {
+            return Err("AOT instruction limit exceeded".into());
+        }
+
+        for (opcode, bytes) in &codes {
+            if compile_opcode(*opcode).as_ref() != Some(bytes) {
+                return Err(format!("Invalid or incompatible AOT code for {opcode:08x}"));
+            }
+        }
+
+        Self::from_validated_aot_records(
+            codes
+                .into_iter()
+                .map(|(opcode, bytes)| (vec![opcode], bytes))
+                .collect(),
+        )
+    }
+
+    fn from_validated_aot_records(codes: Vec<NativeCodeRecord>) -> Result<Self, String> {
+        let engine = Self::aot(std::iter::empty());
+        #[cfg(target_arch = "x86_64")]
+        let mut engine = engine;
+        #[cfg(target_arch = "x86_64")]
+        {
+            for (opcodes, bytes) in codes {
+                let scalar = opcodes.len() == 1;
+                let branch = opcodes
+                    .last()
+                    .is_some_and(|opcode| supported_branch_opcode(*opcode));
+                let memory = opcodes
+                    .iter()
+                    .any(|opcode| supported_memory_opcode(*opcode));
+
+                if (scalar && engine.code.cache.contains_key(&opcodes[0]))
+                    || (!scalar
+                        && !branch
+                        && !memory
+                        && engine.code.blocks.contains_key(opcodes.as_slice()))
+                    || (branch && engine.code.branch_blocks.contains_key(opcodes.as_slice()))
+                    || (memory && engine.code.memory_blocks.contains_key(opcodes.as_slice()))
+                {
+                    continue;
+                }
+
+                if bytes.is_empty() || bytes.len() > ExecutablePage::SIZE {
+                    return Err("Invalid AOT native record size".into());
+                }
+
+                if engine
+                    .code
+                    .pages
+                    .last()
+                    .is_none_or(|page| !page.fits(bytes.len()))
+                {
+                    if let Some(page) = engine.code.pages.last_mut() {
+                        if !page.seal() {
+                            return Err("Native executable protection failed".into());
+                        }
+                    }
+
+                    if engine.code.pages.len() >= MAX_NATIVE_BYTES / ExecutablePage::SIZE {
+                        return Err("Native executable memory limit exceeded".into());
+                    }
+
+                    let page =
+                        ExecutablePage::new().ok_or("Native executable allocation failed")?;
+                    engine.code.pages.push(page);
+                }
+
+                let pointer = engine
+                    .code
+                    .pages
+                    .last_mut()
+                    .unwrap()
+                    .insert_unsealed(&bytes)
+                    .ok_or("Native AOT page packing failed")?;
+                // SAFETY: Validated emitter bytes stay private until every page is sealed RX.
+                if memory {
+                    let function =
+                        unsafe { std::mem::transmute::<*mut u8, NativeMemoryFunction>(pointer) };
+                    engine.code.memory_blocks.insert(opcodes, function);
+                } else if branch {
+                    let function =
+                        unsafe { std::mem::transmute::<*mut u8, NativeBranchFunction>(pointer) };
+                    engine.code.branch_blocks.insert(opcodes, function);
+                } else {
+                    let function =
+                        unsafe { std::mem::transmute::<*mut u8, NativeFunction>(pointer) };
+
+                    if scalar {
+                        engine.code.cache.insert(opcodes[0], function);
+                    } else {
+                        engine.code.blocks.insert(opcodes, function);
+                    }
+                }
+            }
+
+            if let Some(page) = engine.code.pages.last_mut() {
+                if !page.seal() {
+                    return Err("Native executable protection failed".into());
+                }
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        if !codes.is_empty() {
+            return Err("Native AOT is unavailable on this architecture".into());
+        }
+
+        Ok(engine)
     }
 
     pub fn precompile(&mut self, opcode: u32) -> bool {
