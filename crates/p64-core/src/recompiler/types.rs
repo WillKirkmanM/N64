@@ -66,7 +66,27 @@ pub struct NativeMemoryContext<'a> {
         std::marker::PhantomData<(&'a mut [u64; 32], &'a mut [crate::cache::DCache; 512])>,
 }
 
-impl<'a> NativeMemoryContext<'a> {}
+impl<'a> NativeMemoryContext<'a> {
+    pub fn new(
+        gpr: &'a mut [u64; 32],
+        dcache: &'a mut [crate::cache::DCache; 512],
+        start_pc: u64,
+        pending_load: u8,
+        last_data_address: u64,
+    ) -> Self {
+        Self {
+            gpr: gpr.as_mut_ptr(),
+            dcache: dcache.as_mut_ptr(),
+            start_pc,
+            retired_count: 0,
+            extra_cycles: 0,
+            last_data_address,
+            pending_load,
+            side_exit: NativeMemoryExit::Complete,
+            borrow: std::marker::PhantomData,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct NativeMemoryBlock {
