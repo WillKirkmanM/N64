@@ -41,4 +41,14 @@ impl ExecutionStats {
         #[cfg(not(feature = "accuracy-diagnostics"))]
         let _ = reason;
     }
+
+    #[inline]
+    pub(super) fn record_block(&mut self, retired: usize) {
+        self.native_executions += retired as u64;
+        self.native_block_executions += 1;
+        #[cfg(feature = "accuracy-diagnostics")]
+        {
+            self.diagnostics.native_block_length_counts[retired] += 1;
+        }
+    }
 }

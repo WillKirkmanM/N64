@@ -304,6 +304,21 @@ impl Engine {
         }
     }
 
+    #[inline]
+    pub fn execute_prepared_block(&mut self, block: NativeBlock, gpr: &mut [u64; 32]) -> bool {
+        if !self.owns_generation(block.generation) {
+            return false;
+        }
+        // SAFETY: The generation check confirms this engine still owns the RX
+        // mapping; its trusted emitter accesses only the borrowed 32 GPRs.
+        unsafe {
+            (block.function)(gpr.as_mut_ptr());
+        }
+        self.stats.record_block(block.metadata.instruction_count);
+
+        true
+    }
+
     /// Only JIT compiles missing entries; AOT misses return None for scalar fallback.
     pub fn prepare(&mut self, opcode: u32) -> Option<NativeInstruction> {
         if self.backend == Backend::Interpreter {
