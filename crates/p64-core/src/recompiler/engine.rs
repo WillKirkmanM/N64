@@ -73,4 +73,89 @@ impl Engine {
         self.code.generation
     }
 
+    pub fn precompile(&mut self, opcode: u32) -> bool {
+        if self.code.cache.contains_key(&opcode) {
+            return true;
+        }
+
+        if !self.code.compilation_available || self.code.cache.len() >= MAX_SCALAR_RECORDS {
+            return false;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if let Some(code) = compile_opcode(opcode) {
+            return self.install_code(opcode, &code);
+        }
+
+        false
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn install_code(&mut self, opcode: u32, code: &[u8]) -> bool {
+        if self.code.cache.contains_key(&opcode) {
+            return true;
+        }
+
+        let Some(function) = self.install_integer_leaf(code) else {
+            return false;
+        };
+
+        self.code.cache.insert(opcode, function);
+
+        true
+    }
+
+    fn install_integer_leaf(&mut self, code: &[u8]) -> Option<NativeFunction> {
+        let pointer = self.install_native(code)?;
+        // SAFETY: Both private callers supply trusted GPR-ABI emitter results;
+        // installation seals the owned mapping before exposing its entry.
+        Some(unsafe { std::mem::transmute::<*mut u8, NativeFunction>(pointer) })
+    }
+
+    fn install_native(&mut self, code: &[u8]) -> Option<*mut u8> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if code.is_empty() || code.len() > ExecutablePage::SIZE {
+                return None;
+            }
+
+            if self
+                .code
+                .pages
+                .last()
+                .is_none_or(|page| !page.fits(code.len()))
+            {
+                if self.code.pages.len() >= self.code.page_limit {
+                    self.code.compilation_available = false;
+                    return None;
+                }
+
+                let Some(page) = ExecutablePage::new() else {
+                    self.code.compilation_available = false;
+                    return None;
+                };
+                self.code.pages.push(page);
+            }
+
+            let Some(pointer) = self.code.pages.last_mut().unwrap().insert(code) else {
+                // A failed RW -> RX transition can invalidate earlier entries in this page.
+                self.code.cache.clear();
+                self.code.blocks.clear();
+                self.code.branch_blocks.clear();
+                self.code.memory_blocks.clear();
+                self.code.generation = next_generation();
+                self.backend = Backend::Interpreter;
+                self.code.compilation_available = false;
+
+                return None;
+            };
+
+            Some(pointer)
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = code;
+
+            None
+        }
+    }
 }
