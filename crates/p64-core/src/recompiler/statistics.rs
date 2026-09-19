@@ -16,4 +16,29 @@ pub struct ExecutionStats {
     pub diagnostics: ExecutionDiagnostics,
 }
 
-impl ExecutionStats {}
+impl ExecutionStats {
+    #[inline]
+    pub(crate) fn record_decoded(&mut self, opcode: u32, backend: Backend) {
+        #[cfg(feature = "accuracy-diagnostics")]
+        {
+            let primary = crate::cpu::Instruction::decode(opcode).primary() as usize;
+            self.diagnostics.scalar_opcode_counts[primary] += 1;
+        }
+        #[cfg(not(feature = "accuracy-diagnostics"))]
+        let _ = opcode;
+
+        if backend != Backend::Interpreter {
+            self.fallback_executions += 1;
+        }
+    }
+
+    #[inline]
+    pub(super) fn record_reject(&mut self, reason: NativeReject) {
+        #[cfg(feature = "accuracy-diagnostics")]
+        {
+            self.diagnostics.native_reject_counts[reason as usize] += 1;
+        }
+        #[cfg(not(feature = "accuracy-diagnostics"))]
+        let _ = reason;
+    }
+}

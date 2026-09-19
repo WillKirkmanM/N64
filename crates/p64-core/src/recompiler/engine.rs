@@ -80,6 +80,11 @@ impl Engine {
         self.code.memory_blocks.len()
     }
 
+    #[inline]
+    pub fn record_native_reject(&mut self, reason: NativeReject) {
+        self.stats.record_reject(reason);
+    }
+
     /// Unique across engines, including replacing an engine at the same address.
     /// Also changes if an executable-memory error invalidates existing code.
     pub fn generation(&self) -> u64 {

@@ -63,6 +63,11 @@ impl ExecutablePage {
         Some(entry)
     }
 
+    #[cfg(test)]
+    pub(super) fn is_sealed(&self) -> bool {
+        self.sealed
+    }
+
     pub(super) fn seal(&mut self) -> bool {
         if self.sealed {
             return true;
