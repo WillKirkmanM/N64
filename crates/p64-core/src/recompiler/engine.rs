@@ -318,4 +318,36 @@ impl Engine {
             generation: self.code.generation,
         })
     }
+
+    /// Reject handles invalidated by engine replacement or executable-memory failure.
+    #[inline]
+    pub fn execute_prepared(
+        &mut self,
+        instruction: NativeInstruction,
+        gpr: &mut [u64; 32],
+    ) -> bool {
+        if !self.owns_generation(instruction.generation) {
+            self.stats.fallback_executions += 1;
+
+            return false;
+        }
+        // SAFETY: The generation check keeps the sealed mapping live; the leaf uses only gpr.
+        unsafe {
+            (instruction.function)(gpr.as_mut_ptr());
+        }
+        self.stats.native_executions += 1;
+
+        true
+    }
+
+    /// Returns false without changing registers for unsupported instructions.
+    pub fn try_execute(&mut self, opcode: u32, gpr: &mut [u64; 32]) -> bool {
+        if let Some(instruction) = self.prepare(opcode) {
+            self.execute_prepared(instruction, gpr)
+        } else {
+            self.stats.fallback_executions += 1;
+
+            false
+        }
+    }
 }
