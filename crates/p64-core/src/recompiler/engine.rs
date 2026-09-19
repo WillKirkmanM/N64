@@ -230,6 +230,20 @@ impl Engine {
         true
     }
 
+    fn install_block(&mut self, opcodes: &[u32], code: &[u8]) -> bool {
+        if self.code.blocks.contains_key(opcodes) {
+            return true;
+        }
+
+        let Some(function) = self.install_integer_leaf(code) else {
+            return false;
+        };
+
+        self.code.blocks.insert(opcodes.to_vec(), function);
+
+        true
+    }
+
     fn install_integer_leaf(&mut self, code: &[u8]) -> Option<NativeFunction> {
         let pointer = self.install_native(code)?;
         // SAFETY: Both private callers supply trusted GPR-ABI emitter results;
@@ -283,5 +297,25 @@ impl Engine {
 
             None
         }
+    }
+
+    /// Only JIT compiles missing entries; AOT misses return None for scalar fallback.
+    pub fn prepare(&mut self, opcode: u32) -> Option<NativeInstruction> {
+        if self.backend == Backend::Interpreter {
+            return None;
+        }
+
+        let function = self.code.cache.get(&opcode).copied().or_else(|| {
+            if self.backend == Backend::Jit && supported_opcode(opcode) && self.precompile(opcode) {
+                self.code.cache.get(&opcode).copied()
+            } else {
+                None
+            }
+        });
+
+        function.map(|function| NativeInstruction {
+            function,
+            generation: self.code.generation,
+        })
     }
 }
