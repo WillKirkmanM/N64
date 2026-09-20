@@ -319,6 +319,25 @@ impl Engine {
         true
     }
 
+    /// Updates GPRs and compares the branch; the caller handles retirement and delay state.
+    #[inline]
+    pub fn execute_prepared_branch_block(
+        &mut self,
+        block: NativeBranchBlock,
+        gpr: &mut [u64; 32],
+    ) -> Option<bool> {
+        if !self.owns_generation(block.generation) {
+            return None;
+        }
+        // SAFETY: The matching generation keeps the RX mapping alive, and the
+        // trusted branch emitter uses only this live GPR array and returns 0/1.
+        let taken = unsafe { (block.function)(gpr.as_mut_ptr()) } != 0;
+        self.stats
+            .record_branch_block(block.metadata.instruction_count);
+
+        Some(taken)
+    }
+
     /// Only JIT compiles missing entries; AOT misses return None for scalar fallback.
     pub fn prepare(&mut self, opcode: u32) -> Option<NativeInstruction> {
         if self.backend == Backend::Interpreter {

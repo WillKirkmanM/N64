@@ -51,4 +51,14 @@ impl ExecutionStats {
             self.diagnostics.native_block_length_counts[retired] += 1;
         }
     }
+
+    #[inline]
+    pub(super) fn record_branch_block(&mut self, retired: usize) {
+        self.record_block(retired);
+        self.native_branch_executions += 1;
+        #[cfg(feature = "accuracy-diagnostics")]
+        {
+            self.diagnostics.native_branch_length_counts[retired] += 1;
+        }
+    }
 }
