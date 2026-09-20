@@ -111,6 +111,25 @@ impl Engine {
         )
     }
 
+    /// Validate every block against the local emitter before allocating executable memory.
+    pub fn from_aot_blocks(codes: Vec<NativeCodeRecord>) -> Result<Self, String> {
+        let scalar_count = codes.iter().filter(|(ops, _)| ops.len() == 1).count();
+
+        if scalar_count > MAX_SCALAR_RECORDS
+            || codes.len().saturating_sub(scalar_count) > MAX_BLOCK_RECORDS
+        {
+            return Err("AOT block instruction limit exceeded".into());
+        }
+
+        for (opcodes, bytes) in &codes {
+            if compile_block(opcodes).as_ref() != Some(bytes) {
+                return Err("AOT machine code does not match the trusted emitter".into());
+            }
+        }
+
+        Self::from_validated_aot_records(codes)
+    }
+
     fn from_validated_aot_records(codes: Vec<NativeCodeRecord>) -> Result<Self, String> {
         let engine = Self::aot(std::iter::empty());
         #[cfg(target_arch = "x86_64")]
