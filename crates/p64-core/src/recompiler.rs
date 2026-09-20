@@ -1,7 +1,7 @@
 //! Native code is keyed by fetched opcodes. The CPU dispatcher handles timing,
 //! privilege checks and exceptions.
 mod emitter;
-pub use emitter::{compile_block, compile_branch_block, compile_opcode};
+pub use emitter::{compile_block, compile_branch_block, compile_memory_block, compile_opcode};
 
 #[cfg(target_arch = "x86_64")]
 mod executable;
@@ -32,7 +32,10 @@ mod types;
 pub use engine::{Engine, ExecutionStats};
 pub(crate) use types::NativeCodeRecord;
 pub use types::NativeReject;
-pub use types::{Backend, NativeBlock, NativeBranchBlock, NativeInstruction, NativeMemoryBlock, NativeMemoryContext, NativeMemoryExit};
+pub use types::{
+    Backend, NativeBlock, NativeBranchBlock, NativeInstruction, NativeMemoryBlock,
+    NativeMemoryContext, NativeMemoryExit,
+};
 use types::{BlockMetadata, NativeBranchFunction, NativeFunction, NativeMemoryFunction};
 
 pub fn supported_opcode(opcode: u32) -> bool {

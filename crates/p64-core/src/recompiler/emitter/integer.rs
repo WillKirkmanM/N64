@@ -1,10 +1,21 @@
-use super::{compile_branch_block, supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS};
+use super::{
+    compile_branch_block, compile_memory_block, supported_branch_opcode, supported_memory_opcode,
+    supported_opcode, MAX_BLOCK_INSTRUCTIONS,
+};
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 
-use super::{encoding::{load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition, GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT}, operands::Operands};
+use super::{
+    encoding::{
+        load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition,
+        GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT,
+    },
+    operands::Operands,
+};
 
 mod encoding;
-use encoding::{arithmetic_immediate, compare_result, load_guest, load_memory, mov_register, store_memory};
+use encoding::{
+    arithmetic_immediate, compare_result, load_guest, load_memory, mov_register, store_memory,
+};
 
 const CACHED_HOST_REGISTER_COUNT: usize = 4;
 const FIRST_CACHED_HOST_REGISTER: u8 = 8; // Volatile R8..R11 on both native ABIs.
@@ -16,6 +27,12 @@ const HIGH_SHIFT_OFFSET: u8 = u32::BITS as u8;
 
 /// Generated leaves preserve callee-saved registers and write back modified GPRs.
 pub fn compile_block(opcodes: &[u32]) -> Option<Vec<u8>> {
+    if opcodes
+        .iter()
+        .any(|opcode| supported_memory_opcode(*opcode))
+    {
+        return compile_memory_block(opcodes);
+    }
 
     if opcodes.len() >= 2
         && opcodes

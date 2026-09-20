@@ -1,4 +1,7 @@
-use super::{supported_branch_opcode, supported_memory_opcode, supported_opcode, NativeMemoryContext, NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS};
+use super::{
+    supported_branch_opcode, supported_memory_opcode, supported_opcode, NativeMemoryContext,
+    NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS,
+};
 
 mod branch;
 mod encoding;
@@ -8,4 +11,4 @@ mod operands;
 
 pub use branch::compile_branch_block;
 pub use integer::{compile_block, compile_opcode};
-
+pub use memory::compile_memory_block;
