@@ -1,4 +1,4 @@
-use super::{supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS};
+use super::{compile_branch_block, supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS};
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 
 use super::{encoding::{load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition, GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT}, operands::Operands};
@@ -16,6 +16,14 @@ const HIGH_SHIFT_OFFSET: u8 = u32::BITS as u8;
 
 /// Generated leaves preserve callee-saved registers and write back modified GPRs.
 pub fn compile_block(opcodes: &[u32]) -> Option<Vec<u8>> {
+
+    if opcodes.len() >= 2
+        && opcodes
+            .last()
+            .is_some_and(|opcode| supported_branch_opcode(*opcode))
+    {
+        return compile_branch_block(opcodes);
+    }
 
     if opcodes.is_empty()
         || opcodes.len() > MAX_BLOCK_INSTRUCTIONS

@@ -6,5 +6,6 @@ mod integer;
 mod memory;
 mod operands;
 
+pub use branch::compile_branch_block;
 pub use integer::{compile_block, compile_opcode};
 
