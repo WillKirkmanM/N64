@@ -45,6 +45,7 @@ impl Default for ICache {
 pub struct DCache {
     pub valid: bool,
     pub dirty: bool,
+    pub store_dirty: bool,
     pub tag: u32,
     pub index: u16,
     pub words: [u32; 4],

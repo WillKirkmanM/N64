@@ -1,12 +1,6 @@
-use super::{
-    supported_memory_opcode, supported_opcode, NativeMemoryContext, NativeMemoryExit,
-    MAX_BLOCK_INSTRUCTIONS,
-};
+use super::{compile_block, supported_memory_opcode, supported_opcode, NativeMemoryContext, NativeMemoryExit, MAX_BLOCK_INSTRUCTIONS};
 
-use super::{
-    encoding::{displacement, Condition, GUEST_INSTRUCTION_BYTES, GUEST_REGISTER_BYTES},
-    operands::Operands,
-};
+use super::{encoding::{displacement, Condition, GUEST_INSTRUCTION_BYTES, GUEST_REGISTER_BYTES}, operands::Operands};
 
 use crate::opcode::PrimaryOpcode;
 use std::mem::{offset_of, size_of};
@@ -110,3 +104,4 @@ fn retire(code: &mut Vec<u8>, count: usize) {
         code.push(count as u8);
     }
 }
+

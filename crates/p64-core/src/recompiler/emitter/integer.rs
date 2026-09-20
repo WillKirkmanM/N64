@@ -1,20 +1,10 @@
-use super::{
-    supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS,
-};
+use super::{supported_branch_opcode, supported_memory_opcode, supported_opcode, MAX_BLOCK_INSTRUCTIONS};
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 
-use super::{
-    encoding::{
-        load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition,
-        GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT,
-    },
-    operands::Operands,
-};
+use super::{encoding::{load_operand, set_condition, sign_extend_word, ArithmeticOperation, Condition, GUEST_REGISTER_BYTES, GUEST_REGISTER_COUNT}, operands::Operands};
 
 mod encoding;
-use encoding::{
-    arithmetic_immediate, compare_result, load_guest, load_memory, mov_register, store_memory,
-};
+use encoding::{arithmetic_immediate, compare_result, load_guest, load_memory, mov_register, store_memory};
 
 const CACHED_HOST_REGISTER_COUNT: usize = 4;
 const FIRST_CACHED_HOST_REGISTER: u8 = 8; // Volatile R8..R11 on both native ABIs.
@@ -23,6 +13,26 @@ const BLOCK_CODE_CAPACITY: usize = MAX_BLOCK_INSTRUCTIONS * 32;
 const IMMEDIATE_MASK: u32 = u16::MAX as u32;
 const IMMEDIATE_HIGH_SHIFT: u32 = u16::BITS;
 const HIGH_SHIFT_OFFSET: u8 = u32::BITS as u8;
+
+/// Generated leaves preserve callee-saved registers and write back modified GPRs.
+pub fn compile_block(opcodes: &[u32]) -> Option<Vec<u8>> {
+    const ARGUMENT_SETUP_BYTES: usize = 3;
+    if opcodes.is_empty()
+        || opcodes.len() > MAX_BLOCK_INSTRUCTIONS
+        || opcodes.iter().any(|opcode| !supported_opcode(*opcode))
+    {
+        return None;
+    }
+    let mut code = Vec::with_capacity(BLOCK_CODE_CAPACITY);
+    for (index, opcode) in opcodes.iter().copied().enumerate() {
+        let mut leaf = compile_opcode(opcode)?;
+        leaf.pop();
+        let start = if index == 0 { 0 } else { ARGUMENT_SETUP_BYTES };
+        code.extend_from_slice(&leaf[start..]);
+    }
+    code.push(0xc3);
+    Some(code)
+}
 
 /// Emits a nontrapping instruction over a GPR array, without embedded addresses or CPU offsets.
 pub fn compile_opcode(opcode: u32) -> Option<Vec<u8>> {
