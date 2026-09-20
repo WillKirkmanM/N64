@@ -105,8 +105,43 @@ pub fn compile_block(opcodes: &[u32]) -> Option<Vec<u8>> {
             continue;
         }
 
-        let combined_add = *opcode as i16 as i32;
-        let combined_logical = opcode & IMMEDIATE_MASK;
+        let mut combined_add = *opcode as i16 as i32;
+        let mut combined_logical = opcode & IMMEDIATE_MASK;
+        // Retirement metadata must retain every original instruction.
+        if matches!(
+            primary,
+            Some(
+                PrimaryOpcode::Addiu
+                    | PrimaryOpcode::Andi
+                    | PrimaryOpcode::Ori
+                    | PrimaryOpcode::Xori
+                    | PrimaryOpcode::Daddiu
+            )
+        ) && rs == rt
+        {
+            while cursor < opcodes.len() {
+                let next = opcodes[cursor];
+                let next_operands = Operands::decode(next);
+
+                if next_operands.primary != primary
+                    || next_operands.rs != rs
+                    || next_operands.rt != rt
+                {
+                    break;
+                }
+
+                match primary {
+                    Some(PrimaryOpcode::Addiu | PrimaryOpcode::Daddiu) => {
+                        combined_add += next as i16 as i32
+                    }
+                    Some(PrimaryOpcode::Andi) => combined_logical &= next & IMMEDIATE_MASK,
+                    Some(PrimaryOpcode::Ori) => combined_logical |= next & IMMEDIATE_MASK,
+                    Some(PrimaryOpcode::Xori) => combined_logical ^= next & IMMEDIATE_MASK,
+                    _ => unreachable!(),
+                }
+                cursor += 1;
+            }
+        }
 
         if primary == Some(PrimaryOpcode::Special) && operands.is_shift() {
             load_guest(&mut code, rt, 0, &mapping);
