@@ -61,4 +61,19 @@ impl ExecutionStats {
             self.diagnostics.native_branch_length_counts[retired] += 1;
         }
     }
+
+    #[inline]
+    pub(super) fn record_memory_block(&mut self, retired: usize) {
+        self.record_block(retired);
+        self.native_memory_executions += 1;
+    }
+
+    #[inline]
+    pub(crate) fn record_branch_delay_slot(&mut self, branch_length: usize) {
+        self.native_executions += 1;
+        #[cfg(feature = "accuracy-diagnostics")]
+        self.diagnostics.extend_branch(branch_length);
+        #[cfg(not(feature = "accuracy-diagnostics"))]
+        let _ = branch_length;
+    }
 }

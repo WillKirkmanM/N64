@@ -338,6 +338,38 @@ impl Engine {
         Some(taken)
     }
 
+    /// Checks and performs only cached RAM hits. The CPU dispatcher supplies
+    /// privilege/endian/event guards, then retires exactly the returned prefix.
+    #[inline]
+    pub fn execute_prepared_memory_block(
+        &mut self,
+        block: NativeMemoryBlock,
+        context: &mut NativeMemoryContext<'_>,
+    ) -> Option<usize> {
+        if !self.owns_generation(block.generation) || context.pending_load > 31 {
+            return None;
+        }
+
+        context.retired_count = 0;
+        context.extra_cycles = 0;
+        context.side_exit = NativeMemoryExit::Complete;
+        // SAFETY: The generation check keeps the RX mapping alive. Context
+        // construction borrows both arrays exclusively for this call; generated
+        // code never retains their pointers. Erasing the lifetime changes no ABI.
+        unsafe {
+            (block.function)((context as *mut NativeMemoryContext<'_>).cast());
+        }
+        let retired = context.retired_count as usize;
+
+        if retired == 0 {
+            return None;
+        }
+
+        self.stats.record_memory_block(retired);
+
+        Some(retired)
+    }
+
     /// Only JIT compiles missing entries; AOT misses return None for scalar fallback.
     pub fn prepare(&mut self, opcode: u32) -> Option<NativeInstruction> {
         if self.backend == Backend::Interpreter {

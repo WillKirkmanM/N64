@@ -30,7 +30,19 @@ pub struct NativeBlock {
     pub(super) metadata: BlockMetadata,
 }
 
-impl NativeBlock {}
+impl NativeBlock {
+    pub fn len(&self) -> usize {
+        self.metadata.instruction_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    pub fn requires_wide(&self) -> bool {
+        self.metadata.wide
+    }
+}
 
 /// Integer prefix and branch comparison; PC and delay state stay with the dispatcher.
 #[derive(Clone, Copy, Debug)]
@@ -41,7 +53,31 @@ pub struct NativeBranchBlock {
     pub(super) branch_opcode: u32,
 }
 
-impl NativeBranchBlock {}
+impl NativeBranchBlock {
+    pub fn len(&self) -> usize {
+        self.metadata.instruction_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    pub fn branch_opcode(&self) -> u32 {
+        self.branch_opcode
+    }
+
+    pub fn branch_index(&self) -> usize {
+        self.metadata.instruction_count - 1
+    }
+
+    pub fn branch_offset(&self) -> u64 {
+        self.branch_index() as u64 * 4
+    }
+
+    pub fn requires_wide(&self) -> bool {
+        self.metadata.wide
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -95,7 +131,19 @@ pub struct NativeMemoryBlock {
     pub(super) metadata: BlockMetadata,
 }
 
-impl NativeMemoryBlock {}
+impl NativeMemoryBlock {
+    pub fn len(&self) -> usize {
+        self.metadata.instruction_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    pub fn requires_wide(&self) -> bool {
+        self.metadata.wide
+    }
+}
 
 /// Diagnostic-only dispatch refusals. A single attempt may refuse more than one
 /// candidate (memory, branch, integer), so counts are not instruction totals.
