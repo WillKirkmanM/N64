@@ -212,3 +212,6 @@ mod executable_memory {
 
     pub unsafe fn free(_: *mut u8, _: usize) {}
 }
+
+#[cfg(test)]
+mod tests;
