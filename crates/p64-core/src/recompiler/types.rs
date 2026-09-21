@@ -148,6 +148,10 @@ impl NativeMemoryBlock {
         false
     }
 
+    pub fn first_opcode(&self) -> u32 {
+        self.metadata.first_opcode
+    }
+
     pub fn requires_wide(&self) -> bool {
         self.metadata.wide
     }

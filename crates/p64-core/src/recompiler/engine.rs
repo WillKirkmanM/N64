@@ -420,6 +420,37 @@ impl Engine {
         Some(taken)
     }
 
+    pub fn prepare_memory_block(&mut self, opcodes: &[u32]) -> Option<NativeMemoryBlock> {
+        if !self.accepts_block(opcodes)
+            || !opcodes
+                .iter()
+                .any(|opcode| supported_memory_opcode(*opcode))
+        {
+            return None;
+        }
+
+        let function = self.code.memory_blocks.get(opcodes).copied().or_else(|| {
+            if !self.can_compile_block() {
+                return None;
+            }
+
+            let code = compile_memory_block(opcodes)?;
+            let pointer = self.install_native(&code)?;
+            // SAFETY: The memory emitter uses this borrowed-context ABI; the
+            // engine owns the sealed mapping for the handle lifetime.
+            let function = unsafe { std::mem::transmute::<*mut u8, NativeMemoryFunction>(pointer) };
+            self.code.memory_blocks.insert(opcodes.to_vec(), function);
+
+            Some(function)
+        })?;
+
+        Some(NativeMemoryBlock {
+            function,
+            generation: self.code.generation,
+            metadata: BlockMetadata::new(opcodes),
+        })
+    }
+
     /// Checks and performs only cached RAM hits. The CPU dispatcher supplies
     /// privilege/endian/event guards, then retires exactly the returned prefix.
     #[inline]
