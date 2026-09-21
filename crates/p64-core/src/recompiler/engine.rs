@@ -323,6 +323,37 @@ impl Engine {
         }
     }
 
+    /// Prepare a block from fetched opcodes, independent of backing-memory addresses.
+    pub fn prepare_block(&mut self, opcodes: &[u32]) -> Option<NativeBlock> {
+        if !self.accepts_block(opcodes) {
+            return None;
+        }
+
+        let function = self.code.blocks.get(opcodes).copied().or_else(|| {
+            if !self.can_compile_block() {
+                return None;
+            }
+
+            if opcodes.iter().any(|opcode| !supported_opcode(*opcode)) {
+                return None;
+            }
+
+            let code = compile_block(opcodes)?;
+
+            if !self.install_block(opcodes, &code) {
+                return None;
+            }
+
+            self.code.blocks.get(opcodes).copied()
+        })?;
+
+        Some(NativeBlock {
+            function,
+            generation: self.code.generation,
+            metadata: BlockMetadata::new(opcodes),
+        })
+    }
+
     #[inline]
     pub fn execute_prepared_block(&mut self, block: NativeBlock, gpr: &mut [u64; 32]) -> bool {
         if !self.owns_generation(block.generation) {
