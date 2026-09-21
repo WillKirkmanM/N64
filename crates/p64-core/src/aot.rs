@@ -1,5 +1,8 @@
 //! AOT machine code is validated against the local emitter before execution.
-use crate::recompiler::{compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS, MAX_SCALAR_RECORDS};
+use crate::recompiler::{
+    compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS,
+    MAX_SCALAR_RECORDS,
+};
 use sha2::{Digest, Sha256};
 mod header;
 mod reader;
@@ -56,3 +59,7 @@ fn check_canonical(rom: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the header and returns its record count.
+pub fn artifact_record_count(bytes: &[u8]) -> Result<u32, String> {
+    Ok(ArtifactHeader::read(&mut ArtifactReader::new(bytes))?.record_count)
+}
