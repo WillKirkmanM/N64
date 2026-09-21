@@ -63,3 +63,81 @@ fn check_canonical(rom: &[u8]) -> Result<(), String> {
 pub fn artifact_record_count(bytes: &[u8]) -> Result<u32, String> {
     Ok(ArtifactHeader::read(&mut ArtifactReader::new(bytes))?.record_count)
 }
+
+/// Validate all persisted machine code before passing any bytes to executable memory.
+pub fn load_artifact(bytes: &[u8], rom: &[u8]) -> Result<Engine, String> {
+    let codes = decode_records(bytes, rom)?;
+
+    Engine::from_aot_blocks(codes)
+}
+
+fn decode_records(bytes: &[u8], rom: &[u8]) -> Result<Vec<NativeCodeRecord>, String> {
+    check_canonical(rom)?;
+    if bytes.len() < ARTIFACT_HEADER_BYTES
+        || bytes.len() > MAX_ARTIFACT_BYTES
+        || &bytes[..ARTIFACT_MAGIC.len()] != ARTIFACT_MAGIC
+    {
+        return Err("Invalid AOT artifact magic or size".into());
+    }
+
+    let mut reader = ArtifactReader::new(bytes);
+    let header = ArtifactHeader::read(&mut reader)?;
+    header.validate_rom(rom)?;
+    let count = header.record_count as usize;
+
+    if count > MAX_ARTIFACT_ENTRIES
+        || count > (bytes.len() - ARTIFACT_HEADER_BYTES) / MIN_RECORD_BYTES
+    {
+        return Err("Invalid AOT entry count".into());
+    }
+
+    header.validate_payload(&bytes[ARTIFACT_HEADER_BYTES..])?;
+    let mut result = Vec::with_capacity(count);
+    let mut previous: Option<Vec<u32>> = None;
+    let mut scalars = 0;
+    let mut blocks = 0;
+
+    for _ in 0..count {
+        let instruction_count = reader.u32()? as usize;
+        let len = reader.u32()? as usize;
+
+        if instruction_count == 0
+            || instruction_count > MAX_BLOCK_INSTRUCTIONS
+            || len == 0
+            || len > MAX_NATIVE_CODE_BYTES
+        {
+            return Err("Invalid AOT code size or block instruction count".into());
+        }
+
+        let mut opcodes = Vec::with_capacity(instruction_count);
+
+        for _ in 0..instruction_count {
+            opcodes.push(reader.u32()?);
+        }
+
+        if previous.as_ref().is_some_and(|last| last >= &opcodes) {
+            return Err("Invalid AOT opcode ordering".into());
+        }
+
+        if instruction_count == 1 {
+            scalars += 1;
+        } else {
+            blocks += 1;
+        }
+
+        if scalars > MAX_SCALAR_ENTRIES || blocks > MAX_BLOCK_ENTRIES {
+            return Err("AOT scalar or block entry limit exceeded".into());
+        }
+
+        let code = reader.take(len).map_err(|_| "Truncated AOT machine code")?;
+
+        previous = Some(opcodes.clone());
+        result.push((opcodes, code.to_vec()));
+    }
+
+    if !reader.is_empty() {
+        return Err("Trailing AOT artifact data".into());
+    }
+
+    Ok(result)
+}

@@ -30,4 +30,8 @@ impl<'a> ArtifactReader<'a> {
     pub(super) fn u64(&mut self) -> Result<u64, String> {
         Ok(u64::from_le_bytes(self.array()?))
     }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.remaining.is_empty()
+    }
 }
