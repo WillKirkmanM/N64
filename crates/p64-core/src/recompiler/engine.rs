@@ -369,6 +369,38 @@ impl Engine {
         true
     }
 
+    pub fn prepare_branch_block(&mut self, opcodes: &[u32]) -> Option<NativeBranchBlock> {
+        if !self.accepts_block(opcodes)
+            || !opcodes
+                .last()
+                .is_some_and(|opcode| supported_branch_opcode(*opcode))
+        {
+            return None;
+        }
+
+        let function = self.code.branch_blocks.get(opcodes).copied().or_else(|| {
+            if !self.can_compile_block() {
+                return None;
+            }
+
+            let code = compile_branch_block(opcodes)?;
+            let pointer = self.install_native(&code)?;
+            // SAFETY: The branch emitter uses this exact GPR argument/condition
+            // ABI; the engine owns the sealed mapping for the handle lifetime.
+            let function = unsafe { std::mem::transmute::<*mut u8, NativeBranchFunction>(pointer) };
+            self.code.branch_blocks.insert(opcodes.to_vec(), function);
+
+            Some(function)
+        })?;
+
+        Some(NativeBranchBlock {
+            function,
+            generation: self.code.generation,
+            metadata: BlockMetadata::new(opcodes),
+            branch_opcode: *opcodes.last().unwrap(),
+        })
+    }
+
     /// Updates GPRs and compares the branch; the caller handles retirement and delay state.
     #[inline]
     pub fn execute_prepared_branch_block(

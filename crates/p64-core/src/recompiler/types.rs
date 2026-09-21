@@ -66,6 +66,10 @@ impl NativeBranchBlock {
         false
     }
 
+    pub fn first_opcode(&self) -> u32 {
+        self.metadata.first_opcode
+    }
+
     pub fn branch_opcode(&self) -> u32 {
         self.branch_opcode
     }
