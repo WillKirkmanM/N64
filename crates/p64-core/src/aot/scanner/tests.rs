@@ -46,3 +46,15 @@ fn selection_is_bounded_deterministic_and_prioritizes_early_rom_words() {
     extended.extend(bytes(&[0x2422fffe; 64]));
     assert_eq!(selected, scan_with_limits(&extended, 3, 1));
 }
+
+#[test]
+fn bounded_insertion_handles_duplicates_and_multiple_run_candidates_at_capacity() {
+    let mut selected = BTreeSet::from([vec![1, 2]]);
+    insert_bounded(&mut selected, [vec![1, 2], vec![2, 3], vec![3, 4]], 2);
+    assert_eq!(selected, BTreeSet::from([vec![1, 2], vec![2, 3]]));
+    insert_bounded(&mut selected, [vec![0, 1]], 2);
+    assert_eq!(selected.len(), 2);
+    let selected = scan_with_limits(&fixture(), 0, 2);
+    assert_eq!(selected.len(), 2);
+    assert!(selected.iter().all(|ops| ops.len() > 1));
+}
