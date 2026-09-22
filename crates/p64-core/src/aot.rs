@@ -1,5 +1,8 @@
 //! AOT machine code is validated against the local emitter before execution.
-use crate::recompiler::{compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS, MAX_SCALAR_RECORDS};
+use crate::recompiler::{
+    compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS,
+    MAX_SCALAR_RECORDS,
+};
 use sha2::{Digest, Sha256};
 mod header;
 mod reader;
@@ -54,6 +57,45 @@ fn check_canonical(rom: &[u8]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Requires a ROM in canonical big-endian byte order.
+pub fn compile_artifact(rom: &[u8]) -> Result<Vec<u8>, String> {
+    check_canonical(rom)?;
+    abi()?;
+    let blocks = scanner::scan_rom(rom)?;
+    let mut out = vec![0; ARTIFACT_HEADER_BYTES];
+    let mut count = 0u32;
+
+    for block in blocks {
+        if let Some(code) = compile_block(&block) {
+            if code.is_empty()
+                || code.len() > MAX_NATIVE_CODE_BYTES
+                || count as usize >= MAX_ARTIFACT_ENTRIES
+            {
+                return Err("AOT emitter or entry count exceeds artifact limits".into());
+            }
+
+            out.extend_from_slice(&(block.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(code.len() as u32).to_le_bytes());
+            for opcode in block {
+                out.extend_from_slice(&opcode.to_le_bytes());
+            }
+
+            out.extend_from_slice(&code);
+            count += 1;
+
+            if out.len() > MAX_ARTIFACT_BYTES {
+                return Err("AOT artifact exceeds 128 MiB".into());
+            }
+        }
+    }
+
+    let mut header = Vec::with_capacity(ARTIFACT_HEADER_BYTES);
+    ArtifactHeader::new(rom, &out[ARTIFACT_HEADER_BYTES..], count)?.write(&mut header);
+    out[..ARTIFACT_HEADER_BYTES].copy_from_slice(&header);
+
+    Ok(out)
 }
 
 /// Checks the header and returns its record count.
