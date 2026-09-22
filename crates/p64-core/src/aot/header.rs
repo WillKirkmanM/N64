@@ -68,4 +68,15 @@ impl ArtifactHeader {
 
         Ok(())
     }
+
+    pub(super) fn write(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(ARTIFACT_MAGIC);
+        bytes.extend_from_slice(&ARTIFACT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&X86_64_ARCHITECTURE_ID.to_le_bytes());
+        bytes.extend_from_slice(&self.target_abi.to_le_bytes());
+        bytes.extend_from_slice(&self.rom_length.to_le_bytes());
+        bytes.extend_from_slice(&self.rom_digest);
+        bytes.extend_from_slice(&self.record_count.to_le_bytes());
+        bytes.extend_from_slice(&self.payload_digest);
+    }
 }
