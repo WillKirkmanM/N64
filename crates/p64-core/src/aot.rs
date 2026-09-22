@@ -180,3 +180,6 @@ fn decode_records(bytes: &[u8], rom: &[u8]) -> Result<Vec<NativeCodeRecord>, Str
 
     Ok(result)
 }
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests;
