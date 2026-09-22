@@ -86,3 +86,6 @@ fn scan_with_limits(rom: &[u8], scalar_limit: usize, block_limit: usize) -> BTre
 
     blocks
 }
+
+#[cfg(test)]
+mod tests;
