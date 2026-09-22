@@ -45,3 +45,43 @@ fn deterministic_roundtrip_and_byte_orders() {
     assert_eq!(normalize_rom(&v64).unwrap(), canonical);
     assert_eq!(normalize_rom(&n64).unwrap(), canonical);
 }
+#[test]
+fn rejects_wrong_rom_corruption_and_forged_checksum() {
+    let canonical = rom();
+    let original = compile_artifact(&canonical).unwrap();
+    let mut other_rom = canonical.clone();
+    other_rom[40] ^= 1;
+    assert!(load_artifact(&original, &other_rom).is_err());
+    for offset in [0, 8, 12, 16, 20, 28, 60, 64, original.len() - 1] {
+        let mut changed = original.clone();
+        changed[offset] ^= 0xff;
+        assert!(
+            load_artifact(&changed, &canonical).is_err(),
+            "offset {offset}"
+        );
+    }
+    let mut forged = original.clone();
+    *forged.last_mut().unwrap() ^= 0xff;
+    rehash_payload(&mut forged);
+    assert!(load_artifact(&forged, &canonical)
+        .err()
+        .unwrap()
+        .contains("trusted emitter"));
+    for end in 0..original.len() {
+        assert!(load_artifact(&original[..end], &canonical).is_err());
+    }
+    let mut trailing = original.clone();
+    trailing.push(0);
+    rehash_payload(&mut trailing);
+    assert!(load_artifact(&trailing, &canonical)
+        .err()
+        .unwrap()
+        .contains("Trailing"));
+    assert!(normalize_rom(&[]).is_err());
+    let mut old_version = original.clone();
+    old_version[8..12].copy_from_slice(&1u32.to_le_bytes());
+    assert!(load_artifact(&old_version, &canonical)
+        .err()
+        .unwrap()
+        .contains("rebuild"));
+}
