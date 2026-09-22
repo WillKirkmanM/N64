@@ -1,8 +1,5 @@
 //! AOT machine code is validated against the local emitter before execution.
-use crate::recompiler::{
-    compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS,
-    MAX_SCALAR_RECORDS,
-};
+use crate::recompiler::{compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS, MAX_SCALAR_RECORDS};
 use sha2::{Digest, Sha256};
 mod header;
 mod reader;
