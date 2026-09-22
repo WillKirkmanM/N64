@@ -117,3 +117,40 @@ fn persists_runtime_runs_and_cold_lookahead_prefixes_without_crossing_lines() {
         .iter()
         .any(|(ops, _)| ops.as_slice() == [0x24220009, 0x2422000a]));
 }
+#[test]
+fn compact_memory_variants_cover_cold_lookahead_and_two_instruction_runs() {
+    let operations = [
+        0x24220001u32,
+        0xDC230000,
+        0x24630001,
+        0xFC230008,
+        0x24420002,
+        0x24420003,
+        0xDC240008,
+        0xFC240000,
+    ];
+    let mut canonical = rom_with_words(&operations);
+    let short = [0xDC250000u32, 0xFC250008];
+    for opcode in short {
+        canonical.extend_from_slice(&opcode.to_be_bytes());
+    }
+    canonical.extend_from_slice(&0x08000000u32.to_be_bytes());
+    let records = decode_records(&compile_artifact(&canonical).unwrap(), &canonical).unwrap();
+    for start in 0..7 {
+        assert!(records
+            .iter()
+            .any(|(ops, _)| ops.as_slice() == &operations[start..]));
+        if start + 2 <= 6 {
+            assert!(records
+                .iter()
+                .any(|(ops, _)| ops.as_slice() == &operations[start..6]));
+        }
+    }
+    assert!(records.iter().any(|(ops, _)| ops.as_slice() == short));
+    assert!(!records
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == &operations[..3]));
+    assert!(!records
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == &operations[1..4]));
+}
