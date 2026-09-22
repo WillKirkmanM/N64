@@ -154,3 +154,43 @@ fn compact_memory_variants_cover_cold_lookahead_and_two_instruction_runs() {
         .iter()
         .any(|(ops, _)| ops.as_slice() == &operations[1..4]));
 }
+
+#[test]
+fn loaded_native_alu_matches_scalar_oracle_and_jit() {
+    let canonical = rom();
+    let artifact = compile_artifact(&canonical).unwrap();
+    let mut aot = load_artifact(&artifact, &canonical).unwrap();
+    let mut jit = Engine::jit();
+    let compiled = aot.compiled_instructions();
+    for value in [
+        0,
+        1,
+        0x7fff_ffff,
+        0x8000_0000,
+        0xffff_ffff,
+        0x1234_5678_9abc_def0,
+        u64::MAX,
+    ] {
+        let mut expected = [0; 32];
+        expected[1] = value;
+        let mut actual = expected;
+        let mut dynamic = expected;
+        for opcode in [0x2422ffff, 0x34431234] {
+            match opcode {
+                0x2422ffff => expected[2] = (value as u32).wrapping_sub(1) as i32 as i64 as u64,
+                0x34431234 => expected[3] = expected[2] | 0x1234,
+                _ => unreachable!(),
+            }
+            assert!(aot.try_execute(opcode, &mut actual));
+            assert!(jit.try_execute(opcode, &mut dynamic));
+            assert_eq!(actual, expected);
+            assert_eq!(dynamic, expected);
+        }
+        let before = actual;
+        assert!(!aot.try_execute(0x08000000, &mut actual));
+        assert_eq!(actual, before);
+        assert_eq!(aot.compiled_instructions(), compiled);
+    }
+    assert_eq!(aot.stats.native_executions, 14);
+    assert_eq!(aot.stats.fallback_executions, 7);
+}
