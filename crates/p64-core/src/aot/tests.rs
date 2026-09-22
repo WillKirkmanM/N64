@@ -194,3 +194,58 @@ fn loaded_native_alu_matches_scalar_oracle_and_jit() {
     assert_eq!(aot.stats.native_executions, 14);
     assert_eq!(aot.stats.fallback_executions, 7);
 }
+
+#[test]
+fn persisted_memory_prefixes_use_context_abi_and_stop_before_branches() {
+    use crate::{
+        cache::DCache,
+        recompiler::{NativeMemoryContext, NativeMemoryExit},
+    };
+    let operations = [
+        0xDC220000u32,
+        0x64420001,
+        0xFC220008,
+        0x14400002,
+        0x24420005,
+    ];
+    let canonical = rom_with_words(&operations);
+    let bytes = compile_artifact(&canonical).unwrap();
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 5);
+    let records = decode_records(&bytes, &canonical).unwrap();
+    assert!(
+        !records
+            .iter()
+            .any(|(ops, _)| ops.as_slice() == &operations[..2]),
+        "Arbitrary shorter memory prefixes are never requested"
+    );
+    assert!(records
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == &operations[..3]));
+    assert!(!records
+        .iter()
+        .any(|(ops, _)| ops.iter().any(|op| supported_memory_opcode(*op))
+            && ops.iter().any(|op| supported_branch_opcode(*op))));
+    assert!(!records
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == [0xDC220000]));
+    let mut engine = load_artifact(&bytes, &canonical).unwrap();
+    let block = engine.prepare_memory_block(&operations[..3]).unwrap();
+    assert!(engine.prepare_block(&operations[..3]).is_none());
+    let mut gpr = [0; 32];
+    gpr[1] = 0xFFFF_FFFF_8000_0000;
+    let mut cache = [DCache::default(); 512];
+    cache[0].valid = true;
+    cache[0].words[0] = u32::MAX;
+    cache[0].words[1] = u32::MAX;
+    let mut context = NativeMemoryContext::new(&mut gpr, &mut cache, 0xFFFF_FFFF_8000_2000, 0, 0);
+    assert_eq!(
+        engine.execute_prepared_memory_block(block, &mut context),
+        Some(3)
+    );
+    assert_eq!(context.side_exit, NativeMemoryExit::Complete);
+    assert_eq!(context.extra_cycles, 1);
+    assert_eq!(context.pending_load, 0);
+    assert_eq!(gpr[2], 0);
+    assert_eq!(&cache[0].words[2..], &[0, 0]);
+    assert!(cache[0].dirty && cache[0].store_dirty);
+}
