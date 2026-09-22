@@ -310,3 +310,16 @@ fn frozen_native_blocks_match_scalar_execution_for_runtime_variants() {
         );
     }
 }
+
+#[test]
+fn record_count_metadata_uses_the_header_parser() {
+    let artifact = compile_artifact(&rom()).unwrap();
+    assert_eq!(
+        artifact_record_count(&artifact).unwrap() as usize,
+        decode_records(&artifact, &rom()).unwrap().len()
+    );
+    assert!(artifact_record_count(&artifact[..ARTIFACT_HEADER_BYTES - 1]).is_err());
+    let mut invalid = artifact;
+    invalid[0] ^= 1;
+    assert!(artifact_record_count(&invalid).is_err());
+}
