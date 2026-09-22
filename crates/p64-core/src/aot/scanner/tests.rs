@@ -96,3 +96,30 @@ fn below_capacity_selection_preserves_existing_records() {
     }
     assert_eq!(scan_with_limits(&rom, 100, 100), expected);
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn unselected_native_code_remains_a_frozen_interpreter_fallback() {
+    use crate::recompiler::{compile_block, Engine};
+    let selected = scan_with_limits(&fixture(), 2, 1);
+    let records = selected
+        .into_iter()
+        .map(|ops| {
+            let code = compile_block(&ops).unwrap();
+            (ops, code)
+        })
+        .collect();
+    let mut engine = Engine::from_aot_blocks(records).unwrap();
+    let counts = (engine.compiled_instructions(), engine.compiled_blocks());
+    let mut registers = [0u64; 32];
+    assert!(engine.try_execute(0x24220001, &mut registers));
+    assert_eq!(registers[2], 1);
+    let before = registers;
+    assert!(!engine.try_execute(0x2422000d, &mut registers));
+    assert!(engine.prepare_block(&[0x2422000b, 0x2422000c]).is_none());
+    assert_eq!(registers, before);
+    assert_eq!(
+        (engine.compiled_instructions(), engine.compiled_blocks()),
+        counts
+    );
+}
