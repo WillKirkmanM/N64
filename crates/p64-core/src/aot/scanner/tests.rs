@@ -58,3 +58,41 @@ fn bounded_insertion_handles_duplicates_and_multiple_run_candidates_at_capacity(
     assert_eq!(selected.len(), 2);
     assert!(selected.iter().all(|ops| ops.len() > 1));
 }
+
+#[test]
+fn below_capacity_selection_preserves_existing_records() {
+    let rom = fixture();
+    let mut expected = BTreeSet::new();
+    for line in rom.chunks(CACHE_LINE_BYTES) {
+        let words: Vec<u32> = line
+            .chunks_exact(INSTRUCTION_BYTES)
+            .map(|word| u32::from_be_bytes(word.try_into().unwrap()))
+            .collect();
+        for &opcode in &words {
+            if supported_opcode(opcode) {
+                expected.insert(vec![opcode]);
+            }
+        }
+        let mut blocks = BTreeSet::new();
+        for start in 0..words.len().saturating_sub(1) {
+            let length = words[start..]
+                .iter()
+                .take_while(|&&op| supported_opcode(op))
+                .count();
+            insert_run(&mut blocks, &words, start, length, RunKind::Integer);
+            if length >= 1
+                && start + length < words.len()
+                && supported_branch_opcode(words[start + length])
+            {
+                blocks.insert(words[start..=start + length].to_vec());
+            }
+            let length = words[start..]
+                .iter()
+                .take_while(|&&op| supported_opcode(op) || supported_memory_opcode(op))
+                .count();
+            insert_run(&mut blocks, &words, start, length, RunKind::Memory);
+        }
+        expected.extend(blocks);
+    }
+    assert_eq!(scan_with_limits(&rom, 100, 100), expected);
+}
