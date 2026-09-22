@@ -85,3 +85,35 @@ fn rejects_wrong_rom_corruption_and_forged_checksum() {
         .unwrap()
         .contains("rebuild"));
 }
+#[test]
+fn persists_runtime_runs_and_cold_lookahead_prefixes_without_crossing_lines() {
+    let operations: Vec<u32> = (1..=8).map(|imm| 0x24220000 | imm).collect();
+    let mut canonical = rom_with_words(&operations);
+    canonical.extend_from_slice(&0x24220009u32.to_be_bytes());
+    canonical.extend_from_slice(&0x08000000u32.to_be_bytes());
+    canonical.extend_from_slice(&0x2422000au32.to_be_bytes());
+    let codes = decode_records(&compile_artifact(&canonical).unwrap(), &canonical).unwrap();
+    for start in 0..8 {
+        for len in 2..=8 - start {
+            let requested = len == 8 - start || (start + len == 6 && start + 2 <= 6);
+            assert_eq!(
+                codes
+                    .iter()
+                    .any(|(ops, _)| ops.as_slice() == &operations[start..start + len]),
+                requested
+            );
+        }
+    }
+    assert!(codes
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == [0x24220009, 0x08000000]));
+    assert!(codes.iter().all(|(ops, _)| !ops[..ops.len() - 1]
+        .iter()
+        .any(|op| supported_branch_opcode(*op))));
+    assert!(!codes
+        .iter()
+        .any(|(ops, _)| ops.windows(2).any(|pair| pair == [0x24220008, 0x24220009])));
+    assert!(!codes
+        .iter()
+        .any(|(ops, _)| ops.as_slice() == [0x24220009, 0x2422000a]));
+}
