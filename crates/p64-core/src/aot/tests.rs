@@ -249,3 +249,64 @@ fn persisted_memory_prefixes_use_context_abi_and_stop_before_branches() {
     assert_eq!(&cache[0].words[2..], &[0, 0]);
     assert!(cache[0].dirty && cache[0].store_dirty);
 }
+#[test]
+fn frozen_native_blocks_match_scalar_execution_for_runtime_variants() {
+    let operations = [
+        0x2422ffffu32,
+        0x34431234,
+        0x00621026,
+        0x0043202d,
+        0x00022fc0,
+        0x00043178,
+        0x00c53827,
+        0x00e1402b,
+    ];
+    let canonical = rom_with_words(&operations);
+    let mut aot = load_artifact(&compile_artifact(&canonical).unwrap(), &canonical).unwrap();
+    let mut scalar = Engine::jit();
+    let compiled = (aot.compiled_instructions(), aot.compiled_blocks());
+    let mut random = 0xf012_3456_789a_bcdeu64;
+    for iteration in 0..200 {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let mut initial = [random; 32];
+        initial[0] = 0;
+        initial[1] = match iteration {
+            0 => 0,
+            1 => 1,
+            2 => 0x7fff_ffff,
+            3 => 0x8000_0000,
+            4 => 0xffff_ffff,
+            5 => u64::MAX,
+            _ => random,
+        };
+        for start in 0..7 {
+            for len in 2..=8 - start {
+                if len != 8 - start && !(start + len == 6 && start + 2 <= 6) {
+                    continue;
+                }
+                let ops = &operations[start..start + len];
+                let mut expected = initial;
+                let mut actual = initial;
+                for opcode in ops {
+                    assert!(scalar.try_execute(*opcode, &mut expected));
+                }
+                let handle = aot
+                    .prepare_block(ops)
+                    .expect("Every runtime-requested variant must be available");
+                assert_eq!(handle.len(), len);
+                assert!(aot.execute_prepared_block(handle, &mut actual));
+                assert_eq!(
+                    actual, expected,
+                    "start {start}, len {len}, iteration {iteration}"
+                );
+            }
+        }
+        assert!(aot.prepare_block(&[0x24220042, 0x24220043]).is_none());
+        assert_eq!(
+            (aot.compiled_instructions(), aot.compiled_blocks()),
+            compiled
+        );
+    }
+}
