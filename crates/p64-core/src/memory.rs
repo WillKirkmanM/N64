@@ -10,64 +10,11 @@ use super::{
     tlb, N64,
 };
 
-#[repr(usize)]
-pub enum MemoryMap {
-    RdramDram = 0x00000000,
-    RspMem = 0x04000000,
-    RspRegs = 0x04040000,
-    RspRegsPc = 0x04080000,
-    DpcRegs = 0x04100000,
-    DpsRegs = 0x04200000,
-    MiRegs = 0x04300000,
-    ViRegs = 0x04400000,
-    AiRegs = 0x04500000,
-    PiRegs = 0x04600000,
-    RiRegs = 0x04700000,
-    SerialRegisters = 0x04800000,
-    Dom2Addr2 = 0x08000000,
-    CartRom = 0x10000000,
-    PifMem = 0x1fc00000,
-}
-
 const KSEG_MASK: u64 = 0xc0000000;
 const KSEG0_BASE: u64 = 0x80000000;
 const CACHE_MASK: u64 = 0x20000000;
 const PHYSICAL_MASK: u64 = 0x1FFFFFFF;
 const MASK_64K: usize = 0xFFFF;
-
-#[derive(PartialEq)]
-pub enum AccessType {
-    Write,
-    Read,
-}
-
-#[derive(Copy, Clone, Serialize, Deserialize)]
-pub enum AccessSize {
-    Word = 4,
-    Dword = 8,
-    Dcache = 16,
-    Icache = 32,
-}
-
-pub struct Memory {
-    pub fast_read: [fn(&mut N64, u64, AccessSize) -> u32; 0x2000],
-    pub memory_map_read: [fn(&mut N64, u64, AccessSize) -> u32; 0x2000],
-    pub memory_map_write: [fn(&mut N64, u64, u32, u32); 0x2000],
-    pub icache: [cache::ICache; 512],
-    pub dcache: [cache::DCache; 512],
-}
-
-impl Default for Memory {
-    fn default() -> Self {
-        Self {
-            fast_read: [unmapped_read_mem; 0x2000],
-            memory_map_read: [unmapped_read_mem; 0x2000],
-            memory_map_write: [unmapped_write_mem; 0x2000],
-            icache: [cache::ICache::default(); 512],
-            dcache: [cache::DCache::default(); 512],
-        }
-    }
-}
 
 pub fn unmapped_read_mem(_device: &mut N64, _address: u64, _access_size: AccessSize) -> u32 {
     3
@@ -227,3 +174,6 @@ pub fn initialise_memory_map(n64: &mut N64) {
 
     cache::init(n64)
 }
+
+mod types;
+pub use types::{MemoryMap, AccessType, AccessSize, Memory};
