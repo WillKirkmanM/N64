@@ -138,60 +138,6 @@ const REGIMM_OPS: [(usize, InstrFn); 14] = [
     (19, bgezall),
 ];
 
-pub fn in_delay_slot(n64: &N64) -> bool {
-    matches!(
-        n64.cpu.branch_state.state,
-        State::DelaySlotTaken | State::DelaySlotNotTaken
-    )
-}
-fn in_delay_slot_taken(n64: &N64) -> bool {
-    matches!(n64.cpu.branch_state.state, State::DelaySlotTaken)
-}
-
-pub fn run(n64: &mut N64) {
-    n64.cpu.running = 1;
-    while n64.cpu.running == 1 {
-        n64.cpu.gpr[0] = 0; // gpr 0 is read only
-        let (cached, err);
-        (n64.cpu.pc_phys, cached, err) =
-            memory::translate_address(n64, n64.cpu.pc, memory::AccessType::Read);
-
-        if err {
-            continue;
-        } // TLB exception}
-
-        if cached {
-            cache::icache_fetch(n64, n64.cpu.pc_phys)
-        } else {
-            let opcode = n64.memory.memory_map_read[(n64.cpu.pc_phys >> 16) as usize](
-                n64,
-                n64.cpu.pc_phys,
-                memory::AccessSize::Word,
-            );
-            cpu::decode_opcode(n64, opcode)(n64, opcode);
-        }
-
-        match n64.cpu.branch_state.state {
-            State::Discard => n64.cpu.pc += 8,
-            State::DelaySlotTaken => n64.cpu.pc = n64.cpu.branch_state.pc,
-            State::Exception => (),
-            _ => n64.cpu.pc += 4,
-        }
-
-        n64.cpu.branch_state.state = match n64.cpu.branch_state.state {
-            State::Take => State::DelaySlotTaken,
-            State::NotTaken => State::DelaySlotNotTaken,
-            _ => State::Step,
-        };
-
-        add_cycles(n64, 1);
-
-        if n64.cpu.mmu.regs[MmuRegister::Count as usize] > n64.cpu.next_event_count {
-            events::trigger_event(n64)
-        }
-    }
-}
-
 pub fn rd(opcode: u32) -> u32 {
     (opcode >> 11) & 0x1F
 }
@@ -1175,3 +1121,7 @@ pub use types::{State, BranchState, Cpu};
 
 mod cache_ops;
 use cache_ops::{cache};
+
+mod runtime;
+pub use runtime::{in_delay_slot, run};
+use runtime::{in_delay_slot_taken};
