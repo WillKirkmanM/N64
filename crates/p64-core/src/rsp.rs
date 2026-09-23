@@ -1193,32 +1193,6 @@ branch_if!(bgtz, bgtz_condition);
 
 // Jump instructions kept separate due to different logic
 
-fn j(n64: &mut N64, opcode: u32) {
-    if rsp::in_delay_slot_taken(n64) {
-        return;
-    }
-    n64.rsp.processor.branch_state.state = CpuState::Take;
-    n64.rsp.processor.branch_state.pc = (n64.rsp.registers.regs2[SpReg2::Pc as usize] + 4)
-        & 0xF0000000
-        | ((opcode & 0x3FFFFFF) << 2)
-}
-
-fn jal(n64: &mut N64, opcode: u32) {
-    if rsp::in_delay_slot_taken(n64) {
-        n64.rsp.registers.gpr[31] = (n64.rsp.processor.branch_state.pc + 4) & ADDR_MASK
-    } else {
-        n64.rsp.registers.gpr[31] = (n64.rsp.registers.regs2[SpReg2::Pc as usize] + 8) & ADDR_MASK
-    }
-    if !rsp::in_delay_slot_taken(n64) {
-        n64.rsp.processor.branch_state.state = CpuState::Take;
-        n64.rsp.processor.branch_state.pc = (n64.rsp.registers.regs2[SpReg2::Pc as usize] + 4)
-            & 0xF0000000
-            | ((opcode & 0x3FFFFFF) << 2)
-    } else if !rsp::in_delay_slot(n64) {
-        n64.rsp.processor.branch_state.state = CpuState::NotTaken;
-    }
-}
-
 macro_rules! gen_imm_op {
     ($name:ident, $op:expr) => {
         fn $name(n64: &mut N64, opcode: u32) {
@@ -1246,10 +1220,6 @@ gen_imm_op!(sltiu, |a, b| (a < b as i16 as i32 as u32) as u32);
 gen_imm_op!(andi, |a, b| a & b as u32);
 gen_imm_op!(ori, |a, b| a | b as u32);
 gen_imm_op!(xori, |a, b| a ^ b as u32);
-
-fn lui(n64: &mut N64, opcode: u32) {
-    n64.rsp.registers.gpr[rt(opcode) as usize] = (imm(opcode) as u32) << 16
-}
 
 macro_rules! gen_load_op {
     ($name:ident, $size:expr, $sign_extend:expr) => {
@@ -1287,38 +1257,6 @@ gen_load_op!(lbu, 1, false);
 gen_load_op!(lhu, 2, false);
 gen_load_op!(lwu, 4, false);
 
-fn sb(n64: &mut N64, opcode: u32) {
-    let address =
-        n64.rsp.registers.gpr[rs(opcode) as usize].wrapping_add(imm(opcode) as i16 as i32 as u32);
-
-    n64.rsp.memory.mem[address as usize & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize]) as u8;
-}
-
-fn sh(n64: &mut N64, opcode: u32) {
-    let address =
-        n64.rsp.registers.gpr[rs(opcode) as usize].wrapping_add(imm(opcode) as i16 as i32 as u32);
-
-    n64.rsp.memory.mem[address as usize & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize] >> 8) as u8;
-    n64.rsp.memory.mem[(address as usize + 1) & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize]) as u8;
-}
-
-fn sw(n64: &mut N64, opcode: u32) {
-    let address =
-        n64.rsp.registers.gpr[rs(opcode) as usize].wrapping_add(imm(opcode) as i16 as i32 as u32);
-
-    n64.rsp.memory.mem[address as usize & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize] >> 24) as u8;
-    n64.rsp.memory.mem[(address as usize + 1) & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize] >> 16) as u8;
-    n64.rsp.memory.mem[(address as usize + 2) & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize] >> 8) as u8;
-    n64.rsp.memory.mem[(address as usize + 3) & ADDR_MASK as usize] =
-        (n64.rsp.registers.gpr[rt(opcode) as usize]) as u8;
-}
-
 macro_rules! gen_shift_op {
     ($name:ident, $op:expr, $use_sa:expr) => {
         fn $name(n64: &mut N64, opcode: u32) {
@@ -1339,38 +1277,6 @@ gen_shift_op!(sra, |a, b| ((a as i32) >> b) as u32, true);
 gen_shift_op!(sllv, |a, b| a << b, false);
 gen_shift_op!(srlv, |a, b| a >> b, false);
 gen_shift_op!(srav, |a, b| ((a as i32) >> b) as u32, false);
-
-fn jr(n64: &mut N64, opcode: u32) {
-    if !rsp::in_delay_slot_taken(n64) {
-        n64.rsp.processor.branch_state.state = CpuState::Take;
-        n64.rsp.processor.branch_state.pc = n64.rsp.registers.gpr[rs(opcode) as usize]
-    } else if !rsp::in_delay_slot(n64) {
-        n64.rsp.processor.branch_state.state = CpuState::NotTaken;
-    }
-}
-
-fn jalr(n64: &mut N64, opcode: u32) {
-    let in_delay_slot_taken = rsp::in_delay_slot_taken(n64);
-
-    if !in_delay_slot_taken {
-        n64.rsp.processor.branch_state.state = CpuState::Take;
-        n64.rsp.processor.branch_state.pc = n64.rsp.registers.gpr[rs(opcode) as usize]
-    } else if !rsp::in_delay_slot(n64) {
-        n64.rsp.processor.branch_state.state = CpuState::NotTaken;
-    }
-
-    if in_delay_slot_taken {
-        n64.rsp.registers.gpr[rd(opcode) as usize] =
-            (n64.rsp.processor.branch_state.pc + 4) & ADDR_MASK
-    } else {
-        n64.rsp.registers.gpr[rd(opcode) as usize] =
-            (n64.rsp.registers.regs2[SpReg2::Pc as usize] + 8) & ADDR_MASK
-    }
-}
-
-fn break_(n64: &mut N64, _opcode: u32) {
-    n64.rsp.processor.broken = true;
-}
 
 macro_rules! gen_arith_op {
     ($name:ident, $op:expr) => {
@@ -1403,18 +1309,6 @@ gen_bitwise_op!(and, |a, b| a & b);
 gen_bitwise_op!(or, |a, b| a | b);
 gen_bitwise_op!(xor, |a, b| a ^ b);
 gen_bitwise_op!(nor, |a: u32, b: u32| !(a | b));
-
-fn slt(n64: &mut N64, opcode: u32) {
-    n64.rsp.registers.gpr[rd(opcode) as usize] =
-        ((n64.rsp.registers.gpr[rs(opcode) as usize] as i32)
-            < (n64.rsp.registers.gpr[rt(opcode) as usize] as i32)) as u32
-}
-
-fn sltu(n64: &mut N64, opcode: u32) {
-    n64.rsp.registers.gpr[rd(opcode) as usize] = (n64.rsp.registers.gpr[rs(opcode) as usize]
-        < n64.rsp.registers.gpr[rt(opcode) as usize])
-        as u32
-}
 
 macro_rules! gen_branch_op {
     ($name:ident, $cond:expr, $link:expr) => {
@@ -3186,3 +3080,6 @@ fn execute_vec(n64: &mut N64, opcode: u32) {
     n64.rsp.instruction.instruction_type = rsp::InstructionType::Vu;
     n64.rsp.instruction_tables.vector_table[(opcode & 0x3F) as usize](n64, opcode)
 }
+
+mod scalar;
+use scalar::{j, jal, lui, sb, sh, sw, jr, jalr, break_, slt, sltu};
