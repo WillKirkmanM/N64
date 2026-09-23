@@ -301,18 +301,6 @@ enum MmuInstruction {
 
 type MmuInstrFn = fn(&mut N64, u32);
 
-pub const MMU_INSTRUCTIONS: [MmuInstrFn; 32] = {
-    let mut instrs: [MmuInstrFn; 32] = [mmu::reserved; 32];
-
-    instrs[MmuInstruction::MFC0 as usize] = mmu::mfc0 as MmuInstrFn;
-    instrs[MmuInstruction::DMFC0 as usize] = mmu::dmfc0 as MmuInstrFn;
-    instrs[MmuInstruction::MTC0 as usize] = mmu::mtc0 as MmuInstrFn;
-    instrs[MmuInstruction::DMTC0 as usize] = mmu::dmtc0 as MmuInstrFn;
-    instrs[MmuInstruction::EXECUTECP0 as usize] = mmu::execute_cp0 as MmuInstrFn;
-
-    instrs
-};
-
 #[derive(Copy, Clone)]
 enum MmuSecondaryInstruction {
     TLBR = 1,
@@ -321,18 +309,6 @@ enum MmuSecondaryInstruction {
     TLBP = 8,
     ERET = 24,
 }
-
-pub const MMU_SECONDARY_INSTRUCTIONS: [MmuInstrFn; 32] = {
-    let mut instrs: [MmuInstrFn; 32] = [mmu::reserved; 32];
-
-    instrs[MmuSecondaryInstruction::TLBR as usize] = mmu::tlbr;
-    instrs[MmuSecondaryInstruction::TLBWI as usize] = mmu::tlbwi;
-    instrs[MmuSecondaryInstruction::TLBWR as usize] = mmu::tlbwr;
-    instrs[MmuSecondaryInstruction::TLBP as usize] = mmu::tlbp;
-    instrs[MmuSecondaryInstruction::ERET as usize] = mmu::eret;
-
-    instrs
-};
 
 const MMU_INIT_VALUES: [(MmuRegister, u64); 8] = [
     (MmuRegister::Random, 0b00000000000000000000000000011111),
@@ -387,3 +363,6 @@ pub fn write_mmu_registers(n64: &mut N64) {
 
     create_event(n64, EventType::Compare, u32::MAX as u64, compare_event)
 }
+
+mod instruction;
+pub use instruction::{MMU_INSTRUCTIONS, MMU_SECONDARY_INSTRUCTIONS};
