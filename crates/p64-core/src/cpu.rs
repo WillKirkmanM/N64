@@ -478,19 +478,6 @@ impl_immediate_op!(addiu, |rs, imm| se32(rs as i32)
 impl_immediate_op!(slti, |rs, imm| ((rs as i64) < (imm as i16 as i64)) as u64);
 impl_immediate_op!(sltiu, |rs, imm| (rs < se16(imm as i16)) as u64);
 
-fn andi(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] & imm(opcode) as u64
-}
-fn ori(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] | imm(opcode) as u64
-}
-fn xori(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] = n64.cpu.gpr[rs(opcode) as usize] ^ imm(opcode) as u64
-}
-fn lui(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] = se32(((imm(opcode) as u32) << 16) as i32)
-}
-
 fn beql(n64: &mut N64, opcode: u32) {
     if n64.cpu.gpr[rs(opcode) as usize] == n64.cpu.gpr[rt(opcode) as usize] {
         check_relative_idle_loop(n64, opcode);
@@ -529,16 +516,6 @@ fn bgtzl(n64: &mut N64, opcode: u32) {
     } else {
         n64.cpu.branch_state.state = State::Discard;
     }
-}
-
-fn daddi(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] =
-        n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16))
-}
-
-fn daddiu(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rt(opcode) as usize] =
-        n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16))
 }
 
 fn ldl(n64: &mut N64, opcode: u32) {
@@ -1168,42 +1145,6 @@ fn sd(n64: &mut N64, opcode: u32) {
     )
 }
 
-fn sll(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        se32(((n64.cpu.gpr[rt(opcode) as usize] as u32) << sa(opcode)) as i32)
-}
-
-fn srl(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        se32(((n64.cpu.gpr[rt(opcode) as usize] as u32) >> sa(opcode)) as i32)
-}
-
-fn sra(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        se32(((n64.cpu.gpr[rt(opcode) as usize] as i64) >> sa(opcode)) as i32)
-}
-
-fn sllv(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = se32(
-        ((n64.cpu.gpr[rt(opcode) as usize] as u32)
-            << (n64.cpu.gpr[rs(opcode) as usize] as u32 & 31)) as i32,
-    )
-}
-
-fn srlv(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = se32(
-        ((n64.cpu.gpr[rt(opcode) as usize] as u32)
-            >> (n64.cpu.gpr[rs(opcode) as usize] as u32 & 31)) as i32,
-    )
-}
-
-fn srav(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = se32(
-        ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> (n64.cpu.gpr[rs(opcode) as usize] & 31))
-            as i32,
-    )
-}
-
 fn jr(n64: &mut N64, opcode: u32) {
     if !cpu::in_delay_slot_taken(n64) {
         check_relative_idle_loop(n64, opcode);
@@ -1248,21 +1189,6 @@ fn mflo(n64: &mut N64, opcode: u32) {
 
 fn mtlo(n64: &mut N64, opcode: u32) {
     n64.cpu.lo = n64.cpu.gpr[rs(opcode) as usize]
-}
-
-fn dsllv(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        n64.cpu.gpr[rt(opcode) as usize] << (n64.cpu.gpr[rs(opcode) as usize] & 63)
-}
-
-fn dsrlv(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        n64.cpu.gpr[rt(opcode) as usize] >> (n64.cpu.gpr[rs(opcode) as usize] & 63)
-}
-
-fn dsrav(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = ((n64.cpu.gpr[rt(opcode) as usize] as i64)
-        >> (n64.cpu.gpr[rs(opcode) as usize] & 63)) as u64
 }
 
 fn div(n64: &mut N64, opcode: u32) {
@@ -1400,20 +1326,6 @@ impl_bitwise_op!(or, |);
 impl_bitwise_op!(xor, ^);
 
 // NOR needs special handling due to the NOT operation
-fn nor(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        !(n64.cpu.gpr[rs(opcode) as usize] | n64.cpu.gpr[rt(opcode) as usize])
-}
-
-fn slt(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = ((n64.cpu.gpr[rs(opcode) as usize] as i64)
-        < (n64.cpu.gpr[rt(opcode) as usize] as i64)) as u64
-}
-
-fn sltu(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        (n64.cpu.gpr[rs(opcode) as usize] < n64.cpu.gpr[rt(opcode) as usize]) as u64
-}
 
 macro_rules! def_d_arithmetic {
     ($name:ident, $op:tt) => {
@@ -1454,32 +1366,6 @@ def_trap_reg!(tlt, <);
 def_trap_reg!(tltu, <, unsigned);
 def_trap_reg!(teq, ==, unsigned);
 def_trap_reg!(tne, !=, unsigned);
-
-fn dsll(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] << sa(opcode)
-}
-
-fn dsrl(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] >> sa(opcode)
-}
-
-fn dsra(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> sa(opcode)) as u64
-}
-
-fn dsll32(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] << (32 + sa(opcode))
-}
-
-fn dsrl32(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.gpr[rt(opcode) as usize] >> (32 + sa(opcode))
-}
-
-fn dsra32(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] =
-        ((n64.cpu.gpr[rt(opcode) as usize] as i64) >> (32 + sa(opcode))) as u64
-}
 
 macro_rules! branch_instruction {
     ($name:ident, $cmp:expr, $not_taken_state:expr) => {
@@ -1567,3 +1453,9 @@ impl_branch_and_link!(bgezall, BGEZ, true);
 
 mod instruction;
 pub(crate) use instruction::Instruction;
+
+mod alu;
+use alu::{
+    andi, ori, xori, lui, daddi, daddiu, sll, srl, sra, sllv, srlv, srav, dsllv, dsrlv, dsrav, nor,
+    slt, sltu, dsll, dsrl, dsra, dsll32, dsrl32, dsra32,
+};
