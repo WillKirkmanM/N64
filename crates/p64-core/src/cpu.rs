@@ -722,128 +722,6 @@ fn sd(n64: &mut N64, opcode: u32) {
     )
 }
 
-fn sync(_device: &mut N64, _opcode: u32) {}
-
-fn mfhi(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.hi
-}
-
-fn mthi(n64: &mut N64, opcode: u32) {
-    n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize]
-}
-
-fn mflo(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.lo
-}
-
-fn mtlo(n64: &mut N64, opcode: u32) {
-    n64.cpu.lo = n64.cpu.gpr[rs(opcode) as usize]
-}
-
-fn div(n64: &mut N64, opcode: u32) {
-    if (n64.cpu.gpr[rt(opcode) as usize]) as i32 != 0 {
-        n64.cpu.lo = se32(
-            (n64.cpu.gpr[rs(opcode) as usize] as i32)
-                .wrapping_div(n64.cpu.gpr[rt(opcode) as usize] as i32),
-        );
-        n64.cpu.hi = se32(
-            (n64.cpu.gpr[rs(opcode) as usize] as i32)
-                .wrapping_rem(n64.cpu.gpr[rt(opcode) as usize] as i32),
-        );
-    } else {
-        if (n64.cpu.gpr[rs(opcode) as usize] as i32) < 0 {
-            n64.cpu.lo = 1
-        } else {
-            n64.cpu.lo = u64::MAX
-        }
-        n64.cpu.hi = se32(n64.cpu.gpr[rs(opcode) as usize] as i32)
-    }
-
-    add_cycles(n64, 36)
-}
-
-fn divu(n64: &mut N64, opcode: u32) {
-    if (n64.cpu.gpr[rt(opcode) as usize]) as u32 != 0 {
-        n64.cpu.lo = se32(
-            ((n64.cpu.gpr[rs(opcode) as usize] as u32) / (n64.cpu.gpr[rt(opcode) as usize] as u32))
-                as i32,
-        );
-        n64.cpu.hi = se32(
-            ((n64.cpu.gpr[rs(opcode) as usize] as u32) % (n64.cpu.gpr[rt(opcode) as usize] as u32))
-                as i32,
-        );
-    } else {
-        n64.cpu.lo = u64::MAX;
-        n64.cpu.hi = se32(n64.cpu.gpr[rs(opcode) as usize] as u32 as i32)
-    }
-
-    add_cycles(n64, 36)
-}
-
-fn mult(n64: &mut N64, opcode: u32) {
-    let result = ((n64.cpu.gpr[rs(opcode) as usize]) as i32 as i64)
-        .wrapping_mul(n64.cpu.gpr[rt(opcode) as usize] as i32 as i64);
-
-    n64.cpu.lo = se32((result) as i32);
-    n64.cpu.hi = se32((result >> 32) as i32);
-
-    add_cycles(n64, 4);
-}
-
-fn multu(n64: &mut N64, opcode: u32) {
-    let result = (n64.cpu.gpr[rs(opcode) as usize] as u32 as u64)
-        .wrapping_mul(n64.cpu.gpr[rt(opcode) as usize] as u32 as u64);
-
-    n64.cpu.lo = se32((result) as u32 as i32);
-    n64.cpu.hi = se32((result >> 32) as u32 as i32);
-
-    add_cycles(n64, 4);
-}
-
-fn dmult(n64: &mut N64, opcode: u32) {
-    let result = ((n64.cpu.gpr[rs(opcode) as usize] as i64 as i128)
-        * (n64.cpu.gpr[rt(opcode) as usize] as i64 as i128)) as u128;
-    n64.cpu.lo = result as u64;
-    n64.cpu.hi = (result >> 64) as u64;
-    add_cycles(n64, 7)
-}
-
-fn dmultu(n64: &mut N64, opcode: u32) {
-    let result =
-        (n64.cpu.gpr[rs(opcode) as usize] as u128) * (n64.cpu.gpr[rt(opcode) as usize] as u128);
-    n64.cpu.lo = result as u64;
-    n64.cpu.hi = (result >> 64) as u64;
-    add_cycles(n64, 7)
-}
-
-fn ddiv(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rt(opcode) as usize] as i64 != 0 {
-        n64.cpu.lo = (((n64.cpu.gpr[rs(opcode) as usize] as i64) as i128)
-            / (n64.cpu.gpr[rt(opcode) as usize] as i64) as i128) as u64;
-        n64.cpu.hi = (((n64.cpu.gpr[rs(opcode) as usize] as i64) as i128)
-            % (n64.cpu.gpr[rt(opcode) as usize] as i64) as i128) as u64;
-    } else {
-        if ((n64.cpu.gpr[rs(opcode) as usize]) as i64) < 0 {
-            n64.cpu.lo = 1
-        } else {
-            n64.cpu.lo = u64::MAX
-        }
-        n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize]
-    }
-    add_cycles(n64, 68);
-}
-
-fn ddivu(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rt(opcode) as usize] != 0 {
-        n64.cpu.lo = n64.cpu.gpr[rs(opcode) as usize] / n64.cpu.gpr[rt(opcode) as usize];
-        n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize] % n64.cpu.gpr[rt(opcode) as usize]
-    } else {
-        n64.cpu.lo = u64::MAX;
-        n64.cpu.hi = n64.cpu.gpr[rs(opcode) as usize]
-    }
-    add_cycles(n64, 68);
-}
-
 macro_rules! cpu_arithmetic_op {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64, opcode: u32) {
@@ -1025,3 +903,6 @@ use runtime::{in_delay_slot_taken};
 mod control_flow;
 pub use control_flow::{check_relative_idle_loop};
 use control_flow::{check_absolute_idle_loop, j, jal, beql, bnel, blezl, bgtzl, jr, jalr};
+
+mod hilo;
+use hilo::{sync, mfhi, mthi, mflo, mtlo, div, divu, mult, multu, dmult, dmultu, ddiv, ddivu};
