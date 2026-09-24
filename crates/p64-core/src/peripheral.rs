@@ -9,50 +9,7 @@ use super::{
     N64,
 };
 
-#[repr(u32)]
-pub enum PiRegister {
-    DramAddr = 0,
-    CartAddr = 1,
-    RdLen = 2,
-    WrLen = 3,
-    Status = 4,
-    BsdDom1Lat = 5,
-    BsdDom2Lat = 9,
-    BsdDom2Rls = 12,
-}
-
-pub struct PiStatus;
-
-impl PiStatus {
-    pub const DMA_BUSY: u32 = 1 << 0;
-    pub const IO_BUSY: u32 = 1 << 1;
-    pub const INTERRUPT: u32 = 1 << 3;
-    pub const RESET: u32 = 1 << 0;
-    pub const CLR_INTR: u32 = 1 << 1;
-}
-
 pub const PI_REGS_COUNT: u32 = 13;
-const RCP_TO_CPU_CLOCK_RATIO: f64 = 1.5;
-const BASE_CYCLES: f64 = 14.0;
-const PAGE_CYCLES: f64 = 5.0;
-const PAGE_SIZE_OFFSET: u32 = 2;
-
-pub struct Peripheral {
-    pub regs: Registers,
-}
-
-impl Default for Peripheral {
-    fn default() -> Self {
-        Self {
-            regs: Registers::new().with_size(PI_REGS_COUNT as usize).build(),
-        }
-    }
-}
-
-pub struct PiHandler {
-    read: fn(&mut N64, u32, u32, u32) -> u64,
-    write: fn(&mut N64, u32, u32, u32) -> u64,
-}
 
 pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
     let reg = (address & 0xFFFF) >> 2;
@@ -158,35 +115,6 @@ pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
     }
 }
 
-#[derive(Copy, Clone)]
-enum PiDomain {
-    Dom1 = 1,
-    Dom2 = 2,
-}
-
-struct DomainRegs {
-    latency: u32,
-    pulse_width: u32,
-    release: u32,
-    page_size: u32,
-}
-
-impl DomainRegs {
-    fn from_device(n64: &N64, domain: PiDomain) -> Self {
-        let base: usize = match domain {
-            PiDomain::Dom1 => PiRegister::BsdDom1Lat as usize,
-            PiDomain::Dom2 => PiRegister::BsdDom2Lat as usize,
-        };
-
-        Self {
-            latency: n64.peripheral.regs[base],
-            pulse_width: n64.peripheral.regs[base + 1],
-            release: n64.peripheral.regs[base + 2],
-            page_size: n64.peripheral.regs[base + 3],
-        }
-    }
-}
-
 fn get_pi_domain(domain_id: i32) -> PiDomain {
     match domain_id {
         1 => PiDomain::Dom1,
@@ -217,25 +145,8 @@ pub fn dma_event(n64: &mut N64) {
     mips::set_rcp_interrupt(n64, mips::MI_INTR_PI);
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-#[repr(u8)]
-#[allow(dead_code)]
-enum JoyCommand {
-    Status = 0x00,
-    ControllerRead = 0x01,
-    PakRead = 0x02,
-    PakWrite = 0x03,
-    Reset = 0xFF,
-}
-
 const CONTROLLER_FLAGS: u16 = 0x0005; // JDT_JOY_ABS_COUNTERS | JDT_JOY_PORT
 const PAK_CHUNK_SIZE: usize = 0x20;
-
-#[derive(Copy, Clone)]
-pub struct PakHandler {
-    pub read: fn(&mut N64, usize, u16, usize, usize),
-    pub write: fn(&mut N64, usize, u16, usize, usize),
-}
 
 pub fn process(n64: &mut N64, channel: usize) {
     let cmd = n64.pif.ram[n64.pif.channels[channel].tx_buf.unwrap()];
@@ -326,3 +237,10 @@ fn calculate_crc(n64: &N64, data_offset: usize) -> u8 {
         })
     })
 }
+
+mod types;
+pub use types::{PiRegister, PiStatus, Peripheral, PiHandler, PakHandler};
+use types::{
+    RCP_TO_CPU_CLOCK_RATIO, BASE_CYCLES, PAGE_CYCLES, PAGE_SIZE_OFFSET, PiDomain, DomainRegs,
+    JoyCommand,
+};
