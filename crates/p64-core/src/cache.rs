@@ -18,39 +18,6 @@ const LINE_INDEX_MASK_DCACHE: u64 = 0x1FF;
 const WORD_INDEX_SHIFT_DCACHE: u64 = 2;
 const WORD_INDEX_MASK_DCACHE: u64 = 3;
 
-#[derive(Copy, Clone)]
-pub struct ICache {
-    pub valid: bool,
-    pub tag: u32,
-    pub index: u16,
-    pub words: [u32; 8],
-    pub instruction: [fn(&mut N64, u32); 8],
-}
-
-impl Default for ICache {
-    fn default() -> Self {
-        fn default_instruction(_device: &mut N64, _value: u32) {}
-
-        ICache {
-            valid: false,
-            tag: 0,
-            index: 0,
-            words: [0; 8],
-            instruction: [default_instruction; 8],
-        }
-    }
-}
-
-#[derive(Copy, Clone, Default)]
-pub struct DCache {
-    pub valid: bool,
-    pub dirty: bool,
-    pub store_dirty: bool,
-    pub tag: u32,
-    pub index: u16,
-    pub words: [u32; 4],
-}
-
 fn calculate_cache_address(tag: u32, index: u16) -> u64 {
     ((tag | index as u32) & ADDR_MASK) as u64
 }
@@ -220,3 +187,6 @@ pub fn init(n64: &mut N64) {
         i.index = (pos << LINE_INDEX_SHIFT_DCACHE) as u16 & 0xFF0
     }
 }
+
+mod types;
+pub use types::{ICache, DCache};
