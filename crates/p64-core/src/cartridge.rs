@@ -18,49 +18,7 @@ use super::{
     peripheral::{PiRegister, PiStatus},
 };
 
-#[derive(Clone, Debug, PartialEq, Default)]
-pub enum CicType {
-    #[default]
-    CicNus6101,
-    CicNus6102,
-    CicNus6103,
-    CicNus6105,
-    CicNus6106,
-    CicNus5167,
-}
-
 pub const CART_MASK: usize = 0xFFFFFFF;
-
-#[derive(Clone, Default)]
-pub struct Cartridge {
-    pub rom: Memory,
-    pub pal: bool,
-    pub latch: u32,
-    pub cic_type: CicType,
-    pub cic_seed: u8,
-    pub rdram_size_offset: usize,
-    pub rtc: AfRtc,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone)]
-pub enum JCmd {
-    Status = 0x00,
-    EepromRead = 0x04,
-    EepromWrite = 0x05,
-    AfRtcStatus = 0x06,
-    AfRtcRead = 0x07,
-    AfRtcWrite = 0x08,
-    Reset = 0xff,
-}
-
-#[repr(u16)]
-#[derive(Copy, Clone)]
-pub enum Jdt {
-    AfRtc = 0x1000,
-    Eeprom4k = 0x8000,
-    Eeprom16k = 0xc000,
-}
 
 pub const EEPROM_BLOCK_SIZE: usize = 8;
 pub const EEPROM_MAX_SIZE: usize = 0x800;
@@ -234,3 +192,6 @@ use joybus::{
     handle_af_rtc_read, handle_af_rtc_write, format_eeprom, eeprom_read_block, eeprom_write_block,
     af_rtc_read_block, af_rtc_write_block,
 };
+
+mod types;
+pub use types::{CicType, Cartridge, JCmd, Jdt};
