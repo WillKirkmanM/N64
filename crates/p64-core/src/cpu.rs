@@ -191,42 +191,6 @@ macro_rules! check_idle_loop {
     };
 }
 
-pub fn check_relative_idle_loop(n64: &mut N64, opcode: u32) {
-    check_idle_loop!(n64, imm(opcode) as i16 == -1);
-}
-fn check_absolute_idle_loop(n64: &mut N64, opcode: u32) {
-    check_idle_loop!(
-        n64,
-        (opcode & 0x3FFFFFF) as u64 == (n64.cpu.pc_phys & 0x0FFFFFFF) >> 2
-    );
-}
-
-fn j(n64: &mut N64, opcode: u32) {
-    if cpu::in_delay_slot_taken(n64) {
-        return;
-    }
-    check_absolute_idle_loop(n64, opcode);
-    n64.cpu.branch_state.state = State::Take;
-    n64.cpu.branch_state.pc =
-        (n64.cpu.pc + 4) & 0xFFFFFFFFF0000000 | ((opcode & 0x3FFFFFF) << 2) as u64
-}
-
-fn jal(n64: &mut N64, opcode: u32) {
-    if cpu::in_delay_slot_taken(n64) {
-        n64.cpu.gpr[31] = n64.cpu.branch_state.pc + 4
-    } else {
-        n64.cpu.gpr[31] = n64.cpu.pc + 8
-    }
-    if !cpu::in_delay_slot_taken(n64) {
-        check_absolute_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc =
-            (n64.cpu.pc + 4) & 0xFFFFFFFFF0000000 | ((opcode & 0x3FFFFFF) << 2) as u64
-    } else if !cpu::in_delay_slot(n64) {
-        n64.cpu.branch_state.state = State::NotTaken;
-    }
-}
-
 macro_rules! branch_instruction {
     ($name:ident, $condition:expr) => {
         fn $name(n64: &mut N64, opcode: u32) {
@@ -271,46 +235,6 @@ impl_immediate_op!(addiu, |rs, imm| se32(rs as i32)
     .wrapping_add(se16(imm as i16)));
 impl_immediate_op!(slti, |rs, imm| ((rs as i64) < (imm as i16 as i64)) as u64);
 impl_immediate_op!(sltiu, |rs, imm| (rs < se16(imm as i16)) as u64);
-
-fn beql(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rs(opcode) as usize] == n64.cpu.gpr[rt(opcode) as usize] {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
-    } else {
-        n64.cpu.branch_state.state = State::Discard;
-    }
-}
-
-fn bnel(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rs(opcode) as usize] != n64.cpu.gpr[rt(opcode) as usize] {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
-    } else {
-        n64.cpu.branch_state.state = State::Discard;
-    }
-}
-
-fn blezl(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rs(opcode) as usize] as i64 <= 0 {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
-    } else {
-        n64.cpu.branch_state.state = State::Discard;
-    }
-}
-
-fn bgtzl(n64: &mut N64, opcode: u32) {
-    if n64.cpu.gpr[rs(opcode) as usize] as i64 > 0 {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
-    } else {
-        n64.cpu.branch_state.state = State::Discard;
-    }
-}
 
 fn ldl(n64: &mut N64, opcode: u32) {
     let addr = n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
@@ -798,34 +722,6 @@ fn sd(n64: &mut N64, opcode: u32) {
     )
 }
 
-fn jr(n64: &mut N64, opcode: u32) {
-    if !cpu::in_delay_slot_taken(n64) {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.gpr[rs(opcode) as usize];
-    } else if !cpu::in_delay_slot(n64) {
-        n64.cpu.branch_state.state = State::NotTaken;
-    }
-}
-
-fn jalr(n64: &mut N64, opcode: u32) {
-    let in_delay_slot_taken = cpu::in_delay_slot_taken(n64);
-
-    if !in_delay_slot_taken {
-        check_relative_idle_loop(n64, opcode);
-        n64.cpu.branch_state.state = State::Take;
-        n64.cpu.branch_state.pc = n64.cpu.gpr[rs(opcode) as usize];
-    } else if !cpu::in_delay_slot(n64) {
-        n64.cpu.branch_state.state = State::NotTaken;
-    }
-
-    if in_delay_slot_taken {
-        n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.branch_state.pc + 4
-    } else {
-        n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.pc + 8
-    }
-}
-
 fn sync(_device: &mut N64, _opcode: u32) {}
 
 fn mfhi(n64: &mut N64, opcode: u32) {
@@ -1125,3 +1021,7 @@ use cache_ops::{cache};
 mod runtime;
 pub use runtime::{in_delay_slot, run};
 use runtime::{in_delay_slot_taken};
+
+mod control_flow;
+pub use control_flow::{check_relative_idle_loop};
+use control_flow::{check_absolute_idle_loop, j, jal, beql, bnel, blezl, bgtzl, jr, jalr};
