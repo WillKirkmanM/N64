@@ -6,48 +6,6 @@ use super::{
     exceptions::{cop_unusable_exception, reserved_exception},
 };
 
-pub struct Rcp {
-    pub instrs: [fn(&mut N64, u32); 32],
-    pub reg_latch: u64,
-}
-
-impl Default for Rcp {
-    fn default() -> Self {
-        fn default_instruction(_device: &mut N64, _value: u32) {}
-
-        fn mfc2(d: &mut N64, op: u32) {
-            handle_move(d, op, false, false);
-        }
-        fn dmfc2(d: &mut N64, op: u32) {
-            handle_move(d, op, true, false);
-        }
-        fn cfc2(d: &mut N64, op: u32) {
-            handle_move(d, op, false, false);
-        }
-        fn mtc2(d: &mut N64, op: u32) {
-            handle_move(d, op, false, true);
-        }
-        fn dmtc2(d: &mut N64, op: u32) {
-            handle_move(d, op, true, true);
-        }
-        fn ctc2(d: &mut N64, op: u32) {
-            handle_move(d, op, false, true);
-        }
-
-        let mut instrs: [fn(&mut N64, u32); 32] = [default_instruction; 32];
-        let functions: [fn(&mut N64, u32); 6] = [mfc2, dmfc2, cfc2, mtc2, dmtc2, ctc2];
-
-        for (i, &f) in functions.iter().enumerate() {
-            instrs[i] = f;
-        }
-
-        Rcp {
-            instrs,
-            reg_latch: 0,
-        }
-    }
-}
-
 #[inline(always)]
 fn check_rcp_access(n64: &N64) -> bool {
     n64.cpu.mmu.regs[MmuRegister::Status as usize] & (MmuStatus::CU2 as u64) != 0
@@ -626,3 +584,6 @@ pub fn cvt_d_w(n64: &mut N64, opcode: u32) {
     fpu::set_fpr_double(n64, fd(opcode) as usize, fs as f64);
     add_cycles(n64, 4)
 }
+
+mod types;
+pub use types::{Rcp};
