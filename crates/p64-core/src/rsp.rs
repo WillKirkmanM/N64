@@ -39,16 +39,6 @@ pub struct MemoryState {
     pub fifo: [RspDma; 2],
 }
 
-/// Processor execution state
-pub struct ProcessorState {
-    pub pipeline_full: bool,
-    pub branch_state: BranchState,
-    pub broken: bool,
-    pub halted: bool,
-    pub sync_point: bool,
-    pub cycle_counter: u64,
-}
-
 /// Vector operation state
 pub struct VectorState {
     pub shuffle: [SimdRegister; 16],
@@ -97,19 +87,6 @@ impl Default for MemoryState {
         Self {
             mem: Memory::new().with_size(0x2000).build(),
             fifo: [RspDma::default(); 2],
-        }
-    }
-}
-
-impl Default for ProcessorState {
-    fn default() -> Self {
-        Self {
-            pipeline_full: false,
-            branch_state: BranchState::default(),
-            broken: false,
-            halted: false,
-            sync_point: false,
-            cycle_counter: 0,
         }
     }
 }
@@ -174,22 +151,6 @@ impl Default for Rsp {
 
         rsp
     }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub enum CpuState {
-    #[default]
-    Step,
-    Take,
-    NotTaken,
-    DelaySlotTaken,
-    DelaySlotNotTaken,
-}
-
-#[derive(Copy, Clone, Default)]
-pub struct BranchState {
-    pub state: CpuState,
-    pub pc: u32,
 }
 
 fn in_delay_slot(n64: &N64) -> bool {
@@ -2650,3 +2611,6 @@ use vector_transfer::{
 mod instruction;
 pub use instruction::{InstructionState, InstructionTables, Instructions, InstructionType, OpcodeType};
 use instruction::{InstrFn};
+
+mod processor;
+pub use processor::{ProcessorState, CpuState, BranchState};
