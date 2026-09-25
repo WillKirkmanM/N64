@@ -13,64 +13,7 @@ use tracing::error;
 
 use crate::ui;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Input {
-    RDPad,
-    LDPad,
-    DDPad,
-    UDPad,
-    StartButton,
-    ZTrig,
-    BButton,
-    AButton,
-    RCButton,
-    LCButton,
-    DCButton,
-    UCButton,
-    RTrig,
-    LTrig,
-    XAxis,
-    YAxis,
-    AxisLeft,
-    AxisRight,
-    AxisUp,
-    AxisDown,
-}
-
-impl Input {
-    pub fn as_usize(self) -> usize {
-        match self {
-            Input::RDPad => 0,
-            Input::LDPad => 1,
-            Input::DDPad => 2,
-            Input::UDPad => 3,
-            Input::StartButton => 4,
-            Input::ZTrig => 5,
-            Input::BButton => 6,
-            Input::AButton => 7,
-            Input::RCButton => 8,
-            Input::LCButton => 9,
-            Input::DCButton => 10,
-            Input::UCButton => 11,
-            Input::RTrig => 12,
-            Input::LTrig => 13,
-            Input::XAxis => 16,
-            Input::YAxis => 24,
-            Input::AxisLeft => 14,
-            Input::AxisRight => 15,
-            Input::AxisUp => 16,
-            Input::AxisDown => 17,
-        }
-    }
-}
-
 pub const MAX_AXIS_VALUE: f64 = 85.0;
-
-#[derive(Default)]
-pub struct Controllers {
-    pub controller: Option<GameController>,
-    pub joystick: Option<Joystick>,
-}
 
 fn bind_axis(x: f64, y: f64) -> (f64, f64) {
     const RADIUS: f64 = 95.0;
@@ -599,3 +542,6 @@ pub fn configure_profile(ui: &mut ui::Ui, profile: String) {
 mod defaults;
 pub use defaults::{get_default_profile};
 use defaults::{set_keys, set_controller_buttons_initially, set_controller_axis_initially};
+
+mod types;
+pub use types::{Input, Controllers};
