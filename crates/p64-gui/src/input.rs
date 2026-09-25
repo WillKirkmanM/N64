@@ -545,3 +545,6 @@ use defaults::{set_keys, set_controller_buttons_initially, set_controller_axis_i
 
 mod types;
 pub use types::{Input, Controllers};
+
+mod packet;
+use packet::{encode_stick, press_button};
