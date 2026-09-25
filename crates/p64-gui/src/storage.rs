@@ -48,3 +48,6 @@ pub fn write_save(ui: &Ui, save_type: SaveTypes) {
 
     write(path, data).expect("Could not write save file! Do we have the write permissions?");
 }
+
+mod atomic;
+pub use atomic::atomic_write;
