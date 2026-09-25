@@ -42,3 +42,6 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests;
