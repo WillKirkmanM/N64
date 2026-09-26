@@ -190,3 +190,6 @@ fn tlb_map(n64: &mut N64, index: u64) {
 
 mod entry_hi;
 pub use entry_hi::EntryHi;
+
+mod page;
+pub use page::TlbPage;
