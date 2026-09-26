@@ -11,3 +11,12 @@ fn signed_axes_occupy_the_two_high_packet_bytes() {
         }
     }
 }
+
+#[test]
+fn button_packet_keeps_axes_and_other_buttons() {
+    let mut packet = encode_stick(-85.0, 85.0);
+    press_button(&mut packet, 0);
+    press_button(&mut packet, 13);
+
+    assert_eq!(packet, 0x55ab_2001);
+}
