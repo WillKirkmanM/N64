@@ -65,3 +65,7 @@ impl Status {
             || self.0 & (PRIVILEGE_MASK << PRIVILEGE_SHIFT) == 0
     }
 }
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod tests;
