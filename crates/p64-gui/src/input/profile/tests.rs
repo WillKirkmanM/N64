@@ -10,3 +10,14 @@ fn valid_profile_ids_preserve_sdl_bindings() {
         assert_eq!(axis_from_id(*axis as i32), Some(*axis));
     }
 }
+
+#[test]
+fn malformed_profile_ids_are_rejected() {
+    for id in [-1, i32::MIN, i32::MAX, 21, 255] {
+        assert_eq!(button_from_id(id), None);
+    }
+
+    for id in [-1, i32::MIN, i32::MAX, 6, 255] {
+        assert_eq!(axis_from_id(id), None);
+    }
+}
