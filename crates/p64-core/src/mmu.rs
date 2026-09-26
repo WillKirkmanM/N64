@@ -250,3 +250,6 @@ pub use registers::{MmuRegister, MmuStatus, MmuCause, MmuXContext, MmuMask};
 
 mod state;
 pub use state::{Mmu};
+
+mod status;
+pub use status::Status;
