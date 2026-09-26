@@ -24,3 +24,18 @@ fn privilege_and_width_match_raw_status_bits() {
         }
     }
 }
+
+#[test]
+fn interrupt_gate_matches_all_raw_pending_and_enabled_line_masks() {
+    for state in 0..8_u64 {
+        for enabled in 0..256_u64 {
+            for pending in 0..256_u64 {
+                let status = state | (enabled << 8);
+                let cause = pending << 8;
+                let expected = (status & 7) == 1 && (enabled & pending) != 0;
+
+                assert_eq!(super::Status(status).interrupt_pending(cause), expected);
+            }
+        }
+    }
+}
