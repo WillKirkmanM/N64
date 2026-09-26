@@ -9,3 +9,6 @@ pub(super) fn encode_stick(x: f64, y: f64) -> u32 {
 
     axis(x, Input::XAxis) | axis(y, Input::YAxis)
 }
+
+#[cfg(test)]
+mod tests;
