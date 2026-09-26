@@ -63,3 +63,6 @@ pub(super) fn stick_axis_from_id(id: i32) -> Option<Axis> {
 pub(super) fn cardinal_hat_from_id(id: i8) -> Option<HatState> {
     CARDINAL_HATS.iter().copied().find(|hat| *hat as i8 == id)
 }
+
+#[cfg(test)]
+mod tests;
