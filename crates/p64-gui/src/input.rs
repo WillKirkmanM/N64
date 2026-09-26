@@ -548,3 +548,5 @@ pub use types::{Input, Controllers};
 
 mod packet;
 use packet::{encode_stick, press_button};
+
+mod profile;
