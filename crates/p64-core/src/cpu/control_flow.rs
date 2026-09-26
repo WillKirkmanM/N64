@@ -104,3 +104,6 @@ pub(super) fn jalr(n64: &mut N64, opcode: u32) {
         n64.cpu.gpr[rd(opcode) as usize] = n64.cpu.pc + 8
     }
 }
+
+mod types;
+use types::{BranchCondition, DelaySlotPolicy};
