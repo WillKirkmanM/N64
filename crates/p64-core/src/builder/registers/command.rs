@@ -21,3 +21,20 @@ impl FlagCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_wins_over_clear_without_touching_other_flags() {
+        let control = FlagCommand::new(1, 2, 8);
+
+        for (command, expected) in [(0, 0x18), (1, 0x10), (2, 0x18), (3, 0x18)] {
+            let mut state = 0x18;
+            control.apply(&mut state, command);
+
+            assert_eq!(state, expected);
+        }
+    }
+}
