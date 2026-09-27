@@ -587,3 +587,6 @@ pub fn cvt_d_w(n64: &mut N64, opcode: u32) {
 
 mod types;
 pub use types::{Rcp};
+
+mod encoding;
+use encoding::FloatEncoding;
