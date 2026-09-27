@@ -181,3 +181,6 @@ where
     //     }
     // }
 }
+
+mod command;
+pub use command::FlagCommand;
