@@ -177,3 +177,6 @@ pub fn initialise_memory_map(n64: &mut N64) {
 
 mod types;
 pub use types::{MemoryMap, AccessType, AccessSize, Memory};
+
+mod segment;
+use segment::AddressSegment;
