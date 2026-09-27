@@ -135,3 +135,65 @@ fn scalar_destination(opcode: u32) -> Option<usize> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn immediate_reads_stall_but_independent_instructions_hide_latency() {
+        for independent in 0..=2 {
+            let mut readiness = Cop0Readiness::default();
+            readiness.record(1);
+            readiness.advance(1);
+            for _ in 0..independent {
+                assert_eq!(readiness.stall(0), 0);
+                readiness.advance(1);
+            }
+            assert_eq!(readiness.stall(0x2422_0001), 2 - independent);
+            assert_eq!(readiness.stall(0x2422_0001), 0);
+        }
+    }
+
+    #[test]
+    fn sources_distinguish_load_destinations_stores_branches_and_coprocessor_moves() {
+        assert_eq!(scalar_sources(0x8c41_0000), 1 << 2);
+        assert_eq!(scalar_sources(0xac41_0000), (1 << 1) | (1 << 2));
+        assert_eq!(scalar_sources(0x1022_0001), (1 << 1) | (1 << 2));
+        assert_eq!(scalar_sources(0x4081_3800), 1 << 1);
+        assert_eq!(scalar_sources(0x4001_3800), 0);
+        assert_eq!(scalar_sources(0x4881_0800), 1 << 1);
+        assert_eq!(scalar_sources(0x4801_0800), 0);
+        assert_eq!(scalar_sources(0x0424_0001), 0);
+    }
+
+    #[test]
+    fn back_to_back_reads_preserve_each_destination_and_refresh_same_destination() {
+        let mut readiness = Cop0Readiness::default();
+        readiness.record(1);
+        readiness.advance(1);
+        readiness.record(2);
+        readiness.advance(1);
+        assert_eq!(readiness.stall(0x2423_0001), 1);
+        assert_eq!(readiness.stall(0x2443_0001), 1);
+
+        readiness.record(1);
+        readiness.advance(1);
+        readiness.record(1);
+        readiness.advance(1);
+        assert_eq!(readiness.stall(0x2423_0001), 2);
+    }
+
+    #[test]
+    fn independent_writes_cancel_superseded_read_results() {
+        for opcode in [0x2401_0007, 0x8c41_0000, 0x4801_0800] {
+            let mut readiness = Cop0Readiness::default();
+            readiness.record(1);
+            readiness.advance(1);
+            assert_eq!(readiness.stall(opcode), 0);
+            readiness.overwrite(opcode);
+            readiness.advance(1);
+            assert_eq!(readiness.stall(0x2423_0001), 0);
+        }
+    }
+}
