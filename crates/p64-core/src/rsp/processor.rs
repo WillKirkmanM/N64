@@ -38,3 +38,7 @@ impl Default for ProcessorState {
         }
     }
 }
+
+#[path = "pipeline.rs"]
+mod pipeline;
+use pipeline::Cop0Readiness;
