@@ -1,36 +1,26 @@
-use std::{io::Read, path::Path};
+use std::path::Path;
 
-#[derive(Clone)]
-pub struct RomInfo {
-    pub file_name: String,
-    pub internal_name: String,
-    pub md5: String,
-}
+const INTERNAL_NAME_BYTES: usize = 20;
+const INTERNAL_NAME_OFFSET: usize = 32;
+
+mod info;
+pub use info::RomInfo;
 
 impl RomInfo {
+    pub fn matches(&self, query_lowercase: &str) -> bool {
+        self.file_name.to_lowercase().contains(query_lowercase)
+            || self.internal_name.to_lowercase().contains(query_lowercase)
+    }
+
     pub fn new(path: &Path) -> Option<Self> {
-        let file_name = path
-            .file_name()?
-            .to_str()?
-            .rsplit_once('.')
-            .map_or("", |t| t.0)
-            .to_string();
+        let file_name = path.file_stem()?.to_string_lossy().into_owned();
 
-        let mut file = std::fs::File::open(path).ok()?;
-
-        let mut header = vec![0; 80];
-        file.read_exact(&mut header).ok()?;
-
-        let internal_name = header[32..]
-            .iter()
-            .take_while(|&&byte| byte != 0)
-            .map(|&byte| byte as char)
-            .collect::<String>()
-            .trim()
-            .to_string();
-
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).ok()?;
+        let buffer = p64_core::rom::try_read_rom(path).ok()?;
+        let internal_name = String::from_utf8_lossy(
+            &buffer[INTERNAL_NAME_OFFSET..INTERNAL_NAME_OFFSET + INTERNAL_NAME_BYTES],
+        )
+        .trim_matches(|value: char| value == '\0' || value.is_whitespace())
+        .to_owned();
         let md5 = format!("{:x}", md5::compute(&buffer));
 
         Some(RomInfo {
