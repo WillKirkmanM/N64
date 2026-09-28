@@ -193,3 +193,5 @@ pub use entry_hi::EntryHi;
 
 mod page;
 pub use page::TlbPage;
+
+mod entry_lo;
