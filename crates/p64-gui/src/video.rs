@@ -147,24 +147,37 @@ pub fn rdp_full_sync() {
 }
 
 pub fn enable_1x_upscaling() {
+    let _lock = lock_renderer();
     unsafe {
         set_upscaling_1x();
     }
 }
 
 pub fn enable_2x_upscaling() {
+    let _lock = lock_renderer();
     unsafe {
         set_upscaling_2x();
     }
 }
 
 pub fn enable_4x_upscaling() {
+    let _lock = lock_renderer();
     unsafe {
         set_upscaling_4x();
     }
 }
 
 pub fn enable_8x_upscaling() {
+    let _lock = lock_renderer();
     unsafe { set_upscaling_8x() }
 }
 
+pub fn set_upscaling(scale: u8) {
+    match scale {
+        1 => enable_1x_upscaling(),
+        2 => enable_2x_upscaling(),
+        4 => enable_4x_upscaling(),
+        8 => enable_8x_upscaling(),
+        _ => {}
+    }
+}
