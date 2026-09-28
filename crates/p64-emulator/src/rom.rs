@@ -30,3 +30,6 @@ impl RomInfo {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
