@@ -1,18 +1,21 @@
+mod command;
+pub use command::FlagCommand;
+
 use crate::{memory::AccessSize, N64};
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{Index, IndexMut};
+use std::slice::SliceIndex;
 
-type RegReadCallback = fn(&N64, u64, AccessSize) -> u32;
-type RegWriteCallback = fn(&mut N64, u64, u32, u32);
+const REGISTER_WINDOW_MASK: u64 = 0xffff;
+const REGISTER_WORD_SHIFT: u32 = 2;
 
-#[derive(Default, Debug)]
-pub struct Registers<T = u32> {
-    pub size: usize,
-    pub regs: Vec<T>,
-    pub read_mask: Option<T>,
-    pub write_mask: Option<T>,
-    pub read_callback: Option<RegReadCallback>,
-    pub write_callback: Option<RegWriteCallback>,
+/// Decode a word register within an RCP device's 64 KiB register window.
+#[inline]
+pub fn register_index(address: u64) -> usize {
+    ((address & REGISTER_WINDOW_MASK) >> REGISTER_WORD_SHIFT) as usize
 }
+
+mod types;
+pub use types::Registers;
 
 impl<T: Default + Copy> Registers<T> {
     pub fn new() -> Self {
@@ -42,51 +45,30 @@ impl<T: Default + Copy> Registers<T> {
     }
 }
 
-// Implement specific methods for u32 registers
 impl Registers<u32> {
-    pub fn try_as_array_mut(&mut self) -> Option<&mut [u32; 8]> {
-        if self.regs.len() != 8 {
-            return None;
-        }
+    pub fn try_as_array_mut<const LEN: usize>(&mut self) -> Option<&mut [u32; LEN]> {
         self.regs.as_mut_slice().try_into().ok()
     }
 }
 
-// Implement Index/IndexMut for both types
-impl<T> Index<usize> for Registers<T> {
-    type Output = T;
+impl<T, I: SliceIndex<[T]>> Index<I> for Registers<T> {
+    type Output = I::Output;
 
-    fn index(&self, index: usize) -> &Self::Output {
+    fn index(&self, index: I) -> &Self::Output {
         &self.regs[index]
     }
 }
 
-impl<T> IndexMut<usize> for Registers<T> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+impl<T, I: SliceIndex<[T]>> IndexMut<I> for Registers<T> {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
         &mut self.regs[index]
     }
 }
 
-impl<T> Index<Range<usize>> for Registers<T> {
-    type Output = [T];
-
-    fn index(&self, range: Range<usize>) -> &Self::Output {
-        &self.regs[range]
-    }
-}
-
-impl<T> IndexMut<Range<usize>> for Registers<T> {
-    fn index_mut(&mut self, range: Range<usize>) -> &mut Self::Output {
-        &mut self.regs[range]
-    }
-}
-
-// From implementations for both types
-impl From<Vec<u32>> for Registers<u32> {
-    fn from(regs: Vec<u32>) -> Self {
-        let size = regs.len();
-        Registers {
-            size,
+impl<T> From<Vec<T>> for Registers<T> {
+    fn from(regs: Vec<T>) -> Self {
+        Self {
+            size: regs.len(),
             regs,
             read_mask: None,
             write_mask: None,
@@ -96,21 +78,6 @@ impl From<Vec<u32>> for Registers<u32> {
     }
 }
 
-impl From<Vec<u64>> for Registers<u64> {
-    fn from(regs: Vec<u64>) -> Self {
-        let size = regs.len();
-        Registers {
-            size,
-            regs,
-            read_mask: None,
-            write_mask: None,
-            read_callback: None,
-            write_callback: None,
-        }
-    }
-}
-
-// AsRef/AsMut implementations for both types
 impl<T> AsRef<[T]> for Registers<T> {
     fn as_ref(&self) -> &[T] {
         &self.regs
@@ -134,18 +101,14 @@ where
         + Into<u32>,
 {
     pub fn read(&self, n64: &N64, address: u64, access_size: AccessSize) -> T {
-        // Calculate register index from address
-        let reg = ((address & 0xFFFF) >> 2) as usize;
+        let reg = register_index(address);
 
-        // Check bounds
         if reg >= self.size {
             return T::default();
         }
 
-        // Get base value
         let value = self.regs[reg];
 
-        // Apply callback or mask
         if let Some(callback) = self.read_callback {
             T::from(callback(n64, address, access_size))
         } else if let Some(mask) = self.read_mask {
@@ -154,33 +117,4 @@ where
             value
         }
     }
-
-    // pub fn write(&mut self, n64: &mut N64,address: u64, value: T, mask: T) {
-    //     // Calculate register index from address
-    //     let reg = ((address & 0xFFFF) >> 2) as usize;
-
-    //     // Check bounds
-    //     if reg >= self.size {
-    //         return;
-    //     }
-
-    //     // Get old value and calculate new value with masks
-    //     let old_value = self.regs[reg];
-    //     let new_value = if let Some(write_mask) = self.write_mask {
-    //         (old_value & !mask) | (value & mask & write_mask)
-    //     } else {
-    //         (old_value & !mask) | (value & mask)
-    //     };
-
-    //     // Update register
-    //     self.regs[reg] = new_value;
-
-    //     // Call callback if present
-    //     if let Some(callback) = self.write_callback {
-    //         callback(n64, address, new_value.into(), mask.into());
-    //     }
-    // }
 }
-
-mod command;
-pub use command::FlagCommand;
