@@ -55,14 +55,18 @@ pub fn run_game(
     let (rdram_ptr, rdram_size) = get_rdram_shared_pointer(device);
 
     let start_video = Instant::now();
-    start_window(
-        &mut device.ui,
-        rdram_ptr,
-        rdram_size,
-        width,
-        height,
-        fullscreen,
-    );
+    // SAFETY: RDRAM and the SDL window outlive the renderer, which is dropped after CPU execution.
+    let renderer = unsafe {
+        start_window(
+            &mut device.ui,
+            rdram_ptr,
+            rdram_size,
+            width,
+            height,
+            fullscreen,
+        )
+    }
+    .expect("Unable to initialise renderer");
     let duration_video = start_video.elapsed();
     info!("Video init took: {:?}", duration_video);
 
@@ -88,6 +92,7 @@ pub fn run_game(
     info!("Load ROM save took: {:?}", duration_load_rom_save);
 
     cpu::run(device);
+    drop(renderer);
 }
 
 #[derive(Default)]
