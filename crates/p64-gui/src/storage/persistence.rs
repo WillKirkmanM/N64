@@ -121,3 +121,6 @@ fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
         Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+mod tests;
