@@ -59,3 +59,43 @@ fn repeated_keys_and_duplicate_axis_motion_do_not_advance_capture() {
         (true, 1, 1)
     );
 }
+
+#[test]
+fn stick_binding_ignores_button_and_hat_events() {
+    let mut capture = ProfileCapture::default();
+    for input in [
+        Input::AxisUp,
+        Input::AxisDown,
+        Input::AxisLeft,
+        Input::AxisRight,
+    ] {
+        assert!(matches!(
+            capture.capture(
+                input,
+                Event::JoyButtonDown {
+                    timestamp: 0,
+                    which: 0,
+                    button_idx: 1
+                }
+            ),
+            CaptureResult::Ignored
+        ));
+        assert!(matches!(
+            capture.capture(
+                input,
+                Event::JoyHatMotion {
+                    timestamp: 0,
+                    which: 0,
+                    hat_idx: 0,
+                    state: HatState::Up
+                }
+            ),
+            CaptureResult::Ignored
+        ));
+    }
+    assert!(capture
+        .into_profile()
+        .joystick_buttons
+        .iter()
+        .all(|binding| !binding.0));
+}
