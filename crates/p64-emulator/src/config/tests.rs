@@ -45,3 +45,23 @@ fn legacy_combined_config_migrates_without_losing_either_schema() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn corrupt_current_config_does_not_fall_back_to_stale_legacy_data() {
+    let directory = std::env::temp_dir().join(format!(
+        "p64-config-corrupt-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("launcher.json"), b"broken").unwrap();
+    fs::write(directory.join("input.json"), b"broken").unwrap();
+    fs::write(directory.join("config.json"), b"{}").unwrap();
+    assert!(Config::load(&directory).is_err());
+    assert!(p64_gui::config::Config::load(&directory).is_err());
+    assert_eq!(
+        fs::read(directory.join("launcher.json")).unwrap(),
+        b"broken"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
