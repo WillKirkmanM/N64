@@ -60,3 +60,18 @@ impl GameLaunch {
         result.and(saves)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn session_lock_is_exclusive_and_released_by_owner() {
+        let path = std::env::temp_dir().join(format!("p64-session-lock-{}", std::process::id()));
+        let first = SessionLock::acquire(&path).unwrap();
+        assert!(SessionLock::acquire(&path).is_err());
+        drop(first);
+        let second = SessionLock::acquire(&path).unwrap();
+        drop(second);
+        std::fs::remove_file(path).unwrap();
+    }
+}
