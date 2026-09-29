@@ -170,3 +170,6 @@ impl P64Gui {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
