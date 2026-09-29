@@ -76,3 +76,6 @@ impl ProfileCapture {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
