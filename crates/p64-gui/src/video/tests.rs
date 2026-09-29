@@ -36,3 +36,15 @@ extern "C" {
     fn rdp_command_range_valid(current: u32, end: u32, memory_size: u32) -> u8;
     fn rdp_read_rdram_word(memory: *const u8, memory_size: u32, offset: u32) -> u32;
 }
+
+#[test]
+fn native_command_ranges_use_allocated_rdram_size() {
+    const SIZE: u32 = 8 * 1024 * 1024;
+    unsafe {
+        assert_eq!(rdp_command_range_valid(SIZE - 8, SIZE, SIZE), 1);
+        assert_eq!(rdp_command_range_valid(SIZE - 8, SIZE + 8, SIZE), 0);
+        assert_eq!(rdp_command_range_valid(SIZE, SIZE + 8, SIZE), 0);
+        assert_eq!(rdp_command_range_valid(16, 8, SIZE), 0);
+        assert_eq!(rdp_command_range_valid(0, SIZE, 4 * 1024 * 1024), 0);
+    }
+}
