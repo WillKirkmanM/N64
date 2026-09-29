@@ -13,3 +13,6 @@ pub(super) fn decode_romsave(bytes: &[u8]) -> serde_json::Result<Map<String, Val
         RomSaveDocument::Map(data) | RomSaveDocument::LegacyTuple((data, _)) => data,
     })
 }
+
+#[cfg(test)]
+mod tests;
