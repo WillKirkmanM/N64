@@ -1,24 +1,24 @@
 use p64_gui::ui::Ui;
 
+mod device;
+pub use device::ConnectedController;
+
 pub fn get_input_profiles(game_ui: &Ui) -> Vec<String> {
-    let mut profiles = vec![];
-    for key in game_ui.config.config.input.input_profiles.keys() {
-        profiles.push((*key).clone())
-    }
-    profiles
+    game_ui
+        .input_config()
+        .input_profiles
+        .keys()
+        .cloned()
+        .collect()
 }
 
-pub fn get_controllers(game_ui: &Ui) -> Vec<String> {
-    let mut controllers: Vec<String> = vec![];
-
-    let joystick_subsystem = game_ui
-        .input_controllers
-        .joystick_subsystem
-        .as_ref()
-        .unwrap();
-    let num_joysticks = joystick_subsystem.num_joysticks().unwrap();
-    for i in 0..num_joysticks {
-        controllers.push(joystick_subsystem.name_for_index(i).unwrap());
-    }
-    controllers
+pub fn get_controllers(game_ui: &Ui) -> Vec<ConnectedController> {
+    let joysticks = game_ui.joystick_subsystem();
+    (0..joysticks.num_joysticks().unwrap_or(0))
+        .filter_map(|index| {
+            let guid = joysticks.device_guid(index).ok()?.to_string();
+            let name = joysticks.name_for_index(index).ok()?;
+            Some(ConnectedController { guid, name })
+        })
+        .collect()
 }

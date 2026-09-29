@@ -1,13 +1,17 @@
-use super::*;
+use super::{Input, BINDING_COUNT, BUTTON_COUNT};
+use sdl2::{
+    controller::{Axis, Button},
+    keyboard::Scancode,
+};
 
-pub(super) fn set_keys(default_keys: &mut [(bool, i32); 18], mappings: &[(usize, Scancode)]) {
+fn set_keys(default_keys: &mut [(bool, i32); BINDING_COUNT], mappings: &[(usize, Scancode)]) {
     for &(index, scancode) in mappings {
         default_keys[index] = (true, scancode as i32);
     }
 }
 
-pub(super) fn set_controller_buttons_initially(
-    default_buttons: &mut [(bool, i32); 14],
+fn set_controller_buttons_initially(
+    default_buttons: &mut [(bool, i32); BUTTON_COUNT],
     mappings: &[(usize, Button)],
 ) {
     for &(index, button) in mappings {
@@ -15,8 +19,8 @@ pub(super) fn set_controller_buttons_initially(
     }
 }
 
-pub(super) fn set_controller_axis_initially(
-    default_axis: &mut [(bool, i32, i16); 18],
+fn set_controller_axis_initially(
+    default_axis: &mut [(bool, i32, i16); BINDING_COUNT],
     mappings: &[(usize, Axis, i16)],
 ) {
     for &(index, axis, direction) in mappings {
@@ -25,7 +29,7 @@ pub(super) fn set_controller_axis_initially(
 }
 
 pub fn get_default_profile() -> crate::config::InputProfile {
-    let mut default_keys = [(false, 0); 18];
+    let mut default_keys = [(false, 0); BINDING_COUNT];
     set_keys(
         &mut default_keys,
         &[
@@ -50,7 +54,7 @@ pub fn get_default_profile() -> crate::config::InputProfile {
         ],
     );
 
-    let mut default_controller_buttons = [(false, 0); 14];
+    let mut default_controller_buttons = [(false, 0); BUTTON_COUNT];
     set_controller_buttons_initially(
         &mut default_controller_buttons,
         &[
@@ -66,7 +70,7 @@ pub fn get_default_profile() -> crate::config::InputProfile {
         ],
     );
 
-    let mut default_controller_axis = [(false, 0, 0); 18];
+    let mut default_controller_axis = [(false, 0, 0); BINDING_COUNT];
     set_controller_axis_initially(
         &mut default_controller_axis,
         &[

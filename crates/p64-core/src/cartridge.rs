@@ -115,10 +115,10 @@ pub fn write_cartridge_to_memory(n64: &mut N64, rom_file: Vec<u8>) {
 }
 
 pub fn load_rom_save(n64: &mut N64) {
-    if n64.ui.save_data.data.romsave.0.is_empty() {
+    if n64.ui.save_data.data.romsave.data.is_empty() {
         return;
     }
-    for (key, value) in n64.ui.save_data.data.romsave.0.iter() {
+    for (key, value) in n64.ui.save_data.data.romsave.data.iter() {
         n64.cartridge.rom[key.parse::<usize>().unwrap()] =
             serde_json::from_value(value.clone()).unwrap()
     }

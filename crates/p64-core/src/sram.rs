@@ -48,18 +48,18 @@ fn dma_read_sram(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length: 
     dram_addr &= RDRAM_MASK as u32;
     cart_addr &= SRAM_MASK as u32;
 
-    format_memory(&mut n64.ui.save_data.data.sram.0, SRAM_SIZE);
+    format_memory(&mut n64.ui.save_data.data.sram.data, SRAM_SIZE);
 
     for i in 0..length {
-        n64.ui.save_data.data.sram.0[(cart_addr + i) as usize] =
+        n64.ui.save_data.data.sram.data[(cart_addr + i) as usize] =
             n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap];
     }
 
-    n64.ui.save_data.data.sram.1 = true;
+    n64.ui.save_data.data.sram.dirty = true;
 }
 
 fn dma_read_flash(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) {
-    format_memory(&mut n64.ui.save_data.data.flash.0, FLASHRAM_SIZE);
+    format_memory(&mut n64.ui.save_data.data.flash.data, FLASHRAM_SIZE);
 
     if (cart_addr & 0x1ffff) == 0x00000
         && length == 128
@@ -87,11 +87,11 @@ fn dma_write_sram(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length:
     dram_addr &= RDRAM_MASK as u32;
     cart_addr &= SRAM_MASK as u32;
 
-    format_memory(&mut n64.ui.save_data.data.sram.0, SRAM_SIZE);
+    format_memory(&mut n64.ui.save_data.data.sram.data, SRAM_SIZE);
 
     for i in 0..length {
         n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap] =
-            n64.ui.save_data.data.sram.0[(cart_addr + i) as usize];
+            n64.ui.save_data.data.sram.data[(cart_addr + i) as usize];
     }
 }
 
@@ -100,7 +100,7 @@ fn dma_write_flash(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length
 
     match (cart_addr & 0x1ffff, length, n64.flashram.mode.clone()) {
         (addr, _, FlashramMode::ReadArray) if addr < 0x10000 => {
-            format_memory(&mut n64.ui.save_data.data.flash.0, FLASHRAM_SIZE);
+            format_memory(&mut n64.ui.save_data.data.flash.data, FLASHRAM_SIZE);
             if n64.flashram.silicon_id[1] == MX29L1100_ID
                 || n64.flashram.silicon_id[1] == MX29L0000_ID
                 || n64.flashram.silicon_id[1] == MX29L0001_ID
@@ -112,7 +112,7 @@ fn dma_write_flash(n64: &mut N64, mut cart_addr: u32, mut dram_addr: u32, length
 
             for i in 0..length {
                 n64.rdram.mem[(dram_addr + i) as usize ^ n64.byte_swap] =
-                    n64.ui.save_data.data.flash.0[(cart_addr + i) as usize];
+                    n64.ui.save_data.data.flash.data[(cart_addr + i) as usize];
             }
         }
         _ => panic!("unknown flash dma write"),

@@ -1,4 +1,4 @@
-use super::*;
+use sdl2::{controller::GameController, joystick::Joystick};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Input {
@@ -22,12 +22,6 @@ pub enum Input {
     AxisRight,
     AxisUp,
     AxisDown,
-}
-
-#[derive(Default)]
-pub struct Controllers {
-    pub controller: Option<GameController>,
-    pub joystick: Option<Joystick>,
 }
 
 impl Input {
@@ -55,4 +49,10 @@ impl Input {
             Input::AxisDown => 17,
         }
     }
+}
+
+#[derive(Default)]
+pub struct Controllers {
+    pub controller: Option<GameController>,
+    pub joystick: Option<Joystick>,
 }

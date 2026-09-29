@@ -49,13 +49,20 @@ pub fn run_game(
     width: u32,
     height: u32,
     fullscreen: bool,
-) {
-    write_cartridge_to_memory(device, read_rom(file_path));
+) -> Result<(), String> {
+    let rom = rom::try_read_rom(file_path)
+        .map_err(|error| format!("Read ROM {}: {error}", file_path.display()))?;
+    write_cartridge_to_memory(device, rom);
+
+    let start_load_saves = Instant::now();
+    load_saves(&mut device.ui).map_err(|error| format!("Load game saves: {error}"))?;
+    info!("Load saves took: {:?}", start_load_saves.elapsed());
 
     let (rdram_ptr, rdram_size) = get_rdram_shared_pointer(device);
 
     let start_video = Instant::now();
-    // SAFETY: RDRAM and the SDL window outlive the renderer, which is dropped after CPU execution.
+    // SAFETY: The machine retains the aligned RDRAM allocation and SDL window
+    // through CPU execution; renderer teardown precedes their destruction.
     let renderer = unsafe {
         start_window(
             &mut device.ui,
@@ -64,9 +71,8 @@ pub fn run_game(
             width,
             height,
             fullscreen,
-        )
-    }
-    .expect("Unable to initialise renderer");
+        )?
+    };
     let duration_video = start_video.elapsed();
     info!("Video init took: {:?}", duration_video);
 
@@ -81,11 +87,6 @@ pub fn run_game(
     set_cpu_clock_speed(device);
     start_cpu(device);
 
-    let start_load_saves = Instant::now();
-    load_saves(&mut device.ui);
-    let duration_load_saves = start_load_saves.elapsed();
-    info!("Load saves took: {:?}", duration_load_saves);
-
     let start_load_rom_save = Instant::now();
     load_rom_save(device);
     let duration_load_rom_save = start_load_rom_save.elapsed();
@@ -93,6 +94,10 @@ pub fn run_game(
 
     cpu::run(device);
     drop(renderer);
+    device
+        .ui
+        .flush()
+        .map_err(|error| format!("Flush saves/configuration: {error}"))
 }
 
 #[derive(Default)]
@@ -139,3 +144,26 @@ mod rsp_vector;
 pub mod recompiler;
 
 pub mod aot;
+
+impl N64 {
+    pub fn with_ui(ui: Ui) -> Self {
+        Self {
+            ui: ui,
+            byte_swap: if cfg!(target_endian = "little") { 3 } else { 0 },
+            cpu: Default::default(),
+            pif: Default::default(),
+            cartridge: Default::default(),
+            memory: Default::default(),
+            rsp: Default::default(),
+            rdp: Default::default(),
+            rdram: Default::default(),
+            mips: Default::default(),
+            peripheral: Default::default(),
+            video: Default::default(),
+            audio: Default::default(),
+            serial: Default::default(),
+            rdram_interface: Default::default(),
+            flashram: Default::default(),
+        }
+    }
+}

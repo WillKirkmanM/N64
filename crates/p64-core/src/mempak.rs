@@ -43,30 +43,30 @@ fn initialize_page_0() -> [u8; MPK_PAGE_SIZE] {
 
 fn fill_page_0(n64: &mut N64, offset: usize) {
     let page_0 = initialize_page_0();
-    n64.ui.save_data.data.mempak.0[offset..offset + MPK_PAGE_SIZE].copy_from_slice(&page_0);
+    n64.ui.save_data.data.mempak.data[offset..offset + MPK_PAGE_SIZE].copy_from_slice(&page_0);
 }
 
 fn fill_inode_page(n64: &mut N64, offset: usize) {
     let start_page = 5;
     for i in MPK_PAGE_SIZE..2 * start_page {
-        n64.ui.save_data.data.mempak.0[offset + i] = 0;
+        n64.ui.save_data.data.mempak.data[offset + i] = 0;
     }
     for i in (MPK_PAGE_SIZE + 2 * start_page..2 * MPK_PAGE_SIZE).step_by(2) {
-        n64.ui.save_data.data.mempak.0[offset + i] = 0x00;
-        n64.ui.save_data.data.mempak.0[offset + i + 1] = 0x03;
+        n64.ui.save_data.data.mempak.data[offset + i] = 0x00;
+        n64.ui.save_data.data.mempak.data[offset + i + 1] = 0x03;
     }
-    n64.ui.save_data.data.mempak.0[offset + (MPK_PAGE_SIZE + 1)] = 0x71;
+    n64.ui.save_data.data.mempak.data[offset + (MPK_PAGE_SIZE + 1)] = 0x71;
 }
 
 fn fill_remaining_pages(n64: &mut N64, offset: usize) {
     for i in 3 * MPK_PAGE_SIZE..MEMPAK_SIZE - 3 * MPK_PAGE_SIZE {
-        n64.ui.save_data.data.mempak.0[offset + i] = 0;
+        n64.ui.save_data.data.mempak.data[offset + i] = 0;
     }
 }
 
 fn format_mempak(n64: &mut N64) {
-    if n64.ui.save_data.data.mempak.0.len() < MEMPAK_SIZE * 4 {
-        n64.ui.save_data.data.mempak.0.resize(MEMPAK_SIZE * 4, 0);
+    if n64.ui.save_data.data.mempak.data.len() < MEMPAK_SIZE * 4 {
+        n64.ui.save_data.data.mempak.data.resize(MEMPAK_SIZE * 4, 0);
 
         for i in 0..4 {
             let offset = i * MEMPAK_SIZE;
@@ -76,8 +76,9 @@ fn format_mempak(n64: &mut N64) {
 
             let page1 = offset + MPK_PAGE_SIZE;
             let page2 = offset + 2 * MPK_PAGE_SIZE;
-            let page1data = n64.ui.save_data.data.mempak.0[page1..page1 + MPK_PAGE_SIZE].to_vec();
-            n64.ui.save_data.data.mempak.0[page2..page2 + MPK_PAGE_SIZE]
+            let page1data =
+                n64.ui.save_data.data.mempak.data[page1..page1 + MPK_PAGE_SIZE].to_vec();
+            n64.ui.save_data.data.mempak.data[page2..page2 + MPK_PAGE_SIZE]
                 .copy_from_slice(&page1data);
 
             fill_remaining_pages(n64, offset);
@@ -98,12 +99,12 @@ fn handle_read_write(
 
         let offset = (channel * MEMPAK_SIZE) + address as usize;
         if is_write {
-            n64.ui.save_data.data.mempak.0[offset..offset + size]
+            n64.ui.save_data.data.mempak.data[offset..offset + size]
                 .copy_from_slice(&n64.pif.ram[data..data + size]);
-            n64.ui.save_data.data.mempak.1 = true;
+            n64.ui.save_data.data.mempak.dirty = true;
         } else {
             n64.pif.ram[data..data + size]
-                .copy_from_slice(&n64.ui.save_data.data.mempak.0[offset..offset + size]);
+                .copy_from_slice(&n64.ui.save_data.data.mempak.data[offset..offset + size]);
         }
     } else {
         for i in 0..size {

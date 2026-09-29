@@ -75,8 +75,13 @@ pub(super) fn handle_af_rtc_write(n64: &mut N64, channel: usize) {
 }
 
 pub(super) fn format_eeprom(n64: &mut N64) {
-    if n64.ui.save_data.data.eeprom.0.len() < EEPROM_MAX_SIZE {
-        n64.ui.save_data.data.eeprom.0.resize(EEPROM_MAX_SIZE, 0xFF)
+    if n64.ui.save_data.data.eeprom.data.len() < EEPROM_MAX_SIZE {
+        n64.ui
+            .save_data
+            .data
+            .eeprom
+            .data
+            .resize(EEPROM_MAX_SIZE, 0xFF)
     }
 }
 
@@ -86,7 +91,7 @@ pub(super) fn eeprom_read_block(n64: &mut N64, block: usize, offset: usize) {
     format_eeprom(n64);
 
     n64.pif.ram[offset..offset + EEPROM_BLOCK_SIZE]
-        .copy_from_slice(&n64.ui.save_data.data.eeprom.0[address..address + EEPROM_BLOCK_SIZE]);
+        .copy_from_slice(&n64.ui.save_data.data.eeprom.data[address..address + EEPROM_BLOCK_SIZE]);
 }
 
 pub(super) fn eeprom_write_block(n64: &mut N64, block: usize, offset: usize, status: usize) {
@@ -94,12 +99,12 @@ pub(super) fn eeprom_write_block(n64: &mut N64, block: usize, offset: usize, sta
 
     format_eeprom(n64);
 
-    n64.ui.save_data.data.eeprom.0[address..address + EEPROM_BLOCK_SIZE]
+    n64.ui.save_data.data.eeprom.data[address..address + EEPROM_BLOCK_SIZE]
         .copy_from_slice(&n64.pif.ram[offset..offset + EEPROM_BLOCK_SIZE]);
 
     n64.pif.ram[status] = 0x00;
 
-    n64.ui.save_data.data.eeprom.1 = true
+    n64.ui.save_data.data.eeprom.dirty = true
 }
 
 pub(super) fn af_rtc_read_block(n64: &mut N64, block: usize, offset: usize, status: usize) {

@@ -1,24 +1,42 @@
-use std::time::{Duration, Instant};
+mod packet;
+mod profile;
+use packet::{encode_stick, press_button};
 
-use sdl2::controller::{Axis, Button, GameController};
-use sdl2::event::WindowEvent;
-use sdl2::joystick::{HatState, Joystick};
+use sdl2::controller::GameController;
 use sdl2::keyboard::{KeyboardState, Scancode};
-use sdl2::{event::Event, pixels::Color};
-use sdl2::rect::Point;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-use rusttype::{Font, Scale, point};
 use tracing::error;
 
 use crate::ui;
 
+mod types;
+pub use types::{Controllers, Input};
+
+pub const CONTROLLER_COUNT: usize = 4;
+pub const BUTTON_COUNT: usize = 14;
+pub const BINDING_COUNT: usize = 18;
 pub const MAX_AXIS_VALUE: f64 = 85.0;
+const STICK_RADIUS: f64 = 95.0;
+
+fn directional_axis(position: i16, direction: i16, invert: bool) -> f64 {
+    if position as isize * direction as isize <= 0 {
+        return 0.0;
+    }
+
+    let value = position as f64 * MAX_AXIS_VALUE / i16::MAX as f64;
+
+    if invert {
+        -value
+    } else {
+        value
+    }
+}
 
 fn bind_axis(x: f64, y: f64) -> (f64, f64) {
-    const RADIUS: f64 = 95.0;
-    if x.hypot(y) > RADIUS {
-        let scale_factor = RADIUS / x.hypot(y);
+    let magnitude = x.hypot(y);
+
+    if magnitude > STICK_RADIUS {
+        let scale_factor = STICK_RADIUS / magnitude;
+
         (x * scale_factor, y * scale_factor)
     } else {
         (x, y)
@@ -36,12 +54,13 @@ pub fn set_joystick_axis(
         invert: bool,
     ) -> f64 {
         if profile.joystick_axis[axis].0 {
-            let axis_position = joystick.axis(profile.joystick_axis[axis].1).unwrap();
-            if axis_position as isize * profile.joystick_axis[axis].2 as isize > 0 {
-                let value = axis_position as f64 * MAX_AXIS_VALUE / i16::MAX as f64;
-                return if invert { -value } else { value };
-            }
+            let Ok(axis_position) = joystick.axis(profile.joystick_axis[axis].1) else {
+                return 0.0;
+            };
+
+            return directional_axis(axis_position, profile.joystick_axis[axis].2, invert);
         }
+
         0.0
     }
 
@@ -64,19 +83,16 @@ pub fn set_controller_axis(
         invert: bool,
     ) -> f64 {
         if profile.controller_axis[axis].0 {
-            let axis_enum = match profile.controller_axis[axis].1 {
-                0 => Axis::LeftX,
-                1 => Axis::LeftY,
-                2 => Axis::RightX,
-                3 => Axis::RightY,
-                _ => return 0.0,
+            let Some(axis_enum) = profile::stick_axis_from_id(profile.controller_axis[axis].1)
+            else {
+                return 0.0;
             };
+
             let axis_position = controller.axis(axis_enum);
-            if axis_position as isize * profile.controller_axis[axis].2 as isize > 0 {
-                let value = axis_position as f64 * MAX_AXIS_VALUE / i16::MAX as f64;
-                return if invert { -value } else { value };
-            }
+
+            return directional_axis(axis_position, profile.controller_axis[axis].2, invert);
         }
+
         0.0
     }
 
@@ -84,6 +100,7 @@ pub fn set_controller_axis(
         + get_axis_value(profile, controller, Input::AxisRight.as_usize(), false);
     let y = get_axis_value(profile, controller, Input::AxisDown.as_usize(), true)
         + get_axis_value(profile, controller, Input::AxisUp.as_usize(), true);
+
     (x, y)
 }
 
@@ -104,6 +121,7 @@ pub fn set_axis_from_keys(
                 }
             }
         }
+
         0.0
     }
 
@@ -129,6 +147,7 @@ pub fn set_axis_from_keys(
         Input::AxisUp.as_usize(),
         MAX_AXIS_VALUE,
     );
+
     (x, y)
 }
 
@@ -141,23 +160,20 @@ pub fn set_joystick_buttons(
     if profile.joystick_buttons[i].0 {
         if let Ok(button) = joystick.button(profile.joystick_buttons[i].1) {
             if button {
-                *keys |= 1 << i;
+                press_button(keys, i);
             }
         }
     }
 
     if profile.joystick_hat[i].0 {
         if let Ok(hat_state) = joystick.hat(profile.joystick_hat[i].1) {
-            let expected_state = match profile.joystick_hat[i].2 {
-                0 => sdl2::joystick::HatState::Centered,
-                1 => sdl2::joystick::HatState::Up,
-                2 => sdl2::joystick::HatState::Right,
-                4 => sdl2::joystick::HatState::Down,
-                8 => sdl2::joystick::HatState::Left,
-                _ => return,
+            let Some(expected_state) = profile::cardinal_hat_from_id(profile.joystick_hat[i].2)
+            else {
+                return;
             };
+
             if hat_state == expected_state {
-                *keys |= 1 << i;
+                press_button(keys, i);
             }
         }
     }
@@ -167,7 +183,7 @@ pub fn set_joystick_buttons(
             if axis_position as isize * profile.joystick_axis[i].2 as isize > 0
                 && axis_position.saturating_abs() > i16::MAX / 2
             {
-                *keys |= 1 << i;
+                press_button(keys, i);
             }
         }
     }
@@ -179,56 +195,46 @@ pub fn set_controller_buttons(
     controller: &GameController,
     keys: &mut u32,
 ) {
-    let profile_controller_button = profile.controller_buttons[i];
-    if profile_controller_button.0 {
-        unsafe {
-            *keys |= (controller.button(std::mem::transmute::<i32, Button>(
-                profile_controller_button.1,
-            )) as u32)
-                << i;
-        }
+    let (enabled, button) = profile.controller_buttons[i];
+
+    if let Some(button) = enabled.then(|| profile::button_from_id(button)).flatten() {
+        *keys |= u32::from(controller.button(button)) << i;
     }
 
-    let profile_controller_axis = profile.controller_axis[i];
-    if profile_controller_axis.0 {
-        let axis_position =
-            unsafe { controller.axis(std::mem::transmute::<i32, Axis>(profile_controller_axis.1)) };
-        if axis_position as isize * profile_controller_axis.2 as isize > 0
-            && axis_position.saturating_abs() > i16::MAX / 2
-        {
-            *keys |= 1 << i;
+    let (enabled, axis, direction) = profile.controller_axis[i];
+
+    if let Some(axis) = enabled.then(|| profile::axis_from_id(axis)).flatten() {
+        let position = controller.axis(axis);
+
+        if position as isize * direction as isize > 0 && position.saturating_abs() > i16::MAX / 2 {
+            press_button(keys, i);
         }
     }
 }
 
 pub fn get(ui: &mut ui::Ui, channel: usize) -> u32 {
-    let context = match ui.sdl_context.sdl_context.as_mut() {
-        Some(ctx) => ctx,
-        None => return 0,
+    let Ok(events) = ui.sdl_context.event_pump() else {
+        return 0;
     };
-    let events = match context.event_pump() {
-        Ok(ev) => ev,
-        Err(_) => return 0,
-    };
+
     let keyboard_state = events.keyboard_state();
 
-    let profile_name = ui.config.config.input.input_profile_binding[channel].clone();
-    let profile = match ui.config.config.input.input_profiles.get(&profile_name) {
-        Some(p) => p,
-        None => return 0,
+    let Some((profile_name, profile)) = ui.profile_for_channel(channel) else {
+        return 0;
     };
 
     let mut keys = 0;
     let controller = &ui.input_controllers.controllers[channel].controller;
     let joystick = &ui.input_controllers.controllers[channel].joystick;
 
-    for i in 0..14 {
+    for i in 0..BUTTON_COUNT {
         if profile_name != "Default" || channel == 0 {
             let profile_key = profile.keys[i];
+
             if profile_key.0 {
                 if let Some(scancode) = Scancode::from_i32(profile_key.1) {
                     if keyboard_state.is_scancode_pressed(scancode) {
-                        keys |= 1 << i;
+                        press_button(&mut keys, i);
                     }
                 }
             }
@@ -255,8 +261,8 @@ pub fn get(ui: &mut ui::Ui, channel: usize) -> u32 {
 
     let (bound_x, bound_y) = bind_axis(x, y);
 
-    keys |= (bound_x.round() as i8 as u8 as u32) << Input::XAxis.as_usize();
-    keys |= (bound_y.round() as i8 as u8 as u32) << Input::YAxis.as_usize();
+    keys |= encode_stick(bound_x, bound_y);
+
     keys
 }
 
@@ -291,12 +297,20 @@ pub fn list_controllers(ui: &ui::Ui) {
 }
 
 pub fn assign_controller(ui: &mut ui::Ui, controller: u32, port: usize) {
-    let joystick_subsystem = ui.input_controllers.joystick_subsystem.as_ref().unwrap();
-    let num_joysticks = joystick_subsystem.num_joysticks().unwrap();
+    let Some(joystick_subsystem) = ui.input_controllers.joystick_subsystem.as_ref() else {
+        return;
+    };
+    let Ok(num_joysticks) = joystick_subsystem.num_joysticks() else {
+        return;
+    };
+    if !(1..=CONTROLLER_COUNT).contains(&port) {
+        return;
+    }
+
     if controller < num_joysticks {
         match joystick_subsystem.device_guid(controller) {
             Ok(guid) => {
-                ui.config.config.input.controller_assignment[port - 1] = Some(guid.to_string())
+                ui.input_config_mut().controller_assignment[port - 1] = Some(guid.to_string())
             }
             Err(e) => error!(
                 "Failed to get device GUID for controller {}: {}",
@@ -309,244 +323,24 @@ pub fn assign_controller(ui: &mut ui::Ui, controller: u32, port: usize) {
 }
 
 pub fn bind_input_profile(ui: &mut ui::Ui, profile: String, port: usize) {
-    if ui.config.config.input.input_profiles.contains_key(&profile) {
-        ui.config.config.input.input_profile_binding[port - 1] = profile;
+    if !(1..=CONTROLLER_COUNT).contains(&port) {
+        return;
+    }
+    if ui.input_config().input_profiles.contains_key(&profile) {
+        ui.input_config_mut().input_profile_binding[port - 1] = profile;
     } else {
         error!("Invalid profile name: {}", profile);
     }
 }
 
 pub fn clear_bindings(ui: &mut ui::Ui) {
-    for i in 0..4 {
-        ui.config.config.input.controller_assignment[i] = None;
-        ui.config.config.input.input_profile_binding[i] = "Default".to_string();
-    }
+    let input = ui.input_config_mut();
+    input.controller_assignment.fill(None);
+    input.input_profile_binding = std::array::from_fn(|_| "Default".to_owned());
 }
 
-pub fn draw_text(text: &str, canvas: &mut Canvas<Window>, font: &Font) {
-    let scale = Scale::uniform(32.0);
-    let v_metrics = font.v_metrics(scale);
-
-    // Calculate text dimensions
-    let text_width = font
-        .layout(text, scale, point(0.0, 0.0))
-        .map(|g| g.position().x + g.unpositioned().h_metrics().advance_width)
-        .last()
-        .unwrap_or(0.0);
-
-    let text_height = v_metrics.ascent - v_metrics.descent;
-
-    // Calculate center position (960x720 screen)
-    let x = (960.0 - text_width) / 3.0;
-    let y = (720.0 - text_height) / 3.0;
-
-    let offset = point(x, y + v_metrics.ascent);
-
-    // Clear screen
-    canvas.set_draw_color(Color::RGB(0, 0, 0));
-    canvas.clear();
-
-    // Draw centered text
-    font.layout(text, scale, offset).for_each(|glyph| {
-        if let Some(bb) = glyph.pixel_bounding_box() {
-            glyph.draw(|x, y, v| {
-                if v > 0.5 {
-                    canvas.set_draw_color(Color::RGB(255, 255, 255));
-                    canvas
-                        .draw_point(Point::new(x as i32 + bb.min.x, y as i32 + bb.min.y))
-                        .unwrap();
-                }
-            });
-        }
-    });
-
-    canvas.present();
-}
-
-macro_rules! handle_event {
-    ($event:expr, $value:expr, $new_keys:expr, $new_joystick_buttons:expr, $new_joystick_hat:expr, $new_joystick_axis:expr, $last_axis_result:expr, $key_set:expr, $last_input_time:expr) => {
-        match $event {
-            Event::Window {
-                win_event: WindowEvent::Close,
-                ..
-            } => return,
-            Event::KeyUp { .. } => continue,
-            Event::JoyButtonUp { .. } => continue,
-            Event::KeyDown {
-                scancode: Some(scancode),
-                repeat,
-                ..
-            } => {
-                if !repeat {
-                    $new_keys[$value.as_usize()] = (true, scancode as i32);
-                    $key_set = true;
-                    $last_input_time = Instant::now();
-                }
-            }
-            Event::JoyButtonDown { button_idx, .. } => {
-                $new_joystick_buttons[$value.as_usize()] = (true, button_idx as u32);
-                $key_set = true;
-                $last_input_time = Instant::now();
-            }
-            Event::JoyHatMotion { hat_idx, state, .. } => {
-                if state != HatState::Centered {
-                    $new_joystick_hat[$value.as_usize()] = (true, hat_idx as u32, state as i8);
-                    $key_set = true;
-                    $last_input_time = Instant::now();
-                }
-            }
-            Event::JoyAxisMotion {
-                axis_idx,
-                value: axis_value,
-                ..
-            } => {
-                if axis_value.saturating_abs() > 24576 {
-                    let result = (
-                        true,
-                        axis_idx as u32,
-                        axis_value / axis_value.saturating_abs(),
-                    );
-                    if result != $last_axis_result {
-                        $new_joystick_axis[$value.as_usize()] = result;
-                        $last_axis_result = result;
-                        $key_set = true;
-                        $last_input_time = Instant::now();
-                    }
-                }
-            }
-            _ => {}
-        }
-    };
-}
-
-pub fn configure_profile(ui: &mut ui::Ui, profile: String) {
-    if profile == "Default" || profile.is_empty() {
-        println!(
-            "Profile name cannot be {}",
-            if profile.is_empty() {
-                "empty"
-            } else {
-                "Default"
-            }
-        );
-        return;
-    }
-
-    let joystick_subsystem = ui
-        .sdl_context
-        .sdl_context
-        .as_ref()
-        .unwrap()
-        .joystick()
-        .unwrap();
-    let _joysticks: Vec<_> = (0..joystick_subsystem.num_joysticks().unwrap())
-        .map(|i| joystick_subsystem.open(i))
-        .collect();
-
-    let window = ui
-        .sdl_context
-        .video_subsystem
-        .as_ref()
-        .unwrap()
-        .window("configure input profile", 640, 480)
-        .position_centered()
-        .build()
-        .unwrap();
-    let mut canvas = window.into_canvas().build().unwrap();
-
-    let key_labels = [
-        ("A", Input::AButton),
-        ("B", Input::BButton),
-        ("Start", Input::StartButton),
-        ("D Up", Input::UDPad),
-        ("D Down", Input::DDPad),
-        ("D Left", Input::LDPad),
-        ("D Right", Input::RDPad),
-        ("C Up", Input::UCButton),
-        ("C Down", Input::DCButton),
-        ("C Left", Input::LCButton),
-        ("C Right", Input::RCButton),
-        ("L", Input::LTrig),
-        ("R", Input::RTrig),
-        ("Z", Input::ZTrig),
-        ("Control Stick Up", Input::AxisUp),
-        ("Control Stick Down", Input::AxisDown),
-        ("Control Stick Left", Input::AxisLeft),
-        ("Control Stick Right", Input::AxisRight),
-    ];
-
-    let mut new_keys = [(false, 0); 18];
-    let mut new_joystick_buttons = [(false, 0u32); 14];
-    let mut new_joystick_hat = [(false, 0u32, 0); 14];
-    let mut new_joystick_axis = [(false, 0u32, 0); 18];
-
-    let mut last_axis_result = (false, 0, 0);
-    let mut event_pump = ui
-        .sdl_context
-        .sdl_context
-        .as_ref()
-        .unwrap()
-        .event_pump()
-        .unwrap();
-
-    for (key, value) in key_labels.iter() {
-        event_pump.poll_iter().for_each(|_| {}); // clear events
-
-        let roboto = Font::try_from_bytes(include_bytes!("Roboto-Regular.ttf")).unwrap();
-        draw_text(
-            &format!("Press the button to bind to: {key}"),
-            &mut canvas,
-            &roboto,
-        );
-
-        let mut key_set = false;
-        let mut last_input_time = Instant::now();
-        let cooldown = Duration::from_millis(300);
-
-        while !key_set {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            if last_input_time.elapsed() >= cooldown {
-                for event in event_pump.poll_iter() {
-                    handle_event!(
-                        event,
-                        value,
-                        new_keys,
-                        new_joystick_buttons,
-                        new_joystick_hat,
-                        new_joystick_axis,
-                        last_axis_result,
-                        key_set,
-                        last_input_time
-                    );
-                }
-            }
-        }
-    }
-
-    let new_profile = crate::config::InputProfile {
-        keys: new_keys,
-        controller_buttons: Default::default(),
-        controller_axis: Default::default(),
-        joystick_buttons: new_joystick_buttons,
-        joystick_hat: new_joystick_hat,
-        joystick_axis: new_joystick_axis,
-    };
-    ui.config
-        .config
-        .input
-        .input_profiles
-        .insert(profile, new_profile);
-}
-
+mod capture;
+mod configure;
 mod defaults;
-pub use defaults::{get_default_profile};
-use defaults::{set_keys, set_controller_buttons_initially, set_controller_axis_initially};
-
-mod types;
-pub use types::{Input, Controllers};
-
-mod packet;
-use packet::{encode_stick, press_button};
-
-mod profile;
+pub use configure::{configure_profile, draw_text};
+pub use defaults::get_default_profile;
