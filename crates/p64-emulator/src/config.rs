@@ -64,3 +64,6 @@ pub fn apply_bindings(
     });
     game_ui.rebind_input();
 }
+
+#[cfg(test)]
+mod tests;
