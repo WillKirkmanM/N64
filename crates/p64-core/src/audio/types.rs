@@ -168,7 +168,7 @@ impl Audio {
 
     pub(super) fn calculate_audio_dma_duration(n64: &N64) -> u64 {
         n64.audio
-            .calculate_dma_duration(n64.video.clock, n64.cpu.clock_rate)
+            .calculate_dma_duration(n64.video.clock, n64.cpu.execution.clock_rate)
     }
 
     pub(super) fn start_audio_dma(n64: &mut N64) {

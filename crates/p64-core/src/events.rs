@@ -2,22 +2,22 @@ use crate::N64;
 
 /// Event management functions
 pub fn create_event(n64: &mut N64, event_type: EventType, when: u64, handler: fn(&mut N64)) {
-    n64.cpu.events[event_type as usize] = Event::new(when, handler);
+    n64.cpu.scheduler.events[event_type as usize] = Event::new(when, handler);
     set_next_event(n64);
 }
 
 pub fn get_event(n64: &mut N64, event_type: EventType) -> Option<&mut Event> {
-    let event = &mut n64.cpu.events[event_type as usize];
+    let event = &mut n64.cpu.scheduler.events[event_type as usize];
     event.enabled.then_some(event)
 }
 
 pub fn remove_event(n64: &mut N64, event_type: EventType) {
-    n64.cpu.events[event_type as usize].enabled = false;
+    n64.cpu.scheduler.events[event_type as usize].enabled = false;
 }
 
 pub fn trigger_event(n64: &mut N64) {
-    let event_idx = n64.cpu.next_event;
-    let event = &mut n64.cpu.events[event_idx];
+    let event_idx = n64.cpu.scheduler.next_event;
+    let event = &mut n64.cpu.scheduler.events[event_idx];
 
     event.enabled = false;
     (event.handler)(n64);
@@ -27,6 +27,7 @@ pub fn trigger_event(n64: &mut N64) {
 pub fn set_next_event(n64: &mut N64) {
     let (pos, count) = n64
         .cpu
+        .scheduler
         .events
         .iter()
         .enumerate()
@@ -35,12 +36,13 @@ pub fn set_next_event(n64: &mut N64) {
         .map(|(pos, e)| (pos, e.count))
         .unwrap_or((0, u64::MAX));
 
-    n64.cpu.next_event = pos;
-    n64.cpu.next_event_count = count;
+    n64.cpu.scheduler.next_event = pos;
+    n64.cpu.scheduler.next_event_count = count;
 }
 
 pub fn translate_events(n64: &mut N64, old_count: u64, new_count: u64) {
     n64.cpu
+        .scheduler
         .events
         .iter_mut()
         .filter(|e| e.enabled)

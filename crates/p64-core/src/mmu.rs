@@ -39,24 +39,28 @@ pub fn reserved(n64: &mut N64, _opcode: u32) {
 }
 
 fn mfc0(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[cpu::rt(opcode) as usize] =
+    n64.cpu.registers.gpr[cpu::rt(opcode) as usize] =
         cpu::se32((get_control_registers(n64, cpu::rd(opcode))) as u32 as i32)
 }
 
 fn dmfc0(n64: &mut N64, opcode: u32) {
-    n64.cpu.gpr[cpu::rt(opcode) as usize] = get_control_registers(n64, cpu::rd(opcode))
+    n64.cpu.registers.gpr[cpu::rt(opcode) as usize] = get_control_registers(n64, cpu::rd(opcode))
 }
 
 fn mtc0(n64: &mut N64, opcode: u32) {
     mmu::set_control_registers(
         n64,
         cpu::rd(opcode),
-        cpu::se32(n64.cpu.gpr[cpu::rt(opcode) as usize] as u32 as i32),
+        cpu::se32(n64.cpu.registers.gpr[cpu::rt(opcode) as usize] as u32 as i32),
     )
 }
 
 fn dmtc0(n64: &mut N64, opcode: u32) {
-    mmu::set_control_registers(n64, cpu::rd(opcode), n64.cpu.gpr[cpu::rt(opcode) as usize])
+    mmu::set_control_registers(
+        n64,
+        cpu::rd(opcode),
+        n64.cpu.registers.gpr[cpu::rt(opcode) as usize],
+    )
 }
 
 fn tlbr(n64: &mut N64, _opcode: u32) {
@@ -76,14 +80,14 @@ fn tlbp(n64: &mut N64, _opcode: u32) {
 
 fn eret(n64: &mut N64, _opcode: u32) {
     if n64.cpu.mmu.regs[MmuRegister::Status as usize] & MmuStatus::ERL as u64 != 0 {
-        n64.cpu.pc = n64.cpu.mmu.regs[MmuRegister::ErrorEPC as usize];
+        n64.cpu.execution.pc = n64.cpu.mmu.regs[MmuRegister::ErrorEPC as usize];
         n64.cpu.mmu.regs[MmuRegister::Status as usize] &= !(MmuStatus::ERL as u64)
     } else {
-        n64.cpu.pc = n64.cpu.mmu.regs[MmuRegister::EPC as usize];
+        n64.cpu.execution.pc = n64.cpu.mmu.regs[MmuRegister::EPC as usize];
         n64.cpu.mmu.regs[MmuRegister::Status as usize] &= !(MmuStatus::EXL as u64)
     }
     n64.cpu.branch_state.state = State::Exception;
-    n64.cpu.llbit = false;
+    n64.cpu.registers.llbit = false;
     check_pending_interrupts(n64)
 }
 
@@ -152,7 +156,7 @@ fn compare_event(n64: &mut N64) {
     create_event(
         n64,
         EventType::Compare,
-        n64.cpu.next_event_count + (u32::MAX as u64),
+        n64.cpu.scheduler.next_event_count + (u32::MAX as u64),
         compare_event,
     );
     check_pending_interrupts(n64);

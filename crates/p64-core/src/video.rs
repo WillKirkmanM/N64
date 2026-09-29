@@ -85,7 +85,7 @@ fn set_expected_refresh_rate(n64: &mut N64) {
         / (n64.video.regs[ViRegister::VSync as usize] + 1) as f64
         / ((n64.video.regs[ViRegister::HSync as usize] & 0xFFF) + 1) as f64
         * 2.0;
-    n64.video.delay = (n64.cpu.clock_rate as f64 / expected_refresh_rate) as u64;
+    n64.video.delay = (n64.cpu.execution.clock_rate as f64 / expected_refresh_rate) as u64;
     n64.video.count_per_scanline =
         n64.video.delay / (n64.video.regs[ViRegister::VSync as usize] + 1) as u64;
 
@@ -127,14 +127,14 @@ fn set_current_line(n64: &mut N64) {
 }
 
 fn vertical_interrupt_event(n64: &mut N64) {
-    n64.cpu.running = video::update_screen();
+    n64.cpu.execution.running = video::update_screen();
     speed_limiter(n64);
     n64.video.field ^= (n64.video.regs[ViRegister::Status as usize] >> 6) & 0x1;
     mips::set_rcp_interrupt(n64, mips::MI_INTR_VI);
     create_event(
         n64,
         EventType::VI,
-        n64.cpu.next_event_count + n64.video.delay,
+        n64.cpu.scheduler.next_event_count + n64.video.delay,
         vertical_interrupt_event,
     )
 }

@@ -126,7 +126,7 @@ fn exception_general(n64: &mut N64, vector_offset: u32) {
     let status = n64.cpu.mmu.regs[MmuRegister::Status as usize];
 
     if status & (MmuStatus::EXL as u64) == 0 {
-        n64.cpu.mmu.regs[MmuRegister::EPC as usize] = n64.cpu.pc;
+        n64.cpu.mmu.regs[MmuRegister::EPC as usize] = n64.cpu.execution.pc;
         if in_delay_slot(n64) {
             n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= MmuCause::BD as u64;
             n64.cpu.mmu.regs[MmuRegister::EPC as usize] -= 4;
@@ -137,7 +137,7 @@ fn exception_general(n64: &mut N64, vector_offset: u32) {
 
     n64.cpu.mmu.regs[MmuRegister::Status as usize] |= MmuStatus::EXL as u64;
 
-    n64.cpu.pc = if status & (MmuStatus::BEV as u64) == 0 {
+    n64.cpu.execution.pc = if status & (MmuStatus::BEV as u64) == 0 {
         cpu::se32((0x80000000 + vector_offset) as i32)
     } else {
         cpu::se32((0xBFC00200 + vector_offset) as i32)

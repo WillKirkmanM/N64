@@ -17,9 +17,9 @@ fn handle_move(n64: &mut N64, opcode: u32, double: bool, to_rcp: bool) {
     }
     let rt = rt(opcode) as usize;
     if to_rcp {
-        n64.cpu.rcp.reg_latch = n64.cpu.gpr[rt]
+        n64.cpu.rcp.reg_latch = n64.cpu.registers.gpr[rt]
     } else {
-        n64.cpu.gpr[rt] = if double {
+        n64.cpu.registers.gpr[rt] = if double {
             n64.cpu.rcp.reg_latch
         } else {
             se32(n64.cpu.rcp.reg_latch as u32 as i32)
@@ -49,6 +49,7 @@ fn handle_branch(n64: &mut N64, opcode: u32, condition: bool, discard: bool) {
         n64.cpu.branch_state.state = State::Take;
         n64.cpu.branch_state.pc = n64
             .cpu
+            .execution
             .pc
             .wrapping_add(cpu::se16(cpu::imm(opcode) as i16) << 2)
             + 4;

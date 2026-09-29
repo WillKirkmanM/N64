@@ -180,13 +180,13 @@ fn bits_above_mask<T: Into<u64>>(x: T) -> u64 {
 macro_rules! check_idle_loop {
     ($n64: expr, $condition:expr) => {
         if $condition
-            && $n64.memory.fast_read[($n64.cpu.pc_phys >> 16) as usize](
+            && $n64.memory.fast_read[($n64.cpu.execution.pc_phys >> 16) as usize](
                 $n64,
-                $n64.cpu.pc_phys + 4,
+                $n64.cpu.execution.pc_phys + 4,
                 memory::AccessSize::Word,
             ) == 0
         {
-            $n64.cpu.mmu.regs[MmuRegister::Count as usize] = $n64.cpu.next_event_count
+            $n64.cpu.mmu.regs[MmuRegister::Count as usize] = $n64.cpu.scheduler.next_event_count
         }
     };
 }
@@ -197,8 +197,12 @@ macro_rules! branch_instruction {
             if $condition(n64, opcode) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc =
-                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc = n64
+                    .cpu
+                    .execution
+                    .pc
+                    .wrapping_add(se16(imm(opcode) as i16) << 2)
+                    + 4;
             } else {
                 n64.cpu.branch_state.state = State::NotTaken;
             }
@@ -206,25 +210,26 @@ macro_rules! branch_instruction {
     };
 }
 
-branch_instruction!(beq, |n64: &mut N64, opcode| n64.cpu.gpr
+branch_instruction!(beq, |n64: &mut N64, opcode| n64.cpu.registers.gpr
     [rs(opcode) as usize]
-    == n64.cpu.gpr[rt(opcode) as usize]);
-branch_instruction!(bne, |n64: &mut N64, opcode| n64.cpu.gpr
+    == n64.cpu.registers.gpr[rt(opcode) as usize]);
+branch_instruction!(bne, |n64: &mut N64, opcode| n64.cpu.registers.gpr
     [rs(opcode) as usize]
-    != n64.cpu.gpr[rt(opcode) as usize]);
+    != n64.cpu.registers.gpr[rt(opcode) as usize]);
 branch_instruction!(
     blez,
-    |n64: &mut N64, opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 <= 0
+    |n64: &mut N64, opcode| n64.cpu.registers.gpr[rs(opcode) as usize] as i64 <= 0
 );
 branch_instruction!(
     bgtz,
-    |n64: &mut N64, opcode| n64.cpu.gpr[rs(opcode) as usize] as i64 > 0
+    |n64: &mut N64, opcode| n64.cpu.registers.gpr[rs(opcode) as usize] as i64 > 0
 );
 
 macro_rules! impl_immediate_op {
     ($name:ident, $op:expr) => {
         fn $name(n64: &mut N64, opcode: u32) {
-            n64.cpu.gpr[rt(opcode) as usize] = $op(n64.cpu.gpr[rs(opcode) as usize], imm(opcode));
+            n64.cpu.registers.gpr[rt(opcode) as usize] =
+                $op(n64.cpu.registers.gpr[rs(opcode) as usize], imm(opcode));
         }
     };
 }
@@ -239,9 +244,9 @@ impl_immediate_op!(sltiu, |rs, imm| (rs < se16(imm as i16)) as u64);
 macro_rules! cpu_arithmetic_op {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64, opcode: u32) {
-            n64.cpu.gpr[rd(opcode) as usize] = se32(
-                (n64.cpu.gpr[rs(opcode) as usize] as u32)
-                    .$op(n64.cpu.gpr[rt(opcode) as usize] as u32) as i32,
+            n64.cpu.registers.gpr[rd(opcode) as usize] = se32(
+                (n64.cpu.registers.gpr[rs(opcode) as usize] as u32)
+                    .$op(n64.cpu.registers.gpr[rt(opcode) as usize] as u32) as i32,
             )
         }
     };
@@ -256,8 +261,8 @@ cpu_arithmetic_op!(subu, wrapping_sub);
 macro_rules! impl_bitwise_op {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            n64.cpu.gpr[rd(opcode) as usize] =
-                n64.cpu.gpr[rs(opcode) as usize] $op n64.cpu.gpr[rt(opcode) as usize]
+            n64.cpu.registers.gpr[rd(opcode) as usize] =
+                n64.cpu.registers.gpr[rs(opcode) as usize] $op n64.cpu.registers.gpr[rt(opcode) as usize]
         }
     };
 }
@@ -271,8 +276,8 @@ impl_bitwise_op!(xor, ^);
 macro_rules! def_d_arithmetic {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64, opcode: u32) {
-            n64.cpu.gpr[rd(opcode) as usize] =
-                n64.cpu.gpr[rs(opcode) as usize].$op(n64.cpu.gpr[rt(opcode) as usize])
+            n64.cpu.registers.gpr[rd(opcode) as usize] = n64.cpu.registers.gpr[rs(opcode) as usize]
+                .$op(n64.cpu.registers.gpr[rt(opcode) as usize])
         }
     };
 }
@@ -286,14 +291,14 @@ def_d_arithmetic!(dsubu, wrapping_sub);
 macro_rules! def_trap_reg {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            if (n64.cpu.gpr[rs(opcode) as usize] as i64) $op (n64.cpu.gpr[rt(opcode) as usize] as i64) {
+            if (n64.cpu.registers.gpr[rs(opcode) as usize] as i64) $op (n64.cpu.registers.gpr[rt(opcode) as usize] as i64) {
                 exceptions::trap_exception(n64)
             }
         }
     };
     ($name:ident, $op:tt, unsigned) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            if n64.cpu.gpr[rs(opcode) as usize] $op n64.cpu.gpr[rt(opcode) as usize] {
+            if n64.cpu.registers.gpr[rs(opcode) as usize] $op n64.cpu.registers.gpr[rt(opcode) as usize] {
                 exceptions::trap_exception(n64)
             }
         }
@@ -311,11 +316,15 @@ def_trap_reg!(tne, !=, unsigned);
 macro_rules! branch_instruction {
     ($name:ident, $cmp:expr, $not_taken_state:expr) => {
         fn $name(n64: &mut N64, opcode: u32) {
-            if $cmp(n64.cpu.gpr[rs(opcode) as usize] as i64) {
+            if $cmp(n64.cpu.registers.gpr[rs(opcode) as usize] as i64) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc =
-                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc = n64
+                    .cpu
+                    .execution
+                    .pc
+                    .wrapping_add(se16(imm(opcode) as i16) << 2)
+                    + 4;
             } else {
                 n64.cpu.branch_state.state = $not_taken_state;
             }
@@ -332,14 +341,14 @@ branch_instruction!(bgezl, |x| x >= 0, State::Discard);
 macro_rules! def_trap_imm {
     ($name:ident, $op:tt) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            if (n64.cpu.gpr[rs(opcode) as usize] as i64) $op (imm(opcode) as i16 as i64) {
+            if (n64.cpu.registers.gpr[rs(opcode) as usize] as i64) $op (imm(opcode) as i16 as i64) {
                 exceptions::trap_exception(n64)
             }
         }
     };
     ($name:ident, $op:tt, unsigned) => {
         fn $name(n64: &mut N64,opcode: u32) {
-            if n64.cpu.gpr[rs(opcode) as usize] $op se16(imm(opcode) as i16) {
+            if n64.cpu.registers.gpr[rs(opcode) as usize] $op se16(imm(opcode) as i16) {
                 exceptions::trap_exception(n64)
             }
         }
@@ -357,14 +366,18 @@ def_trap_imm!(tnei, !=);
 macro_rules! impl_branch_and_link {
     ($name:ident, $condition:expr, $discard_on_false:literal) => {
         fn $name(n64: &mut N64, opcode: u32) {
-            let rs_val = n64.cpu.gpr[rs(opcode) as usize] as i64;
+            let rs_val = n64.cpu.registers.gpr[rs(opcode) as usize] as i64;
             let in_delay_slot = cpu::in_delay_slot(n64);
 
             if $condition(rs_val) {
                 check_relative_idle_loop(n64, opcode);
                 n64.cpu.branch_state.state = State::Take;
-                n64.cpu.branch_state.pc =
-                    n64.cpu.pc.wrapping_add(se16(imm(opcode) as i16) << 2) + 4;
+                n64.cpu.branch_state.pc = n64
+                    .cpu
+                    .execution
+                    .pc
+                    .wrapping_add(se16(imm(opcode) as i16) << 2)
+                    + 4;
             } else {
                 n64.cpu.branch_state.state = if $discard_on_false {
                     State::Discard
@@ -373,10 +386,10 @@ macro_rules! impl_branch_and_link {
                 };
             }
 
-            n64.cpu.gpr[31] = if in_delay_slot {
+            n64.cpu.registers.gpr[31] = if in_delay_slot {
                 n64.cpu.branch_state.pc + 4
             } else {
-                n64.cpu.pc + 8
+                n64.cpu.execution.pc + 8
             };
         }
     };
@@ -426,3 +439,5 @@ use memory_ops::{
     ldl, ldr, lb, lh, lwl, lw, lbu, lhu, lwr, lwu, sb, sh, swl, sw, sdl, sdr, swr, ll, lld, ld, sc,
     scd, sd,
 };
+
+pub use types::{CpuExecutionState, CpuInstructionTables, CpuScheduler, IntegerRegisters};

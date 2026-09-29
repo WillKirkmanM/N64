@@ -38,8 +38,8 @@ where
         return unusable(n64, opcode);
     }
 
-    let addr =
-        n64.cpu.gpr[cpu::rs(opcode) as usize].wrapping_add(cpu::se16(cpu::imm(opcode) as i16));
+    let addr = n64.cpu.registers.gpr[cpu::rs(opcode) as usize]
+        .wrapping_add(cpu::se16(cpu::imm(opcode) as i16));
 
     let (phys_addr, cached, err) = memory::translate_address(n64, addr, access_type);
     if err {
@@ -121,7 +121,7 @@ pub fn sdc1(n64: &mut N64, opcode: u32) {
 fn mfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         let value = get_fpr_single(dev, rcp::fs(op) as usize);
-        dev.cpu.gpr[cpu::rt(op) as usize] =
+        dev.cpu.registers.gpr[cpu::rt(op) as usize] =
             cpu::se32(u32::from_ne_bytes(value.to_ne_bytes()) as i32);
     });
 }
@@ -129,13 +129,13 @@ fn mfc1(n64: &mut N64, opcode: u32) {
 fn dmfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
         let value = get_fpr_double(dev, rcp::fs(op) as usize);
-        dev.cpu.gpr[cpu::rt(op) as usize] = u64::from_ne_bytes(value.to_ne_bytes());
+        dev.cpu.registers.gpr[cpu::rt(op) as usize] = u64::from_ne_bytes(value.to_ne_bytes());
     });
 }
 
 fn cfc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        dev.cpu.gpr[cpu::rt(op) as usize] =
+        dev.cpu.registers.gpr[cpu::rt(op) as usize] =
             cpu::se32(get_control_registers_fpu(dev, rcp::fs(op)) as i32)
     });
 }
@@ -150,21 +150,26 @@ fn dcfc1(n64: &mut N64, opcode: u32) {
 
 fn mtc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        let value = f32::from_ne_bytes((dev.cpu.gpr[cpu::rt(op) as usize] as u32).to_ne_bytes());
+        let value =
+            f32::from_ne_bytes((dev.cpu.registers.gpr[cpu::rt(op) as usize] as u32).to_ne_bytes());
         set_fpr_single(dev, rcp::fs(op) as usize, value, false)
     });
 }
 
 fn dmtc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        let value = f64::from_ne_bytes(dev.cpu.gpr[cpu::rt(op) as usize].to_ne_bytes());
+        let value = f64::from_ne_bytes(dev.cpu.registers.gpr[cpu::rt(op) as usize].to_ne_bytes());
         set_fpr_double(dev, rcp::fs(op) as usize, value)
     });
 }
 
 fn ctc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        set_control_registers_fpu(dev, rcp::fs(op), dev.cpu.gpr[cpu::rt(op) as usize] as u32)
+        set_control_registers_fpu(
+            dev,
+            rcp::fs(op),
+            dev.cpu.registers.gpr[cpu::rt(op) as usize] as u32,
+        )
     });
 }
 
@@ -200,7 +205,11 @@ fn execute_fpu_w(n64: &mut N64, opcode: u32) {
 
 fn dctc1(n64: &mut N64, opcode: u32) {
     handle_fpu_op(n64, opcode, |dev, op| {
-        set_control_registers_fpu(dev, rcp::fs(op), dev.cpu.gpr[cpu::rt(op) as usize] as u32)
+        set_control_registers_fpu(
+            dev,
+            rcp::fs(op),
+            dev.cpu.registers.gpr[cpu::rt(op) as usize] as u32,
+        )
     });
 }
 

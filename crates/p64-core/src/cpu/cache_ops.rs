@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn cache(n64: &mut N64, opcode: u32) {
     let (phys_address, _, err) = memory::translate_address(
         n64,
-        n64.cpu.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
+        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
         memory::AccessType::Read,
     );
     if err {
