@@ -48,3 +48,19 @@ fn native_command_ranges_use_allocated_rdram_size() {
         assert_eq!(rdp_command_range_valid(0, SIZE, 4 * 1024 * 1024), 0);
     }
 }
+
+#[test]
+fn native_rdram_fetch_handles_unaligned_and_unpopulated_words() {
+    let mut memory = [0u8; 9];
+    memory[1..5].copy_from_slice(&0x12345678u32.to_le_bytes());
+    memory[5..9].copy_from_slice(&0x89abcdefu32.to_le_bytes());
+    let pointer = memory[1..].as_ptr();
+    unsafe {
+        assert_eq!(rdp_read_rdram_word(pointer, 8, 0), 0x12345678);
+        assert_eq!(rdp_read_rdram_word(pointer, 8, 4), 0x89abcdef);
+        assert_eq!(rdp_read_rdram_word(pointer, 8, 5), 0);
+        assert_eq!(rdp_read_rdram_word(pointer, 8, 8), 0);
+        assert_eq!(rdp_read_rdram_word(pointer, 8, u32::MAX), 0);
+        assert_eq!(rdp_read_rdram_word(std::ptr::null(), 8, 0), 0);
+    }
+}
