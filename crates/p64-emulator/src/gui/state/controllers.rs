@@ -70,3 +70,6 @@ impl ControllerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
