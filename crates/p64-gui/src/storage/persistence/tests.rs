@@ -85,3 +85,13 @@ fn preparing_distinct_roms_loads_only_identity_named_saves() {
     assert_eq!(fs::read(&anonymous).unwrap(), [99, 99]);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn preparing_without_rom_metadata_cannot_create_anonymous_paths() {
+    let mut saves = SaveData::default();
+    assert!(saves
+        .prepare_game(std::path::Path::new("unused"), "", "")
+        .is_err());
+    assert!(saves.sram.path.as_os_str().is_empty());
+    assert!(saves.eeprom.path.as_os_str().is_empty());
+}
