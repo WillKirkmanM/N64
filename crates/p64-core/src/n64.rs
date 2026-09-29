@@ -100,41 +100,6 @@ pub fn run_game(
         .map_err(|error| format!("Flush saves/configuration: {error}"))
 }
 
-#[derive(Default)]
-pub struct N64 {
-    pub ui: Ui,
-    pub byte_swap: usize,
-    pub cpu: Cpu,
-    pub pif: Pif,
-    pub cartridge: Cartridge,
-    pub memory: Memory,
-    pub rsp: Rsp,
-    pub rdp: Rdp,
-    pub rdram: Rdram,
-    pub mips: Mips,
-    pub peripheral: Peripheral,
-    pub video: Video,
-    pub audio: Audio,
-    pub serial: Serial,
-    pub rdram_interface: RdramInterface,
-    pub flashram: Flashram,
-}
-
-impl N64 {
-    pub fn new() -> N64 {
-        let mut byte_swap: usize = 0;
-        let test: [u8; 4] = [1, 2, 3, 4];
-        if u32::from_le_bytes(test) == u32::from_ne_bytes(test) {
-            byte_swap = 3;
-        }
-
-        N64 {
-            byte_swap,
-            ..Default::default()
-        }
-    }
-}
-
 mod bits;
 
 mod opcode;
@@ -145,25 +110,6 @@ pub mod recompiler;
 
 pub mod aot;
 
-impl N64 {
-    pub fn with_ui(ui: Ui) -> Self {
-        Self {
-            ui: ui,
-            byte_swap: if cfg!(target_endian = "little") { 3 } else { 0 },
-            cpu: Default::default(),
-            pif: Default::default(),
-            cartridge: Default::default(),
-            memory: Default::default(),
-            rsp: Default::default(),
-            rdp: Default::default(),
-            rdram: Default::default(),
-            mips: Default::default(),
-            peripheral: Default::default(),
-            video: Default::default(),
-            audio: Default::default(),
-            serial: Default::default(),
-            rdram_interface: Default::default(),
-            flashram: Default::default(),
-        }
-    }
-}
+mod machine;
+pub use machine::N64;
+pub mod is_viewer;
