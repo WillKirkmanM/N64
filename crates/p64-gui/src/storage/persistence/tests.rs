@@ -58,3 +58,30 @@ fn failed_save_remains_dirty_and_does_not_block_other_saves() {
     assert_eq!(fs::read(&saved.eeprom.path).unwrap(), vec![1, 2]);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn preparing_distinct_roms_loads_only_identity_named_saves() {
+    let directory = std::env::temp_dir().join(format!("p64-rom-identities-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let anonymous = directory.join("-.sra");
+    fs::write(&anonymous, [99, 99]).unwrap();
+    fs::write(directory.join("NZL-firsthash.sra"), [11, 12]).unwrap();
+    fs::write(directory.join("NKT-secondhash.sra"), [21, 22]).unwrap();
+    let mut first = SaveData::default();
+    first.prepare_game(&directory, "NZL", "firsthash").unwrap();
+    let mut second = SaveData::default();
+    second
+        .prepare_game(&directory, "NKT", "secondhash")
+        .unwrap();
+    assert_eq!(first.sram.path, directory.join("NZL-firsthash.sra"));
+    assert_eq!(second.sram.path, directory.join("NKT-secondhash.sra"));
+    assert_ne!(first.sram.path, second.sram.path);
+    assert_eq!(first.sram.data, [11, 12]);
+    assert_eq!(second.sram.data, [21, 22]);
+    first.sram.data = vec![31, 32];
+    first.sram.dirty = true;
+    first.write_dirty().unwrap();
+    assert_eq!(fs::read(&second.sram.path).unwrap(), [21, 22]);
+    assert_eq!(fs::read(&anonymous).unwrap(), [99, 99]);
+    fs::remove_dir_all(directory).unwrap();
+}
