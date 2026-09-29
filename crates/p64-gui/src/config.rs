@@ -53,3 +53,6 @@ impl Config {
         crate::storage::atomic_write(path, &serde_json::to_vec_pretty(self)?)
     }
 }
+
+#[cfg(test)]
+mod tests;
