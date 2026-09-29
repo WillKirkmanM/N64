@@ -181,3 +181,7 @@ pub fn set_upscaling(scale: u8) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+#[path = "video/tests.rs"]
+mod tests;
