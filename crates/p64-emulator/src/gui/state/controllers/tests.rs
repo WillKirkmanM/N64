@@ -51,3 +51,14 @@ fn unrelated_settings_preserve_disconnected_guid_and_reconnection_resolves_displ
         .is_none());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn explicit_unassignment_clears_disconnected_binding_even_when_display_was_already_none() {
+    let mut state = ControllerState::default();
+    state.assignments[0] = Some("offline".to_owned());
+    state.resolve_connected();
+    state.select_controller(0, 99);
+    assert_eq!(state.assignments[0].as_deref(), Some("offline"));
+    state.select_controller(0, UNASSIGNED_CONTROLLER);
+    assert!(state.assignments[0].is_none());
+}
