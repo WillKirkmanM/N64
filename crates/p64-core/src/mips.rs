@@ -1,9 +1,3 @@
-macro_rules! update_cause_reg {
-    ($n64: expr) => {{
-        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
-        $n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= MmuCause::IP2 as u64;
-    }};
-}
 use super::{
     events::{create_event, EventType},
     exceptions::{self, check_pending_interrupts},
@@ -130,17 +124,18 @@ fn update_intr_mask(n64: &mut N64, command: u32) {
 pub fn clear_rcp_interrupt(n64: &mut N64, interrupt: u32) {
     n64.mips.regs[MI_INTR_REG as usize] &= !interrupt;
 
-    if n64.mips.regs[MI_INTR_REG as usize] & n64.mips.regs[MI_INTR_MASK_REG as usize] == 0 {
-        n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::IP2 as u64);
+    if !n64.mips.interrupt_pending() {
+        set_interrupt_line(n64, false);
     }
+
     check_pending_interrupts(n64)
 }
 
 fn handle_interrupt_common(n64: &mut N64, interrupt: u32) {
     n64.mips.regs[MI_INTR_REG as usize] |= interrupt;
 
-    if n64.mips.regs[MI_INTR_REG as usize] & n64.mips.regs[MI_INTR_MASK_REG as usize] != 0 {
-        update_cause_reg!(n64);
+    if n64.mips.interrupt_pending() {
+        set_interrupt_line(n64, true);
     }
 }
 
@@ -152,10 +147,11 @@ pub fn set_rcp_interrupt(n64: &mut N64, interrupt: u32) {
 
 pub fn schedule_rcp_interrupt(n64: &mut N64, interrupt: u32) {
     handle_interrupt_common(n64, interrupt);
+
     create_event(
         n64,
         EventType::InterruptCheck,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize],
+        n64.cp0_register(MmuRegister::Count),
         exceptions::check_pending_interrupts,
     )
 }
