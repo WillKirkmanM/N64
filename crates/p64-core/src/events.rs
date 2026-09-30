@@ -46,6 +46,18 @@ impl Cpu {
             .unwrap_or((0, u64::MAX));
     }
 
+    fn shift_event_counts(&mut self, old_count: u64, new_count: u64) {
+        for event in self
+            .scheduler
+            .events
+            .iter_mut()
+            .filter(|event| event.enabled)
+        {
+            event.count = new_count.saturating_add(event.count.saturating_sub(old_count));
+        }
+
+        self.refresh_next_event();
+    }
 }
 
 pub fn create_event(n64: &mut N64, event: EventType, when: u64, handler: EventHandler) {
@@ -73,13 +85,7 @@ pub fn set_next_event(n64: &mut N64) {
 }
 
 pub fn translate_events(n64: &mut N64, old_count: u64, new_count: u64) {
-    n64.cpu
-        .scheduler
-        .events
-        .iter_mut()
-        .filter(|e| e.enabled)
-        .for_each(|e| e.count = e.count - old_count + new_count);
-    set_next_event(n64);
+    n64.cpu_mut().shift_event_counts(old_count, new_count);
 }
 
 #[inline(never)]
