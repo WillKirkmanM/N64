@@ -55,3 +55,6 @@ impl Ui {
         self.save_data.data.write_dirty()
     }
 }
+
+#[cfg(test)]
+mod tests;
