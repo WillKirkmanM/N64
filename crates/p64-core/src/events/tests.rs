@@ -53,3 +53,26 @@ fn removing_later_or_only_event_keeps_cached_deadline_consistent() {
     remove_event(&mut n64, EventType::SP);
     assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
 }
+
+#[test]
+fn cpu_set_halt_cancels_scheduled_rsp_work_without_running_its_handler() {
+    let mut n64 = N64::default();
+    create_event(&mut n64, EventType::SP, 10, canceled_handler);
+    create_event(&mut n64, EventType::VI, 20, following_handler);
+    rsp::write_regs(
+        &mut n64,
+        SpReg::Status as u64 * 4,
+        SpStatusWrite::SetHalt as u32,
+        u32::MAX,
+    );
+    assert_eq!(
+        n64.rsp().registers.regs[SpReg::Status as usize] & SpStatus::Halt as u32,
+        SpStatus::Halt as u32
+    );
+    assert!(get_event(&mut n64, EventType::SP).is_none());
+    assert_eq!(n64.cpu().scheduler.next_event, EventType::VI as usize);
+    assert_eq!(n64.cpu().scheduler.next_event_count, 20);
+    trigger_event(&mut n64);
+    assert_eq!(n64.rsp().registers.gpr[1], 1);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+}
