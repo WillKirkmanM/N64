@@ -56,3 +56,6 @@ pub fn write_mem(n64: &mut N64, address: u64, value: u32, mask: u32) {
         bytes.copy_from_slice(&word.to_be_bytes());
     }
 }
+
+#[cfg(test)]
+mod tests;
