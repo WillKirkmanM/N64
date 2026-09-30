@@ -1,43 +1,75 @@
-use crate::N64;
+use crate::{cpu::Cpu, N64};
 
-/// Event management functions
-pub fn create_event(n64: &mut N64, event_type: EventType, when: u64, handler: fn(&mut N64)) {
-    n64.cpu.scheduler.events[event_type as usize] = Event::new(when, handler);
-    set_next_event(n64);
+mod types;
+pub use types::{Event, EventType};
+
+pub type EventHandler = fn(&mut N64);
+
+impl Cpu {
+    pub(crate) fn event_deadline(&self, event: EventType) -> u64 {
+        self.scheduler.events[event as usize].count
+    }
+
+    pub fn arm_event(&mut self, event: EventType, when: u64, handler: EventHandler) {
+        self.scheduler.events[event as usize] = Event::new(when, handler);
+        self.refresh_next_event();
+    }
+
+    /// Mutating a deadline requires `refresh_next_event` after the update.
+    pub fn scheduled_event(&mut self, event: EventType) -> Option<&mut Event> {
+        let event = &mut self.scheduler.events[event as usize];
+
+        event.enabled.then_some(event)
+    }
+
+    /// Disable without refreshing; handlers may batch changes before refreshing.
+    pub fn disable_event(&mut self, event: EventType) {
+        self.scheduler.events[event as usize].enabled = false;
+    }
+
+    fn take_next_handler(&mut self) -> EventHandler {
+        let event = &mut self.scheduler.events[self.scheduler.next_event];
+        event.enabled = false;
+
+        event.handler
+    }
+
+    pub fn refresh_next_event(&mut self) {
+        (self.scheduler.next_event, self.scheduler.next_event_count) = self
+            .scheduler
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event.enabled)
+            .min_by_key(|(_, event)| event.count)
+            .map(|(index, event)| (index, event.count))
+            .unwrap_or((0, u64::MAX));
+    }
+
 }
 
-pub fn get_event(n64: &mut N64, event_type: EventType) -> Option<&mut Event> {
-    let event = &mut n64.cpu.scheduler.events[event_type as usize];
-    event.enabled.then_some(event)
+pub fn create_event(n64: &mut N64, event: EventType, when: u64, handler: EventHandler) {
+    n64.cpu_mut().arm_event(event, when, handler);
 }
 
-pub fn remove_event(n64: &mut N64, event_type: EventType) {
-    n64.cpu.scheduler.events[event_type as usize].enabled = false;
+pub fn get_event(n64: &mut N64, event: EventType) -> Option<&mut Event> {
+    n64.cpu_mut().scheduled_event(event)
+}
+
+pub fn remove_event(n64: &mut N64, event: EventType) {
+    let cpu = n64.cpu_mut();
+    cpu.disable_event(event);
+    cpu.refresh_next_event();
 }
 
 pub fn trigger_event(n64: &mut N64) {
-    let event_idx = n64.cpu.scheduler.next_event;
-    let event = &mut n64.cpu.scheduler.events[event_idx];
-
-    event.enabled = false;
-    (event.handler)(n64);
+    let handler = n64.cpu_mut().take_next_handler();
+    handler(n64);
     set_next_event(n64);
 }
 
 pub fn set_next_event(n64: &mut N64) {
-    let (pos, count) = n64
-        .cpu
-        .scheduler
-        .events
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.enabled)
-        .min_by_key(|(_, e)| e.count)
-        .map(|(pos, e)| (pos, e.count))
-        .unwrap_or((0, u64::MAX));
-
-    n64.cpu.scheduler.next_event = pos;
-    n64.cpu.scheduler.next_event_count = count;
+    n64.cpu_mut().refresh_next_event();
 }
 
 pub fn translate_events(n64: &mut N64, old_count: u64, new_count: u64) {
@@ -51,9 +83,6 @@ pub fn translate_events(n64: &mut N64, old_count: u64, new_count: u64) {
 }
 
 #[inline(never)]
-pub fn dummy_event(_device: &mut N64) {
+pub fn dummy_event(_: &mut N64) {
     panic!("dummy event");
 }
-
-mod types;
-pub use types::{EventType, Event};

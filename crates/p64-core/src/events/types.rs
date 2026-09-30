@@ -1,4 +1,4 @@
-use super::*;
+use crate::N64;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum EventType {
@@ -14,11 +14,20 @@ pub enum EventType {
     Count,
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Event {
     pub enabled: bool,
     pub count: u64,
     pub handler: fn(&mut N64),
+}
+
+// Scheduler-state equality uses callback identity, not callback behaviour.
+impl PartialEq for Event {
+    fn eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+            && self.count == other.count
+            && std::ptr::fn_addr_eq(self.handler, other.handler)
+    }
 }
 
 impl Default for Event {
