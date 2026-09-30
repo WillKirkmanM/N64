@@ -39,3 +39,17 @@ fn removing_earliest_event_dispatches_only_the_next_enabled_handler() {
     assert_eq!(n64.rsp().registers.gpr[1], 1);
     assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
 }
+
+#[test]
+fn removing_later_or_only_event_keeps_cached_deadline_consistent() {
+    let mut n64 = N64::default();
+    create_event(&mut n64, EventType::SP, 10, canceled_handler);
+    create_event(&mut n64, EventType::VI, 20, following_handler);
+    remove_event(&mut n64, EventType::VI);
+    assert_eq!(n64.cpu().scheduler.next_event, EventType::SP as usize);
+    assert_eq!(n64.cpu().scheduler.next_event_count, 10);
+    remove_event(&mut n64, EventType::SP);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+    remove_event(&mut n64, EventType::SP);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+}
