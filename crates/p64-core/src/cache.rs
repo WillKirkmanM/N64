@@ -1,4 +1,3 @@
-use p64_proc_macros::{add_cycles, add_rdram_cycles};
 use super::mmu::add_cycles;
 
 use super::memory::AccessSize;
@@ -45,8 +44,9 @@ fn write_cache_line(n64: &mut N64, cache_address: u64, words: &[u32]) {
     }
 }
 
-#[add_cycles(7)]
 fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
+    crate::mmu::add_cycles(n64, 7);
+
     let tag = (phys_address & TAG_MASK) as u32;
     let cache_address = calculate_cache_address(tag, n64.memory.dcache[line_index].index);
     let words = read_cache_line(
@@ -63,8 +63,9 @@ fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
     dcache_line.words.copy_from_slice(&words);
 }
 
-#[add_rdram_cycles(32)]
 pub fn icache_writeback(n64: &mut N64, line_index: usize) {
+    crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(32));
+
     let tag = n64.memory.icache[line_index].tag;
     let index = n64.memory.icache[line_index].index;
     let words = n64.memory.icache[line_index].words.clone();
@@ -101,8 +102,9 @@ pub fn dcache_hit(n64: &N64, line_index: usize, phys_address: u64) -> bool {
     cache_line.valid && masked_tag == masked_addr
 }
 
-#[add_rdram_cycles(16)]
 pub fn dcache_writeback(n64: &mut N64, line_index: usize) {
+    crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(16));
+
     let cache_address = calculate_cache_address(
         n64.memory.dcache[line_index].tag,
         n64.memory.dcache[line_index].index,
@@ -112,8 +114,9 @@ pub fn dcache_writeback(n64: &mut N64, line_index: usize) {
     write_cache_line(n64, cache_address, &cached_words);
 }
 
-#[add_cycles(8)]
 pub fn icache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
+    crate::mmu::add_cycles(n64, 8);
+
     let tag = (phys_address & TAG_MASK) as u32;
     let cache_address = calculate_cache_address(tag, n64.memory.icache[line_index].index);
     let words = read_cache_line(
