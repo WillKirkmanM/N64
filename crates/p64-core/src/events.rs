@@ -92,3 +92,6 @@ pub fn translate_events(n64: &mut N64, old_count: u64, new_count: u64) {
 pub fn dummy_event(_: &mut N64) {
     panic!("dummy event");
 }
+
+#[cfg(test)]
+mod tests;
