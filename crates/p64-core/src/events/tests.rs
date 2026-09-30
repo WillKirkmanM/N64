@@ -24,3 +24,18 @@ fn rebasing_preserves_due_events_and_future_time_offsets() {
     assert_eq!(n64.rsp().registers.gpr[1], 1);
     assert_eq!(n64.cpu().scheduler.next_event_count, 5);
 }
+
+#[test]
+fn removing_earliest_event_dispatches_only_the_next_enabled_handler() {
+    let mut n64 = N64::default();
+    create_event(&mut n64, EventType::SP, 10, canceled_handler);
+    create_event(&mut n64, EventType::VI, 20, following_handler);
+    remove_event(&mut n64, EventType::SP);
+    assert!(get_event(&mut n64, EventType::SP).is_none());
+    assert_eq!(n64.cpu().scheduler.next_event, EventType::VI as usize);
+    assert_eq!(n64.cpu().scheduler.next_event_count, 20);
+    n64.set_cp0_register(crate::mmu::MmuRegister::Count, 20);
+    trigger_event(&mut n64);
+    assert_eq!(n64.rsp().registers.gpr[1], 1);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+}
