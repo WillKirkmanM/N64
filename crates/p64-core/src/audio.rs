@@ -73,31 +73,55 @@ pub fn handle_ai_register_write(n64: &mut N64, address: u64, value: u32, mask: u
 }
 
 pub fn play_audio(device: &mut N64, dram_addr: usize, length: u64) {
-    let audio_device = device.ui.window_audio.audio_device.as_mut().unwrap();
-    let length = length as usize / 2;
+    let Some(audio_device) = device.ui.window_audio.audio_device.as_mut() else {
+        return;
+    };
+    let length = length as usize / 4 * STEREO_CHANNELS;
     let mut primary_buffer: Vec<i16> = vec![0; length];
 
     for (i, chunk) in primary_buffer.chunks_mut(2).enumerate() {
         let base_addr = dram_addr + i * 4;
-        chunk[0] =
-            device.rdram.mem[base_addr + 2] as i16 | (device.rdram.mem[base_addr + 3] as i16) << 8;
-        chunk[1] =
-            device.rdram.mem[base_addr] as i16 | (device.rdram.mem[base_addr + 1] as i16) << 8;
+        let word: [u8; 4] = std::array::from_fn(|offset| {
+            device
+                .rdram
+                .mem
+                .data
+                .get((base_addr + offset) & RDRAM_MASK)
+                .copied()
+                .unwrap_or(0)
+        });
+        chunk.copy_from_slice(&stereo_samples(&word));
     }
 
     let audio_queued = audio_device.size() as f64;
     let spec_freq = audio_device.spec().freq as f64;
-    let acceptable_latency = spec_freq * 0.2 * 4.0;
-    let min_latency = spec_freq * 0.02 * 4.0;
+    let acceptable_latency = spec_freq * MAX_LATENCY_SECONDS * BYTES_PER_STEREO_SAMPLE;
+    let min_latency = spec_freq * MIN_LATENCY_SECONDS * BYTES_PER_STEREO_SAMPLE;
 
     if audio_queued < min_latency {
-        let silence_buffer: Vec<i16> = vec![0; ((min_latency - audio_queued) * 2.0) as usize & !1];
-        audio_device.queue_audio(&silence_buffer).unwrap();
+        let silence_buffer = vec![0i16; silence_sample_count(min_latency - audio_queued)];
+        if let Err(error) = audio_device.queue_audio(&silence_buffer) {
+            tracing::warn!(%error, "Could not queue audio silence");
+        }
     }
 
     if audio_queued < acceptable_latency {
-        audio_device.queue_audio(&primary_buffer).unwrap();
+        if let Err(error) = audio_device.queue_audio(&primary_buffer) {
+            tracing::warn!(%error, "Could not queue audio samples");
+        }
     }
+}
+
+fn silence_sample_count(byte_deficit: f64) -> usize {
+    let frames = (byte_deficit / BYTES_PER_STEREO_SAMPLE).ceil() as usize;
+    frames * STEREO_CHANNELS
+}
+
+fn stereo_samples(word: &[u8]) -> [i16; 2] {
+    [
+        i16::from_le_bytes([word[2], word[3]]),
+        i16::from_le_bytes([word[0], word[1]]),
+    ]
 }
 
 impl Audio {
