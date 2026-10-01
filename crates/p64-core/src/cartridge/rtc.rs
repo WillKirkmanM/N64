@@ -117,3 +117,29 @@ fn decode_time(data: [u8; RTC_BLOCK_BYTES]) -> Option<chrono::NaiveDateTime> {
             decode_bcd(data[0])?,
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn libdragon_set_run_protocol_preserves_calibration_and_time() {
+        let mut rtc = AfRtc::default();
+        let control = [0, 4, 1, 2, 3, 4, 5, 6];
+        assert!(rtc.write(0, control));
+        assert_eq!(rtc.status(), 0x80);
+        assert_eq!(rtc.read(0), Some(control));
+        let date = [0x03, 0x02, 0x81, 0x03, 0x01, 0x11, 0x03, 0x01];
+        assert!(rtc.write(2, date));
+        assert_eq!(rtc.read(2), Some(date));
+        assert!(rtc.write(1, [0x5a; 8]));
+        assert_eq!(rtc.read(1), Some([0x5a; 8]));
+        assert!(rtc.write(0, [3, 0, 1, 2, 3, 4, 5, 6]));
+        assert_eq!(rtc.status(), 0);
+        assert!(rtc.write(1, [0x99; 8]));
+        assert!(rtc.write(2, [0; 8]));
+        assert_eq!(rtc.read(1), Some([0x5a; 8]));
+        assert_eq!(rtc.read(2), Some(date));
+        assert!(!rtc.write(3, [0; 8]));
+    }
+}
