@@ -163,3 +163,6 @@ impl Audio {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
