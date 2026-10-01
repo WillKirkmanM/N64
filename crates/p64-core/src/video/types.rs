@@ -24,24 +24,15 @@ pub struct Video {
     pub regs: Registers,
     pub timing: VideoTiming,
     pub host: VideoHost,
-    pub count_per_scanline: u64,
 }
 
 impl Default for Video {
     fn default() -> Self {
-        let mut state = Self {
+        Self {
             regs: Registers::new().with_size(VI_REGS_COUNT as usize).build(),
             timing: VideoTiming::default(),
             host: VideoHost::default(),
-            count_per_scanline: 0,
-        };
-        state.regs = Registers::new().with_size(VI_REGS_COUNT as usize).build();
-        state.timing.clock = 0;
-        state.timing.delay = 0;
-        state.timing.field = 0;
-        state.host.limiter = None;
-        state.count_per_scanline = 0;
-        state
+        }
     }
 }
 
