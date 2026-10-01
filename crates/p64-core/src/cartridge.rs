@@ -126,7 +126,7 @@ pub fn load_rom_save(n64: &mut N64) {
 
 pub fn set_system_region(n64: &mut N64, country: u8) {
     let pal_codes: [u8; 8] = [b'D', b'F', b'I', b'P', b'S', b'U', b'X', b'Y'];
-    n64.cartridge.pal = pal_codes.contains(&country);
+    n64.cartridge.boot.pal = pal_codes.contains(&country);
 }
 
 fn set_cic(n64: &mut N64) {
@@ -156,9 +156,9 @@ fn set_cic(n64: &mut N64) {
         }
     };
 
-    n64.cartridge.cic_type = cic_type;
-    n64.cartridge.cic_seed = cic_seed;
-    n64.cartridge.rdram_size_offset = rdram_size_offset;
+    n64.cartridge.boot.cic_type = cic_type;
+    n64.cartridge.boot.cic_seed = cic_seed;
+    n64.cartridge.boot.rdram_size_offset = rdram_size_offset;
 }
 
 fn calculate_hash(data: &[u8]) -> String {

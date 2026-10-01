@@ -224,14 +224,14 @@ pub fn process_ram(n64: &mut N64) {
 }
 
 pub fn set_cartridge_region(n64: &mut N64) {
-    n64.pif.rom = match n64.cartridge.pal {
+    n64.pif.rom = match n64.cartridge.boot.pal {
         true => PAL_PIF_ROM,
         false => NTSC_PIF_ROM,
     };
 
     [PIF_CIC_SEED_ADDR1, PIF_CIC_SEED_ADDR2]
         .iter()
-        .for_each(|&addr| n64.pif.ram[addr] = n64.cartridge.cic_seed);
+        .for_each(|&addr| n64.pif.ram[addr] = n64.cartridge.boot.cic_seed);
 }
 
 fn process_cic_challenge(n64: &mut N64) {

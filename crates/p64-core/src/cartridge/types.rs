@@ -1,4 +1,8 @@
-use super::*;
+use crate::builder::memory::Memory;
+
+#[path = "boot.rs"]
+mod boot;
+pub use boot::CartridgeBoot;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum CicType {
@@ -14,11 +18,8 @@ pub enum CicType {
 #[derive(Clone, Default)]
 pub struct Cartridge {
     pub rom: Memory,
-    pub pal: bool,
     pub latch: u32,
-    pub cic_type: CicType,
-    pub cic_seed: u8,
-    pub rdram_size_offset: usize,
+    pub boot: CartridgeBoot,
     pub rtc: AfRtc,
 }
 
@@ -40,4 +41,26 @@ pub enum Jdt {
     AfRtc = 0x1000,
     Eeprom4k = 0x8000,
     Eeprom16k = 0xc000,
+}
+
+#[path = "rtc.rs"]
+mod rtc;
+pub use rtc::AfRtc;
+
+impl Cartridge {
+    pub(crate) fn restore_rom(&mut self, patches: &serde_json::Map<String, serde_json::Value>) {
+        for (address, value) in patches {
+            let Ok(address) = address.parse::<usize>() else {
+                continue;
+            };
+
+            let Some(value) = value.as_u64().and_then(|value| u8::try_from(value).ok()) else {
+                continue;
+            };
+
+            if let Some(destination) = self.rom.data.get_mut(address) {
+                *destination = value;
+            }
+        }
+    }
 }

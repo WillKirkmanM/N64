@@ -73,7 +73,7 @@ pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
 }
 
 pub fn set_cpu_clock_speed(n64: &mut N64) {
-    n64.video.clock = if n64.cartridge.pal {
+    n64.video.clock = if n64.cartridge.boot.pal {
         49656530
     } else {
         48681812
