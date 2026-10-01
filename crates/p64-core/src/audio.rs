@@ -57,7 +57,7 @@ pub fn handle_ai_register_write(n64: &mut N64, address: u64, value: u32, mask: u
         x if x == AiRegister::Status as u32 => clear_rcp_interrupt(n64, MI_INTR_AI),
         x if x == AiRegister::DacRate as u32 => {
             if n64.audio.read_register(reg_index as usize) != value & mask {
-                let frequency = n64.video.clock / (1 + (value & mask)) as u64;
+                let frequency = n64.video.timing.clock / (1 + (value & mask)) as u64;
                 audio::set_frequency(&mut n64.ui, frequency);
             }
             n64.audio.write_register(reg_index as usize, value, mask);
