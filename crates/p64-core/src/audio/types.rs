@@ -1,16 +1,25 @@
-use super::*;
+use crate::{builder::registers::Registers, events::Event, memory};
+#[path = "dma.rs"]
+mod dma;
+pub use dma::{AiDma, AudioDma};
 
-/// Audio Interface Register Indices
+const DMA_ALIGNMENT: u64 = 8;
+const BYTES_PER_SAMPLE: u64 = 4;
+const ADDRESS_MASK: u64 = 0x1fff;
+const ADDRESS_INCREMENT: u64 = 0x2000;
+const AI_WRITE_MASKS: [u32; 6] = [0x00ff_fff8, 0x0003_fff8, 1, 0, 0x3fff, 0xf];
+
 #[repr(u32)]
 pub enum AiRegister {
     DramAddr = 0,
     Len = 1,
+    Control = 2,
     Status = 3,
     DacRate = 4,
+    BitRate = 5,
     RegsCount = 6,
 }
 
-/// Audio Interface Status Flags
 #[repr(u32)]
 pub enum AiStatus {
     Busy = 0x4000_0000,
@@ -19,9 +28,7 @@ pub enum AiStatus {
 
 pub struct Audio {
     pub registers: Registers,
-    pub fifo: [AiDma; 2],
-    pub last_read: u64,
-    pub delayed_carry: bool,
+    pub dma: AudioDma,
 }
 
 impl Default for Audio {
@@ -30,9 +37,7 @@ impl Default for Audio {
             registers: Registers::new()
                 .with_size(AiRegister::RegsCount as usize)
                 .build(),
-            fifo: [AiDma::default(); 2],
-            last_read: 0,
-            delayed_carry: false,
+            dma: AudioDma::default(),
         }
     }
 }
@@ -41,44 +46,48 @@ impl Audio {
     pub(super) fn is_busy(&self) -> bool {
         (self.registers[AiRegister::Status as usize] & AiStatus::Busy as u32) != 0
     }
+
     pub(super) fn is_full(&self) -> bool {
         (self.registers[AiRegister::Status as usize] & AiStatus::Full as u32) != 0
     }
+
     pub(super) fn set_status_flag(&mut self, flag: AiStatus) {
         self.registers[AiRegister::Status as usize] |= flag as u32;
     }
+
     pub(super) fn clear_status_flag(&mut self, flag: AiStatus) {
         self.registers[AiRegister::Status as usize] &= !(flag as u32);
     }
 
     pub(super) fn update_fifo_entry(&mut self, index: usize, duration: u64, rdram_mask: u64) {
-        self.fifo[index].address =
+        self.dma.fifo[index].address =
             self.registers[AiRegister::DramAddr as usize] as u64 & rdram_mask;
-        self.fifo[index].length = (self.registers[AiRegister::Len as usize] & !7) as u64;
-        self.fifo[index].duration = duration;
+        self.dma.fifo[index].length = self.get_aligned_dma_length();
+        self.dma.fifo[index].duration = duration;
     }
 
     pub(super) fn shift_fifo(&mut self) {
-        self.fifo[0] = self.fifo[1];
+        self.dma.fifo[0] = self.dma.fifo[1];
     }
 
     pub(super) fn get_aligned_dma_length(&self) -> u64 {
-        const ALIGNMENT_MASK: u64 = !7;
-        self.registers[AiRegister::Len as usize] as u64 & ALIGNMENT_MASK
+        crate::bits::align_down(
+            self.registers[AiRegister::Len as usize] as u64,
+            DMA_ALIGNMENT,
+        )
     }
 
     pub(super) fn calculate_sample_rate(&self, vi_clock: u64) -> u64 {
-        let dac_rate = self.registers[AiRegister::DacRate as usize] as u64;
-        vi_clock / (1 + dac_rate)
+        vi_clock / (1 + self.registers[AiRegister::DacRate as usize] as u64)
     }
 
     pub(super) fn calculate_dma_duration(&self, vi_clock: u64, cpu_clock: u64) -> u64 {
-        const BYTES_PER_SAMPLE: u64 = 4;
-
-        let dma_length = self.get_aligned_dma_length();
-        let sample_rate = self.calculate_sample_rate(vi_clock);
-
-        dma_length * cpu_clock / (BYTES_PER_SAMPLE * sample_rate)
+        if vi_clock == 0 {
+            return 0;
+        }
+        let divisor = self.registers[AiRegister::DacRate as usize] as u128 + 1;
+        let numerator = self.get_aligned_dma_length() as u128 * cpu_clock as u128 * divisor;
+        (numerator / (BYTES_PER_SAMPLE as u128 * vi_clock as u128)) as u64
     }
 
     pub(super) fn calculate_remaining_fifo_length(
@@ -87,34 +96,36 @@ impl Audio {
         cpu_count: u64,
         next_event: Option<Event>,
     ) -> u64 {
-        let fifo = &self.fifo[fifo_index];
+        let fifo = &self.dma.fifo[fifo_index];
 
-        if fifo.duration == 0 || next_event.is_none() {
+        let Some(next_event) = next_event else {
+            return 0;
+        };
+
+        if fifo.duration == 0 {
             return 0;
         }
 
-        let time_remaining = next_event.unwrap().count.saturating_sub(cpu_count);
+        let time_remaining = next_event.count.saturating_sub(cpu_count);
         let bytes_remaining = time_remaining * fifo.length / fifo.duration;
 
-        bytes_remaining & !7 // 8-byte alignment
+        crate::bits::align_down(bytes_remaining, DMA_ALIGNMENT)
     }
 
     pub(super) fn process_dma_transfer(&mut self) {
-        const ADDRESS_MASK: u64 = 0x1FFF;
-        const ADDRESS_INCREMENT: u64 = 0x2000;
+        self.dma.last_read = self.dma.fifo[0].length;
 
-        self.last_read = self.fifo[0].length;
-
-        if self.delayed_carry {
-            self.fifo[0].address += ADDRESS_INCREMENT;
+        if self.dma.delayed_carry {
+            self.dma.fifo[0].address += ADDRESS_INCREMENT;
         }
 
-        let next_address = self.fifo[0].address + self.fifo[0].length;
-        self.delayed_carry = (next_address & ADDRESS_MASK) == 0;
+        let next_address = self.dma.fifo[0].address + self.dma.fifo[0].length;
+        self.dma.delayed_carry = (next_address & ADDRESS_MASK) == 0;
     }
 
     pub(super) fn push_to_fifo(&mut self, duration: u64, rdram_mask: u64) -> usize {
         let fifo_index = if self.is_busy() { 1 } else { 0 };
+
         self.update_fifo_entry(fifo_index, duration, rdram_mask);
 
         if fifo_index == 1 {
@@ -130,10 +141,12 @@ impl Audio {
         if self.is_full() {
             self.shift_fifo();
             self.clear_status_flag(AiStatus::Full);
+
             true
         } else {
             self.clear_status_flag(AiStatus::Busy);
-            self.delayed_carry = false;
+            self.dma.delayed_carry = false;
+
             false
         }
     }
@@ -143,56 +156,23 @@ impl Audio {
     }
 
     pub(super) fn write_register(&mut self, index: usize, value: u32, mask: u32) {
-        memory::masked_write_32(&mut self.registers[index], value, mask);
+        let Some(&writable) = AI_WRITE_MASKS.get(index) else {
+            return;
+        };
+        memory::masked_write_32(&mut self.registers[index], value, mask & writable);
     }
 
     pub(super) fn play_audio_data(&mut self, current_length: u64) -> Option<(usize, u64)> {
-        if current_length >= self.last_read {
+        if current_length >= self.dma.last_read {
             return None;
         }
 
-        let processed_bytes = self.fifo[0].length - self.last_read;
-        let bytes_to_play = self.last_read - current_length;
-        let play_address = (self.fifo[0].address + processed_bytes) as usize;
+        let processed_bytes = self.dma.fifo[0].length - self.dma.last_read;
+        let bytes_to_play = self.dma.last_read - current_length;
+        let play_address = (self.dma.fifo[0].address + processed_bytes) as usize;
 
-        self.last_read = current_length;
+        self.dma.last_read = current_length;
+
         Some((play_address, bytes_to_play))
-    }
-
-    pub(super) fn handle_dma_event(n64: &mut N64) {
-        if let Some((addr, len)) = n64.audio.play_audio_data(0) {
-            play_audio(n64, addr, len);
-        }
-        Audio::complete_audio_dma(n64);
-    }
-
-    pub(super) fn calculate_audio_dma_duration(n64: &N64) -> u64 {
-        n64.audio
-            .calculate_dma_duration(n64.video.timing.clock, n64.cpu.execution.clock_rate)
-    }
-
-    pub(super) fn start_audio_dma(n64: &mut N64) {
-        n64.audio.process_dma_transfer();
-
-        let current_count = n64.cpu.mmu.regs[MmuRegister::Count as usize];
-        let completion_time = current_count + n64.audio.fifo[0].duration;
-
-        create_event(n64, EventType::AI, completion_time, Audio::handle_dma_event);
-        schedule_rcp_interrupt(n64, MI_INTR_AI);
-    }
-
-    pub(super) fn queue_audio_data(n64: &mut N64) {
-        let duration = Audio::calculate_audio_dma_duration(n64);
-        let fifo_index = n64.audio.push_to_fifo(duration, RDRAM_MASK as u64);
-
-        if fifo_index == 0 {
-            Audio::start_audio_dma(n64);
-        }
-    }
-
-    pub(super) fn complete_audio_dma(n64: &mut N64) {
-        if n64.audio.pop_from_fifo() {
-            Audio::start_audio_dma(n64)
-        }
     }
 }

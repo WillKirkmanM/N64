@@ -1,42 +1,43 @@
+//! Host playback does not affect DMA deadlines or interrupt delivery.
 
-use p64_gui::audio;
-use crate::events::Event;
-use super::builder::registers::Registers;
-use super::mmu::MmuRegister;
+use crate::builder::registers::register_index;
+mod types;
+pub use types::*;
+
 use super::events::create_event;
 use super::events::get_event;
 use super::events::EventType;
-use super::memory;
 use super::memory::AccessSize;
 use super::mips::clear_rcp_interrupt;
 use super::mips::schedule_rcp_interrupt;
 use super::mips::MI_INTR_AI;
+use super::mmu::MmuRegister;
 use super::rdram::RDRAM_MASK;
 use super::N64;
+use p64_gui::audio;
 
-#[derive(Copy, Clone, Default)]
-pub struct AiDma {
-    pub address: u64,
-    pub length: u64,
-    pub duration: u64,
-}
+const MAX_LATENCY_SECONDS: f64 = 0.2;
+const MIN_LATENCY_SECONDS: f64 = 0.02;
+const BYTES_PER_STEREO_SAMPLE: f64 = 4.0;
+const STEREO_CHANNELS: usize = 2;
 
 pub fn handle_ai_register_read(n64: &mut N64, address: u64, _access_size: AccessSize) -> u32 {
-    let reg_index = (address & 0xFFFF) >> 2;
-
-    if reg_index as u32 != AiRegister::Len as u32 {
-        return n64.audio.read_register(reg_index as usize);
+    let reg_index = register_index(address);
+    if reg_index >= AiRegister::RegsCount as usize {
+        return 0;
     }
 
-    let cpu_count = n64.cpu.mmu.regs[MmuRegister::Count as usize];
+    if reg_index as u32 != AiRegister::Len as u32 {
+        return n64.audio.read_register(reg_index);
+    }
+
+    let cpu_count = n64.cp0_register(MmuRegister::Count);
     let next_event = get_event(n64, EventType::AI).copied();
 
-    // Calculate DMA length
     let current_dma_length = n64
         .audio
         .calculate_remaining_fifo_length(0, cpu_count, next_event);
 
-    // Handle audio playback
     if let Some((addr, len)) = n64.audio.play_audio_data(current_dma_length) {
         play_audio(n64, addr, len)
     }
@@ -45,24 +46,29 @@ pub fn handle_ai_register_read(n64: &mut N64, address: u64, _access_size: Access
 }
 
 pub fn handle_ai_register_write(n64: &mut N64, address: u64, value: u32, mask: u32) {
-    let reg_index = (address & 0xFFFF) >> 2;
+    let reg_index = register_index(address);
+    if reg_index >= AiRegister::RegsCount as usize {
+        return;
+    }
 
     match reg_index as u32 {
         x if x == AiRegister::Len as u32 => {
-            n64.audio.write_register(reg_index as usize, value, mask);
-            if n64.audio.read_register(AiRegister::Len as usize) != 0 {
+            n64.audio.write_register(reg_index, value, mask);
+
+            if n64.audio.read_register(AiRegister::Len as usize) != 0 && !n64.audio.is_full() {
                 Audio::queue_audio_data(n64)
             }
         }
         x if x == AiRegister::Status as u32 => clear_rcp_interrupt(n64, MI_INTR_AI),
         x if x == AiRegister::DacRate as u32 => {
-            if n64.audio.read_register(reg_index as usize) != value & mask {
-                let frequency = n64.video.timing.clock / (1 + (value & mask)) as u64;
+            let previous = n64.audio.read_register(reg_index);
+            n64.audio.write_register(reg_index, value, mask);
+            if n64.audio.read_register(reg_index) != previous {
+                let frequency = n64.audio.calculate_sample_rate(n64.video.timing.clock);
                 audio::set_frequency(&mut n64.ui, frequency);
             }
-            n64.audio.write_register(reg_index as usize, value, mask);
         }
-        _ => n64.audio.write_register(reg_index as usize, value, mask),
+        _ => n64.audio.write_register(reg_index, value, mask),
     }
 }
 
@@ -94,5 +100,42 @@ pub fn play_audio(device: &mut N64, dram_addr: usize, length: u64) {
     }
 }
 
-mod types;
-pub use types::{AiRegister, AiStatus, Audio};
+impl Audio {
+    pub(super) fn handle_dma_event(n64: &mut N64) {
+        if let Some((addr, len)) = n64.audio.play_audio_data(0) {
+            play_audio(n64, addr, len);
+        }
+
+        Audio::complete_audio_dma(n64);
+    }
+
+    pub(super) fn calculate_audio_dma_duration(n64: &N64) -> u64 {
+        n64.audio
+            .calculate_dma_duration(n64.video.timing.clock, n64.cpu.execution.clock_rate)
+    }
+
+    pub(super) fn start_audio_dma(n64: &mut N64) {
+        n64.audio.process_dma_transfer();
+
+        let current_count = n64.cp0_register(MmuRegister::Count);
+        let completion_time = current_count + n64.audio.dma.fifo[0].duration;
+
+        create_event(n64, EventType::AI, completion_time, Audio::handle_dma_event);
+        schedule_rcp_interrupt(n64, MI_INTR_AI);
+    }
+
+    pub(super) fn queue_audio_data(n64: &mut N64) {
+        let duration = Audio::calculate_audio_dma_duration(n64);
+        let fifo_index = n64.audio.push_to_fifo(duration, RDRAM_MASK as u64);
+
+        if fifo_index == 0 {
+            Audio::start_audio_dma(n64);
+        }
+    }
+
+    pub(super) fn complete_audio_dma(n64: &mut N64) {
+        if n64.audio.pop_from_fifo() {
+            Audio::start_audio_dma(n64)
+        }
+    }
+}
