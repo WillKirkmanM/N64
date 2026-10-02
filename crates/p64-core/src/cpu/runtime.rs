@@ -26,7 +26,7 @@ pub fn run(n64: &mut N64) {
         if cached {
             cache::icache_fetch(n64, n64.cpu.execution.pc_phys)
         } else {
-            let opcode = n64.memory.memory_map_read[(n64.cpu.execution.pc_phys >> 16) as usize](
+            let opcode = n64.memory.bus.memory_map_read[(n64.cpu.execution.pc_phys >> 16) as usize](
                 n64,
                 n64.cpu.execution.pc_phys,
                 memory::AccessSize::Word,

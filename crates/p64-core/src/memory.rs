@@ -47,23 +47,23 @@ fn get_handler_index(phys_address: u64) -> usize {
 pub fn read_data(n64: &mut N64, addr: u64, size: AccessSize, cached: bool) -> u32 {
     match cached {
         true => dcache_read(n64, addr),
-        false => n64.memory.memory_map_read[get_handler_index(addr)](n64, addr, size),
+        false => n64.memory.bus.memory_map_read[get_handler_index(addr)](n64, addr, size),
     }
 }
 
 pub fn write_data(n64: &mut N64, addr: u64, value: u32, mask: u32, cached: bool) {
     match cached {
         true => dcache_write(n64, addr, value, mask),
-        false => n64.memory.memory_map_write[get_handler_index(addr)](n64, addr, value, mask),
+        false => n64.memory.bus.memory_map_write[get_handler_index(addr)](n64, addr, value, mask),
     }
 }
 
 macro_rules! map_memory_range {
     ($n64: expr, $start:expr, $end:expr, $read:path, $write:path $(, $fast_read:path)?) => {
         for i in ($start as usize >> 16)..=($end as usize >> 16) {
-            $n64.memory.memory_map_read[i] = $read;
-            $n64.memory.memory_map_write[i] = $write;
-            $($n64.memory.fast_read[i] = $fast_read)?
+            $n64.memory.bus.memory_map_read[i] = $read;
+            $n64.memory.bus.memory_map_write[i] = $write;
+            $($n64.memory.bus.fast_read[i] = $fast_read)?
         }
     };
 }
@@ -180,3 +180,5 @@ pub use types::{MemoryMap, AccessType, AccessSize, Memory};
 
 mod segment;
 use segment::AddressSegment;
+
+pub use types::{MemoryBus, MemoryCaches, PreparedCode};

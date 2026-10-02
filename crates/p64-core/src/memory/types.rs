@@ -1,4 +1,13 @@
-use super::*;
+mod bus;
+mod caches;
+mod prepared_code;
+
+pub use bus::MemoryBus;
+pub use caches::MemoryCaches;
+pub use prepared_code::PreparedCode;
+
+use crate::cache;
+use serde::{Deserialize, Serialize};
 
 #[repr(usize)]
 pub enum MemoryMap {
@@ -19,7 +28,7 @@ pub enum MemoryMap {
     PifMem = 0x1fc00000,
 }
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum AccessType {
     Write,
     Read,
@@ -33,22 +42,18 @@ pub enum AccessSize {
     Icache = 32,
 }
 
+#[derive(Default)]
 pub struct Memory {
-    pub fast_read: [fn(&mut N64, u64, AccessSize) -> u32; 0x2000],
-    pub memory_map_read: [fn(&mut N64, u64, AccessSize) -> u32; 0x2000],
-    pub memory_map_write: [fn(&mut N64, u64, u32, u32); 0x2000],
-    pub icache: [cache::ICache; 512],
-    pub dcache: [cache::DCache; 512],
+    pub bus: MemoryBus,
+    pub caches: MemoryCaches,
+    pub prepared_code: PreparedCode,
+    pub fetch_pipeline: cache::FetchPipeline,
 }
 
-impl Default for Memory {
-    fn default() -> Self {
-        Self {
-            fast_read: [unmapped_read_mem; 0x2000],
-            memory_map_read: [unmapped_read_mem; 0x2000],
-            memory_map_write: [unmapped_write_mem; 0x2000],
-            icache: [cache::ICache::default(); 512],
-            dcache: [cache::DCache::default(); 512],
-        }
+impl Memory {
+    /// Discard prepared entry handles when guest code or its engine changes.
+    /// Keep host code pointers out of the guest instruction cache itself.
+    pub(crate) fn clear_native_line(&mut self, line_index: usize) {
+        self.prepared_code.clear_line(line_index);
     }
 }

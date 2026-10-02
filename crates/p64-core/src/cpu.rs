@@ -180,7 +180,7 @@ fn bits_above_mask<T: Into<u64>>(x: T) -> u64 {
 macro_rules! check_idle_loop {
     ($n64: expr, $condition:expr) => {
         if $condition
-            && $n64.memory.fast_read[($n64.cpu.execution.pc_phys >> 16) as usize](
+            && $n64.memory.bus.fast_read[($n64.cpu.execution.pc_phys >> 16) as usize](
                 $n64,
                 $n64.cpu.execution.pc_phys + 4,
                 memory::AccessSize::Word,

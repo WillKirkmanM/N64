@@ -27,7 +27,7 @@ fn read_cache_line(
     size: usize,
     access_size: AccessSize,
 ) -> Vec<u32> {
-    let read_fn = n64.memory.memory_map_read[(cache_address >> 16) as usize];
+    let read_fn = n64.memory.bus.memory_map_read[(cache_address >> 16) as usize];
     (0..size)
         .map(|i| {
             let addr = cache_address | (i as u64 * WORD_SIZE);
@@ -37,7 +37,7 @@ fn read_cache_line(
 }
 
 fn write_cache_line(n64: &mut N64, cache_address: u64, words: &[u32]) {
-    let write_fn = n64.memory.memory_map_write[(cache_address >> 16) as usize];
+    let write_fn = n64.memory.bus.memory_map_write[(cache_address >> 16) as usize];
     for (i, &word) in words.iter().enumerate() {
         let addr = cache_address | (i as u64 * WORD_SIZE);
         write_fn(n64, addr, word, 0xFFFFFFFF);
@@ -48,7 +48,7 @@ fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
     crate::mmu::add_cycles(n64, 7);
 
     let tag = (phys_address & TAG_MASK) as u32;
-    let cache_address = calculate_cache_address(tag, n64.memory.dcache[line_index].index);
+    let cache_address = calculate_cache_address(tag, n64.memory.caches.dcache[line_index].index);
     let words = read_cache_line(
         n64,
         cache_address,
@@ -56,7 +56,7 @@ fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
         AccessSize::Dcache,
     );
 
-    let dcache_line = &mut n64.memory.dcache[line_index];
+    let dcache_line = &mut n64.memory.caches.dcache[line_index];
     dcache_line.valid = true;
     dcache_line.dirty = false;
     dcache_line.tag = tag;
@@ -66,9 +66,9 @@ fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
 pub fn icache_writeback(n64: &mut N64, line_index: usize) {
     crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(32));
 
-    let tag = n64.memory.icache[line_index].tag;
-    let index = n64.memory.icache[line_index].index;
-    let words = n64.memory.icache[line_index].words.clone();
+    let tag = n64.memory.caches.icache[line_index].tag;
+    let index = n64.memory.caches.icache[line_index].index;
+    let words = n64.memory.caches.icache[line_index].words.clone();
 
     let cache_address = calculate_cache_address(tag, index);
     write_cache_line(n64, cache_address, &words);
@@ -82,7 +82,7 @@ pub fn icache_fetch(n64: &mut N64, phys_address: u64) {
     }
 
     let word_index = ((phys_address >> WORD_INDEX_SHIFT_ICACHE) & WORD_INDEX_MASK_ICACHE) as usize;
-    let cache_line = &n64.memory.icache[line_index];
+    let cache_line = &n64.memory.caches.icache[line_index];
     let instruction = cache_line.instruction[word_index];
     let word = cache_line.words[word_index];
 
@@ -90,12 +90,12 @@ pub fn icache_fetch(n64: &mut N64, phys_address: u64) {
 }
 
 pub fn icache_hit(n64: &mut N64, line_index: usize, phys_address: u64) -> bool {
-    let cache_line = &n64.memory.icache[line_index];
+    let cache_line = &n64.memory.caches.icache[line_index];
     cache_line.valid && (cache_line.tag & ADDR_MASK) == (phys_address & TAG_MASK) as u32
 }
 
 pub fn dcache_hit(n64: &N64, line_index: usize, phys_address: u64) -> bool {
-    let cache_line = &n64.memory.dcache[line_index];
+    let cache_line = &n64.memory.caches.dcache[line_index];
     let masked_tag = cache_line.tag & ADDR_MASK;
     let masked_addr = (phys_address & TAG_MASK) as u32;
 
@@ -106,11 +106,11 @@ pub fn dcache_writeback(n64: &mut N64, line_index: usize) {
     crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(16));
 
     let cache_address = calculate_cache_address(
-        n64.memory.dcache[line_index].tag,
-        n64.memory.dcache[line_index].index,
+        n64.memory.caches.dcache[line_index].tag,
+        n64.memory.caches.dcache[line_index].index,
     );
-    let cached_words = n64.memory.dcache[line_index].words.to_vec();
-    n64.memory.dcache[line_index].dirty = false;
+    let cached_words = n64.memory.caches.dcache[line_index].words.to_vec();
+    n64.memory.caches.dcache[line_index].dirty = false;
     write_cache_line(n64, cache_address, &cached_words);
 }
 
@@ -118,7 +118,7 @@ pub fn icache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
     crate::mmu::add_cycles(n64, 8);
 
     let tag = (phys_address & TAG_MASK) as u32;
-    let cache_address = calculate_cache_address(tag, n64.memory.icache[line_index].index);
+    let cache_address = calculate_cache_address(tag, n64.memory.caches.icache[line_index].index);
     let words = read_cache_line(
         n64,
         cache_address,
@@ -131,7 +131,7 @@ pub fn icache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
         instructions[i] = Some(cpu::decode_opcode(n64, words[i]));
     }
 
-    let icache_line = &mut n64.memory.icache[line_index];
+    let icache_line = &mut n64.memory.caches.icache[line_index];
     icache_line.valid = true;
     icache_line.tag = tag;
     icache_line.words.copy_from_slice(&words);
@@ -144,7 +144,7 @@ pub fn dcache_read(n64: &mut N64, phys_address: u64) -> u32 {
     let line_index = ((phys_address >> LINE_INDEX_SHIFT_DCACHE) & LINE_INDEX_MASK_DCACHE) as usize;
     let word_index = ((phys_address >> WORD_INDEX_SHIFT_DCACHE) & WORD_INDEX_MASK_DCACHE) as usize;
 
-    let cache_line = &n64.memory.dcache[line_index];
+    let cache_line = &n64.memory.caches.dcache[line_index];
     if !dcache_hit(n64, line_index, phys_address) {
         if cache_line.valid && cache_line.dirty {
             dcache_writeback(n64, line_index);
@@ -154,7 +154,7 @@ pub fn dcache_read(n64: &mut N64, phys_address: u64) -> u32 {
         add_cycles(n64, 1);
     }
 
-    n64.memory.dcache[line_index].words[word_index]
+    n64.memory.caches.dcache[line_index].words[word_index]
 }
 
 pub fn dcache_write(n64: &mut N64, phys_address: u64, value: u32, mask: u32) {
@@ -163,7 +163,7 @@ pub fn dcache_write(n64: &mut N64, phys_address: u64, value: u32, mask: u32) {
 
     let needs_fill = !dcache_hit(n64, line_index, phys_address);
     let needs_writeback = {
-        let cache_line = &n64.memory.dcache[line_index];
+        let cache_line = &n64.memory.caches.dcache[line_index];
         needs_fill && cache_line.valid && cache_line.dirty
     };
 
@@ -177,19 +177,21 @@ pub fn dcache_write(n64: &mut N64, phys_address: u64, value: u32, mask: u32) {
         add_cycles(n64, 1);
     }
 
-    let cache_line = &mut n64.memory.dcache[line_index];
+    let cache_line = &mut n64.memory.caches.dcache[line_index];
     memory::masked_write_32(&mut cache_line.words[word_index], value, mask);
     cache_line.dirty = true;
 }
 
 pub fn init(n64: &mut N64) {
-    for (pos, i) in n64.memory.icache.iter_mut().enumerate() {
+    for (pos, i) in n64.memory.caches.icache.iter_mut().enumerate() {
         i.index = (pos << LINE_INDEX_SHIFT_ICACHE) as u16 & 0xFE0
     }
-    for (pos, i) in n64.memory.dcache.iter_mut().enumerate() {
+    for (pos, i) in n64.memory.caches.dcache.iter_mut().enumerate() {
         i.index = (pos << LINE_INDEX_SHIFT_DCACHE) as u16 & 0xFF0
     }
 }
 
 mod types;
 pub use types::{ICache, DCache};
+
+pub use types::FetchPipeline;
