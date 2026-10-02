@@ -146,3 +146,6 @@ fn speed_limiter(n64: &N64) {
         limiter.check().unwrap();
     }
 }
+
+#[cfg(test)]
+mod tests;
