@@ -42,3 +42,21 @@ fn mi_repeat_respects_bus_lane_start_and_programmed_length() {
         }
     }
 }
+
+#[test]
+fn mi_repeat_doubleword_wraps_inside_two_kibibytes() {
+    let mut n64 = N64::new();
+    n64.rdram.mem.data[0..4096].fill(0xff);
+    crate::mips::write_regs(&mut n64, 0, 0x100 | 127, u32::MAX);
+    write_mem_double_repeat(&mut n64, 2040, 0);
+
+    for index in 0..4096 {
+        let expected = if index < 120 || (2040..2048).contains(&index) {
+            0
+        } else {
+            0xff
+        };
+
+        assert_eq!(n64.rdram.mem[index ^ n64.byte_swap], expected);
+    }
+}
