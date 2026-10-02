@@ -109,3 +109,6 @@ pub fn read_regs(n64: &mut N64, address: u64, access_size: AccessSize) -> u32 {
 pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
     n64.rdram_interface.write(address, value, mask)
 }
+
+#[cfg(test)]
+mod accuracy_tests;
