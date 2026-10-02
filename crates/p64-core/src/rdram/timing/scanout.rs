@@ -121,3 +121,6 @@ impl Scanout {
         (start, address, transfer)
     }
 }
+
+#[cfg(test)]
+mod tests;
