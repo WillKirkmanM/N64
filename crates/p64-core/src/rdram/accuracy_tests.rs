@@ -60,3 +60,15 @@ fn mi_repeat_doubleword_wraps_inside_two_kibibytes() {
         assert_eq!(n64.rdram.mem[index ^ n64.byte_swap], expected);
     }
 }
+
+#[test]
+fn partial_rdram_stores_preserve_other_bytes() {
+    let mut n64 = N64::new();
+    write_mem(&mut n64, 4, 0x01234567, u32::MAX);
+    write_mem(&mut n64, 4, 0x89abcdef, 0xff000000);
+
+    assert_eq!(read_mem_fast(&mut n64, 4, AccessSize::Word), 0x89234567);
+    write_mem(&mut n64, 4, 0x12345678, 0x0000ffff);
+
+    assert_eq!(read_mem_fast(&mut n64, 4, AccessSize::Word), 0x89235678);
+}
