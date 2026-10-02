@@ -90,3 +90,27 @@ fn unpopulated_rdram_reads_zero_without_mirroring() {
         0x89abcdef
     );
 }
+
+#[test]
+fn ri_registers_are_independent_words_with_masked_writes() {
+    let mut ri = RdramInterface::default();
+
+    assert_eq!(ri.read(12, AccessSize::Word), 0x14);
+    for index in 0..8 {
+        ri.write(index * 4, 0x12340000 | index as u32, u32::MAX);
+    }
+
+    for index in 0..8 {
+        assert_eq!(
+            ri.read(index * 4, AccessSize::Word),
+            0x12340000 | index as u32
+        );
+    }
+
+    ri.write(28, 0xabcdef01, 0x0000ffff);
+
+    assert_eq!(ri.read(28, AccessSize::Word), 0x1234ef01);
+    ri.write(32, u32::MAX, u32::MAX);
+
+    assert_eq!(ri.read(32, AccessSize::Word), 0);
+}
