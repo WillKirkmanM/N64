@@ -72,3 +72,21 @@ fn partial_rdram_stores_preserve_other_bytes() {
 
     assert_eq!(read_mem_fast(&mut n64, 4, AccessSize::Word), 0x89235678);
 }
+
+#[test]
+fn unpopulated_rdram_reads_zero_without_mirroring() {
+    let mut n64 = N64::new();
+    write_mem(&mut n64, 0, 0x12345678, u32::MAX);
+    for address in [0x800000, 0x1000000, 0x2000000, 0x3effffc] {
+        assert_eq!(read_mem_fast(&mut n64, address, AccessSize::Word), 0);
+        write_mem(&mut n64, address, u32::MAX, u32::MAX);
+    }
+
+    assert_eq!(read_mem_fast(&mut n64, 0, AccessSize::Word), 0x12345678);
+    write_mem(&mut n64, (RDRAM_SIZE - 4) as u64, 0x89abcdef, u32::MAX);
+
+    assert_eq!(
+        read_mem_fast(&mut n64, (RDRAM_SIZE - 4) as u64, AccessSize::Word),
+        0x89abcdef
+    );
+}
