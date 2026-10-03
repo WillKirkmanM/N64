@@ -73,3 +73,15 @@ fn source_offsets_and_physical_bus_wrapping() {
     let output = scanout(&regs);
     assert_eq!(output.burst(440), Some((440, 0x264, 96)));
 }
+
+#[test]
+fn disabled_or_empty_geometry_does_not_fetch() {
+    for register in [0, 2, 12] {
+        let mut regs = registers();
+        regs[register] = 0;
+        assert_eq!(scanout(&regs).burst(1000), None);
+    }
+    let mut regs = registers();
+    regs[10] = (6 << 16) | 2;
+    assert_eq!(scanout(&regs).burst(1000), None);
+}
