@@ -180,3 +180,6 @@ pub(super) fn read(n64: &mut N64, address: u64, size: AccessSize) {
     let ticks = start - clock + transfer_ticks;
     mmu::add_cycles(n64, ticks.div_ceil(TICKS_PER_CPU_CYCLE));
 }
+
+#[cfg(test)]
+mod tests;
