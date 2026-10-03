@@ -28,3 +28,14 @@ fn quarter_rate_pixel_clock_and_scaled_source_span() {
     assert_eq!(output.burst(440), Some((440, 0x100000, 96)));
     assert_eq!(output.burst(600), Some((600, 0x100040, 24)));
 }
+
+#[test]
+fn row_stride_is_independent_of_visible_width() {
+    let output = scanout(&registers());
+    assert_eq!(output.burst(840), Some((840, 0x100280, 96)));
+    let mut regs = registers();
+    regs[2] = 640;
+    let output = scanout(&regs);
+    assert_eq!(output.source_bytes, 80);
+    assert_eq!(output.burst(840), Some((840, 0x100500, 96)));
+}
