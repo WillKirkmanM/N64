@@ -63,3 +63,13 @@ fn uneven_burst_spacing_never_fetches_beyond_source_span() {
     }
     assert_eq!(output.burst(799).map(|burst| burst.1), Some(0x100080));
 }
+
+#[test]
+fn source_offsets_and_physical_bus_wrapping() {
+    let mut regs = registers();
+    regs[1] = 0xffffe0;
+    regs[12] |= 0x800 << 16;
+    regs[13] |= 0x400 << 16;
+    let output = scanout(&regs);
+    assert_eq!(output.burst(440), Some((440, 0x264, 96)));
+}
