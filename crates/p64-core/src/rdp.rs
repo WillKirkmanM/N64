@@ -107,3 +107,6 @@ fn rdp_interrupt_event(n64: &mut N64) {
     n64.rdp_mut().finish_commands();
     mips::set_rcp_interrupt(n64, mips::MI_INTR_DP);
 }
+
+#[cfg(test)]
+mod tests;
