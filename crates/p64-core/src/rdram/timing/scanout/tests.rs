@@ -39,3 +39,12 @@ fn row_stride_is_independent_of_visible_width() {
     assert_eq!(output.source_bytes, 80);
     assert_eq!(output.burst(840), Some((840, 0x100500, 96)));
 }
+
+#[test]
+fn horizontal_and_vertical_blanking_retain_latest_fetch() {
+    let output = scanout(&registers());
+    assert_eq!(output.burst(800), Some((600, 0x100040, 24)));
+    assert_eq!(output.burst(1200), Some((1000, 0x1002c0, 24)));
+    assert_eq!(output.burst(0), None);
+    assert_eq!(output.burst(439), None);
+}
