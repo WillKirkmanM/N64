@@ -51,3 +51,13 @@ fn refresh_wait_uses_programmed_delays_and_preserves_open_rows() {
     assert_eq!(timing.banks[0].row, Some(17));
     assert_eq!(timing.refresh_wait(96_000, 48_000, 0), 0);
 }
+
+#[test]
+fn blank_video_keeps_refresh_but_fast_reads_never_charge_bus_time() {
+    let mut n64 = machine();
+    n64.rdram_interface.regs[RiReg::Refresh as usize] = 0x63634;
+    super::super::read_mem_fast(&mut n64, 0, AccessSize::Word);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 0);
+    read(&mut n64, 0, AccessSize::Word);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 109);
+}
