@@ -37,3 +37,17 @@ fn row_retry_tracks_clean_dirty_and_independent_banks() {
     assert!(timing.banks[1].dirty);
     assert!(timing.banks[2].row.is_none());
 }
+
+#[test]
+fn refresh_wait_uses_programmed_delays_and_preserves_open_rows() {
+    let mut timing = RdramTiming::default();
+    timing.banks[0].row = Some(17);
+    assert_eq!(timing.refresh_wait(0, 48_000, 0x63634), 624);
+    assert_eq!(timing.banks[0].row, Some(17));
+    assert_eq!(timing.refresh_wait(624, 48_000, 0x63634), 0);
+    timing.banks[0].dirty = true;
+    assert_eq!(timing.refresh_wait(48_000, 48_000, 0x63634), 648);
+    assert!(!timing.banks[0].dirty);
+    assert_eq!(timing.banks[0].row, Some(17));
+    assert_eq!(timing.refresh_wait(96_000, 48_000, 0), 0);
+}
