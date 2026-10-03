@@ -20,3 +20,20 @@ fn sysad_edges_follow_physical_time_across_count_writes() {
         assert_eq!(rebased.cp0_register(MmuRegister::Count), expected);
     }
 }
+
+#[test]
+fn row_retry_tracks_clean_dirty_and_independent_banks() {
+    let mut bank = Bank::default();
+    assert_eq!(bank.open(0), 66);
+    assert_eq!(bank.open(0), 0);
+    assert_eq!(bank.open(1), 66);
+    bank.dirty = true;
+    assert_eq!(bank.open(2), 90);
+    assert!(!bank.dirty);
+    let mut timing = RdramTiming::default();
+    timing.write(0);
+    timing.write(1 << 20);
+    assert!(timing.banks[0].dirty);
+    assert!(timing.banks[1].dirty);
+    assert!(timing.banks[2].row.is_none());
+}
