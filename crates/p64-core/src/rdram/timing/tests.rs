@@ -61,3 +61,19 @@ fn blank_video_keeps_refresh_but_fast_reads_never_charge_bus_time() {
     read(&mut n64, 0, AccessSize::Word);
     assert_eq!(n64.cp0_register(MmuRegister::Count), 109);
 }
+
+#[test]
+fn refill_callbacks_charge_once_and_same_row_can_hide_retry() {
+    let mut n64 = machine();
+    n64.rdram_interface.timing.banks[0].row = Some(1);
+    n64.set_cp0_register(MmuRegister::Count, 300);
+    for address in [0, 4, 8, 12] {
+        read(&mut n64, address, AccessSize::Dcache);
+    }
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 336);
+    n64.set_cp0_register(MmuRegister::Count, 600);
+    for address in [16, 20, 24, 28] {
+        read(&mut n64, address, AccessSize::Dcache);
+    }
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 633);
+}
