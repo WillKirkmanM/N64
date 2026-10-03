@@ -105,3 +105,15 @@ impl N64 {
         &mut self.ui.save_data.data
     }
 }
+
+impl N64 {
+    pub(crate) fn rdp_buffers(&mut self) -> (&mut [u32; 8], &mut [u8]) {
+        let registers = self
+            .rdp
+            .registers
+            .regs_dpc
+            .try_as_array_mut()
+            .expect("RDP register bank has eight words");
+        (registers, &mut self.rsp.memory.mem.data[..])
+    }
+}

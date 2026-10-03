@@ -1,4 +1,27 @@
-use super::builder::memory::Memory;
+mod dispatch;
+mod division;
+use division::DivisionKind;
+mod dma;
+use dma::{DmaLayout, DMA_LENGTH_READBACK, DMA_START_CYCLES, IMEM_SELECT};
+mod instruction;
+mod memory;
+mod operand;
+use operand::{de, imm, rd, rs, sa, vd, ve, velement, voffset, vs, vt};
+mod processor;
+mod scalar;
+use scalar::*;
+mod registers;
+mod state;
+mod types;
+mod vector;
+mod vector_transfer;
+use vector_transfer::*;
+mod vector_register;
+use crate::builder::registers::register_index;
+use types::ElementPattern;
+pub use types::*;
+use vector_register::{get_vpr_byte, get_vpr_element, modify_vpr_byte, modify_vpr_element};
+
 use super::cpu::rt;
 use super::mips::set_rcp_interrupt;
 use super::rdram::rdram_calculate_cycles;
@@ -7,1431 +30,32 @@ use crate::mips;
 use crate::mips::{clear_rcp_interrupt, schedule_rcp_interrupt, MI_INTR_SP};
 use crate::rdp;
 use crate::rsp;
-use std::arch::x86_64::*;
+use crate::rsp_vector::*;
 
 use super::events::{create_event, EventType};
-use super::mmu::reserved;
-use super::{memory, N64};
-
-#[derive(PartialEq, Copy, Clone, Default)]
-pub enum DmaDir {
-    #[default]
-    None,
-    Write,
-    Read,
-}
-
-#[derive(Copy, Clone, Default)]
-pub struct RspDma {
-    pub dir: DmaDir,
-    pub length: u32,
-    pub memaddr: u32,
-    pub dramaddr: u32,
-}
-
-// Type aliases for clarity
-
-type SimdRegister = std::arch::x86_64::__m128i;
-
-/// Memory and DMA state
-pub struct MemoryState {
-    pub mem: Memory,
-    pub fifo: [RspDma; 2],
-}
-
-/// Vector operation state
-pub struct VectorState {
-    pub shuffle: [SimdRegister; 16],
-    pub reciprocals: [u16; 512],
-    pub inverse_square_roots: [u16; 512],
-}
-
-/// Vector control registers
-pub struct VectorControlState {
-    pub vcol: SimdRegister,
-    pub vcoh: SimdRegister,
-    pub vccl: SimdRegister,
-    pub vcch: SimdRegister,
-    pub vce: SimdRegister,
-}
-
-/// Accumulator registers
-pub struct AccumulatorState {
-    pub accl: SimdRegister,
-    pub accm: SimdRegister,
-    pub acch: SimdRegister,
-}
-
-/// Division unit state
-pub struct DivisionState {
-    pub divdp: bool,
-    pub divin: i16,
-    pub divout: i16,
-}
-
-/// Main RSP struct using composed state
-pub struct Rsp {
-    pub registers: RegisterState,
-    pub memory: MemoryState,
-    pub instruction: InstructionState,
-    pub processor: ProcessorState,
-    pub vector: VectorState,
-    pub vector_control: VectorControlState,
-    pub accumulator: AccumulatorState,
-    pub division: DivisionState,
-    pub instruction_tables: InstructionTables,
-}
-
-impl Default for MemoryState {
-    fn default() -> Self {
-        Self {
-            mem: Memory::new().with_size(0x2000).build(),
-            fifo: [RspDma::default(); 2],
-        }
-    }
-}
-
-impl Default for VectorState {
-    fn default() -> Self {
-        Self {
-            shuffle: [unsafe { std::mem::zeroed() }; 16],
-            reciprocals: [0; 512],
-            inverse_square_roots: [0; 512],
-        }
-    }
-}
-
-impl Default for VectorControlState {
-    fn default() -> Self {
-        Self {
-            vcol: unsafe { std::mem::zeroed() },
-            vcoh: unsafe { std::mem::zeroed() },
-            vccl: unsafe { std::mem::zeroed() },
-            vcch: unsafe { std::mem::zeroed() },
-            vce: unsafe { std::mem::zeroed() },
-        }
-    }
-}
-
-impl Default for AccumulatorState {
-    fn default() -> Self {
-        Self {
-            accl: unsafe { std::mem::zeroed() },
-            accm: unsafe { std::mem::zeroed() },
-            acch: unsafe { std::mem::zeroed() },
-        }
-    }
-}
-
-impl Default for DivisionState {
-    fn default() -> Self {
-        Self {
-            divdp: false,
-            divin: 0,
-            divout: 0,
-        }
-    }
-}
-
-impl Default for Rsp {
-    fn default() -> Self {
-        let mut rsp = Rsp {
-            registers: RegisterState::default(),
-            memory: MemoryState::default(),
-            instruction: InstructionState::default(),
-            processor: ProcessorState::default(),
-            vector: VectorState::default(),
-            vector_control: VectorControlState::default(),
-            accumulator: AccumulatorState::default(),
-            division: DivisionState::default(),
-            instruction_tables: InstructionTables::default(),
-        };
-
-        rsp.registers.regs[SpReg::Status as usize] = 1;
-
-        rsp
-    }
-}
-
-fn in_delay_slot(n64: &N64) -> bool {
-    matches!(
-        n64.rsp.processor.branch_state.state,
-        CpuState::DelaySlotTaken | CpuState::DelaySlotNotTaken
-    )
-}
-
-fn in_delay_slot_taken(n64: &N64) -> bool {
-    n64.rsp.processor.branch_state.state == CpuState::DelaySlotTaken
-}
-
-fn run(n64: &mut N64) -> u64 {
-    n64.rsp.processor.broken = false;
-    n64.rsp.processor.cycle_counter = 0;
-
-    while !n64.rsp.processor.sync_point {
-        n64.rsp.instruction.instruction_type = InstructionType::Su;
-        n64.rsp.registers.gpr[0] = 0;
-
-        let pc = n64.rsp.registers.regs2[SpReg2::Pc as usize] / 4;
-        let instruction = n64.rsp.instruction.instructions[pc as usize];
-        (instruction.func)(n64, instruction.opcode);
-
-        let pc_reg = &mut n64.rsp.registers.regs2[SpReg2::Pc as usize];
-        match n64.rsp.processor.branch_state.state {
-            CpuState::Step => *pc_reg += 4,
-            CpuState::Take => {
-                *pc_reg += 4;
-                n64.rsp.processor.branch_state.state = CpuState::DelaySlotTaken;
-            }
-            CpuState::NotTaken => {
-                *pc_reg += 4;
-                n64.rsp.processor.branch_state.state = CpuState::DelaySlotNotTaken;
-            }
-            CpuState::DelaySlotTaken => {
-                *pc_reg = n64.rsp.processor.branch_state.pc;
-                n64.rsp.processor.branch_state.state = CpuState::Step;
-            }
-            CpuState::DelaySlotNotTaken => {
-                *pc_reg += 4;
-                n64.rsp.processor.branch_state.state = CpuState::Step;
-            }
-        }
-
-        *pc_reg &= 0xFFC;
-
-        if n64.rsp.instruction.instruction_type == n64.rsp.instruction.instruction_type {
-            n64.rsp.processor.cycle_counter += 1;
-            n64.rsp.processor.pipeline_full = false;
-        } else {
-            n64.rsp.instruction.instruction_type = n64.rsp.instruction.instruction_type;
-            if n64.rsp.processor.pipeline_full {
-                n64.rsp.processor.cycle_counter += 1;
-                n64.rsp.processor.pipeline_full = false;
-            } else {
-                n64.rsp.processor.pipeline_full = true;
-            }
-        }
-
-        if n64.rsp.processor.broken {
-            break;
-        }
-    }
-
-    (n64.rsp.processor.cycle_counter as f64 * 1.5) as u64
-}
-
-fn decode_opcode(n64: &N64, opcode: u32) -> fn(&mut N64, u32) {
-    match OpcodeType::from(opcode) {
-        OpcodeType::Special => n64.rsp.instruction_tables.special_table[(opcode & 0x3F) as usize], // SPECIAL
-        OpcodeType::RegImm => {
-            n64.rsp.instruction_tables.register_immediate_table[((opcode >> 16) & 0x1F) as usize]
-        } // REGIMM
-        OpcodeType::MMU => {
-            n64.rsp.instruction_tables.memory_management_table[((opcode >> 21) & 0x1F) as usize]
-        } // MMU
-        OpcodeType::Cop2 => n64.rsp.instruction_tables.rsp_table[((opcode >> 21) & 0x1F) as usize], // RCP
-        OpcodeType::Lwc2 => {
-            n64.rsp.instruction_tables.load_word_rsp_table[((opcode >> 11) & 0x1F) as usize]
-        } // LWC2
-        OpcodeType::Swc2 => {
-            n64.rsp.instruction_tables.store_word_rsp_table[((opcode >> 11) & 0x1F) as usize]
-        } // SWC2
-        OpcodeType::Other(op) => n64.rsp.instruction_tables.primary_table[op as usize],
-    }
-}
-
-pub fn start_rsp(n64: &mut N64) {
-    n64.rsp.vector.reciprocals[0] = u16::MAX;
-
-    for index in 1..512 {
-        let a = (index + 512) as u64;
-        let b = (1_u64 << 34) / a;
-        n64.rsp.vector.reciprocals[index] = ((b + 1) >> 8) as u16;
-    }
-
-    for index in 0..512 {
-        let shift = if index % 2 == 1 { 1 } else { 0 };
-        let a = ((index + 512) >> shift) as u64;
-        let mut b = (1 << 17) as u64;
-        // Find the largest b where b < 1.0 / sqrt(a)
-        while a * (b + 1) * (b + 1) < (1_u64 << 44) {
-            b += 1;
-        }
-        n64.rsp.vector.inverse_square_roots[index] = (b >> 1) as u16;
-    }
-
-    n64.rsp.vector.shuffle = unsafe {
-        let mut shuffle = [_mm_set_epi8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); 16];
-
-        shuffle[0] = _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        shuffle[1] = _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-
-        shuffle[2] = _mm_set_epi8(15, 14, 15, 14, 11, 10, 11, 10, 7, 6, 7, 6, 3, 2, 3, 2);
-        shuffle[3] = _mm_set_epi8(13, 12, 13, 12, 9, 8, 9, 8, 5, 4, 5, 4, 1, 0, 1, 0);
-
-        for i in 0..4 {
-            shuffle[4 + i] = _mm_set_epi8(
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (7 - 2 * i) as i8,
-                (6 - 2 * i) as i8,
-                (7 - 2 * i) as i8,
-                (6 - 2 * i) as i8,
-                (7 - 2 * i) as i8,
-                (6 - 2 * i) as i8,
-                (7 - 2 * i) as i8,
-                (6 - 2 * i) as i8,
-            );
-        }
-
-        for i in 0..8 {
-            shuffle[8 + i] = _mm_set_epi8(
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-                (15 - 2 * i) as i8,
-                (14 - 2 * i) as i8,
-            );
-        }
-
-        shuffle
-    };
-
-    // Initialize all instructions to reserved by default
-    n64.rsp.instruction_tables.primary_table = [reserved; 64];
-
-    // Set specific instructions
-    n64.rsp.instruction_tables.primary_table[2] = j;
-    n64.rsp.instruction_tables.primary_table[3] = jal;
-    n64.rsp.instruction_tables.primary_table[4] = beq;
-    n64.rsp.instruction_tables.primary_table[5] = bne;
-    n64.rsp.instruction_tables.primary_table[6] = blez;
-    n64.rsp.instruction_tables.primary_table[7] = bgtz;
-    n64.rsp.instruction_tables.primary_table[8] = addi;
-    n64.rsp.instruction_tables.primary_table[9] = addiu;
-    n64.rsp.instruction_tables.primary_table[10] = slti;
-    n64.rsp.instruction_tables.primary_table[11] = sltiu;
-    n64.rsp.instruction_tables.primary_table[12] = andi;
-    n64.rsp.instruction_tables.primary_table[13] = ori;
-    n64.rsp.instruction_tables.primary_table[14] = xori;
-    n64.rsp.instruction_tables.primary_table[15] = lui;
-    n64.rsp.instruction_tables.primary_table[32] = lb;
-    n64.rsp.instruction_tables.primary_table[33] = lh;
-    n64.rsp.instruction_tables.primary_table[35] = lw;
-    n64.rsp.instruction_tables.primary_table[36] = lbu;
-    n64.rsp.instruction_tables.primary_table[37] = lhu;
-    n64.rsp.instruction_tables.primary_table[39] = lwu;
-    n64.rsp.instruction_tables.primary_table[40] = sb;
-    n64.rsp.instruction_tables.primary_table[41] = sh;
-    n64.rsp.instruction_tables.primary_table[43] = sw;
-
-    // Initialize all special instructions to reserved by default
-    n64.rsp.instruction_tables.special_table = [reserved; 64];
-
-    // Set specific special instructions
-    let special_instrs = [
-        (0, sll as fn(&mut N64, _)),
-        (2, srl as fn(&mut N64, _)),
-        (3, sra as fn(&mut N64, _)),
-        (4, sllv as fn(&mut N64, _)),
-        (6, srlv as fn(&mut N64, _)),
-        (7, srav as fn(&mut N64, _)),
-        (8, jr as fn(&mut N64, _)),
-        (9, jalr as fn(&mut N64, _)),
-        (13, break_ as fn(&mut N64, _)),
-        (32, add as fn(&mut N64, _)),
-        (33, addu as fn(&mut N64, _)),
-        (34, sub as fn(&mut N64, _)),
-        (35, subu as fn(&mut N64, _)),
-        (36, and as fn(&mut N64, _)),
-        (37, or as fn(&mut N64, _)),
-        (38, xor as fn(&mut N64, _)),
-        (39, nor as fn(&mut N64, _)),
-        (42, slt as fn(&mut N64, _)),
-        (43, sltu as fn(&mut N64, _)),
-    ];
-
-    for (index, instr) in special_instrs.iter() {
-        n64.rsp.instruction_tables.special_table[*index] = *instr;
-    }
-
-    // Initialize all regimm instructions to reserved by default
-    n64.rsp.instruction_tables.register_immediate_table = [reserved; 32];
-
-    // Set specific regimm instructions
-    let regimm_instrs: [(usize, fn(&mut N64, _)); 4] =
-        [(0, bltz), (1, bgez), (16, bltzal), (17, bgezal)];
-
-    for (index, instr) in regimm_instrs.iter() {
-        n64.rsp.instruction_tables.register_immediate_table[*index] = *instr;
-    }
-
-    n64.rsp.instruction_tables.memory_management_table = [reserved; 32];
-
-    n64.rsp.instruction_tables.memory_management_table[0] = mfc0;
-    n64.rsp.instruction_tables.memory_management_table[4] = mtc0;
-
-    n64.rsp.instruction_tables.rsp_table = [reserved; 32];
-
-    n64.rsp.instruction_tables.rsp_table[0] = mfc2;
-    n64.rsp.instruction_tables.rsp_table[2] = cfc2;
-    n64.rsp.instruction_tables.rsp_table[4] = mtc2;
-    n64.rsp.instruction_tables.rsp_table[6] = ctc2;
-    for i in 16..32 {
-        n64.rsp.instruction_tables.rsp_table[i] = execute_vec;
-    }
-
-    n64.rsp.instruction_tables.load_word_rsp_table = [reserved; 32];
-
-    let lwc2_instrs: [(usize, fn(&mut N64, _)); 12] = [
-        (0, lbv),
-        (1, lsv),
-        (2, llv),
-        (3, ldv),
-        (4, lqv),
-        (5, lrv),
-        (6, lpv),
-        (7, luv),
-        (8, lhv),
-        (9, lfv),
-        (10, lwv),
-        (11, ltv),
-    ];
-
-    for (index, instr) in lwc2_instrs.iter() {
-        n64.rsp.instruction_tables.load_word_rsp_table[*index] = *instr;
-    }
-
-    n64.rsp.instruction_tables.store_word_rsp_table = [reserved; 32];
-
-    let swc2_instrs: [(usize, fn(&mut N64, _)); 12] = [
-        (0, sbv),
-        (1, ssv),
-        (2, slv),
-        (3, sdv),
-        (4, sqv),
-        (5, srv),
-        (6, spv),
-        (7, suv),
-        (8, shv),
-        (9, sfv),
-        (10, swv),
-        (11, stv),
-    ];
-
-    for (index, instr) in swc2_instrs.iter() {
-        n64.rsp.instruction_tables.store_word_rsp_table[*index] = *instr
-    }
-
-    n64.rsp.instruction_tables.vector_table = [vzero; 64];
-
-    // Set specific vec instructions
-    let vec_instrs: [(usize, fn(&mut N64, _)); 46] = [
-        (0, vmulf),
-        (1, vmulu),
-        (2, vrndp),
-        (3, vmulq),
-        (4, vmudl),
-        (5, vmudm),
-        (6, vmudn),
-        (7, vmudh),
-        (8, vmacf),
-        (9, vmacu),
-        (10, vrndn),
-        (11, vmacq),
-        (12, vmadl),
-        (13, vmadm),
-        (14, vmadn),
-        (15, vmadh),
-        (16, vadd),
-        (17, vsub),
-        (18, vzero),
-        (19, vabs),
-        (20, vaddc),
-        (21, vsubc),
-        (29, vsar),
-        (32, vlt),
-        (33, veq),
-        (34, vne),
-        (35, vge),
-        (36, vcl),
-        (37, vch),
-        (38, vcr),
-        (39, vmrg),
-        (40, vand),
-        (41, vnand),
-        (42, vor),
-        (43, vnor),
-        (44, vxor),
-        (45, vnxor),
-        (48, vrcp),
-        (49, vrcpl),
-        (50, vrcph),
-        (51, vmov),
-        (52, vrsq),
-        (53, vrsql),
-        (54, vrsqh),
-        (55, vnop),
-        (63, vnop),
-    ];
-
-    for (index, instr) in vec_instrs.iter() {
-        n64.rsp.instruction_tables.vector_table[*index] = *instr
-    }
-}
-
-use super::{builder::registers::Registers, mmu::MmuRegister};
+use super::mmu::MmuRegister;
+use super::{memory as bus, N64};
 
 pub const RSP_MEM_MASK: usize = 0x1FFF;
 
-pub fn read_mem_fast(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    let masked_address = address as usize & RSP_MEM_MASK;
-    u32::from_be_bytes(
-        n64.rsp.memory.mem[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    )
-}
-
-pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    let masked_address = address as usize & RSP_MEM_MASK;
-    u32::from_be_bytes(
-        n64.rsp.memory.mem[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    )
-}
-
-pub fn write_mem(n64: &mut N64, address: u64, value: u32, _mask: u32) {
-    let masked_address = address as usize & RSP_MEM_MASK;
-    let mut data = u32::from_be_bytes(
-        n64.rsp.memory.mem[masked_address..masked_address + 4]
-            .try_into()
-            .unwrap(),
-    );
-    memory::masked_write_32(&mut data, value, 0xFFFFFFFF);
-    n64.rsp.memory.mem[masked_address..masked_address + 4].copy_from_slice(&data.to_be_bytes());
-
-    if masked_address & 0x1000 != 0 {
-        n64.rsp.instruction.instructions[(masked_address & ADDR_MASK as usize) / 4].func =
-            rsp::decode_opcode(n64, data);
-        n64.rsp.instruction.instructions[(masked_address & ADDR_MASK as usize) / 4].opcode = data;
-    }
-}
-
-fn do_dma(n64: &mut N64, dma: RspDma) {
-    let l = dma.length;
-    let length = ((l & ADDR_MASK) | 7) + 1;
-    let count = ((l >> 12) & 0xff) + 1;
-    let skip = (l >> 20) & 0xff8;
-    let mut mem_addr = dma.memaddr & 0xff8;
-    let mut dram_addr = dma.dramaddr & 0xfffff8;
-    let offset = dma.memaddr & 0x1000;
-
-    let read_data = |n64: &N64, addr: usize, len: usize| -> u32 {
-        u32::from_be_bytes(n64.rsp.memory.mem[addr..addr + len].try_into().unwrap())
-    };
-
-    let write_data = |n64: &mut N64, addr: usize, data: u32| {
-        n64.rdram.mem[addr..addr + 4].copy_from_slice(&data.to_ne_bytes())
-    };
-
-    let mut process_dma = |n64: &mut N64, dir: DmaDir| {
-        for _ in 0..count {
-            for _ in (0..length).step_by(4) {
-                let rsp_addr = (offset + (mem_addr & ADDR_MASK)) as usize;
-                let wrapped_addr = (dram_addr as usize) & (n64.rdram.mem.len() - 1);
-
-                if dir == DmaDir::Read {
-                    let data = read_data(n64, rsp_addr, 4);
-                    write_data(n64, wrapped_addr, data);
-                } else {
-                    let data = u32::from_ne_bytes(
-                        n64.rdram.mem[wrapped_addr..wrapped_addr + 4]
-                            .try_into()
-                            .unwrap(),
-                    );
-                    if offset != 0 {
-                        let instr_idx = ((mem_addr & ADDR_MASK) / 4) as usize;
-                        n64.rsp.instruction.instructions[instr_idx].func =
-                            rsp::decode_opcode(n64, data);
-                        n64.rsp.instruction.instructions[instr_idx].opcode = data;
-                    }
-                    n64.rsp.memory.mem[rsp_addr..rsp_addr + 4].copy_from_slice(&data.to_be_bytes());
-                }
-
-                mem_addr += 4;
-                dram_addr += 4;
-            }
-            dram_addr += skip;
-        }
-    };
-
-    process_dma(n64, dma.dir);
-
-    n64.rsp.registers.regs[SpReg::MemAddr as usize] =
-        (mem_addr & ADDR_MASK) + (dma.memaddr & 0x1000);
-    n64.rsp.registers.regs[SpReg::DramAddr as usize] = dram_addr;
-    n64.rsp.registers.regs[SpReg::RdLen as usize] = 0xff8;
-    n64.rsp.registers.regs[SpReg::WrLen as usize] = 0xff8;
-
-    create_event(
-        n64,
-        EventType::SPDma,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize]
-            + rdram_calculate_cycles((count * length) as u64)
-            + 9,
-        rsp::fifo_pop,
-    );
-}
-
-fn fifo_push(n64: &mut N64, dir: DmaDir) {
-    if n64.rsp.registers.regs[SpReg::DmaFull as usize] != 0 {
-        panic!("RSP DMA already full")
-    }
-
-    if n64.rsp.registers.regs[SpReg::DmaBusy as usize] != 0 {
-        n64.rsp.memory.fifo[1].dir = dir;
-        if dir == DmaDir::Read {
-            n64.rsp.memory.fifo[1].length = n64.rsp.registers.regs[SpReg::WrLen as usize]
-        } else {
-            n64.rsp.memory.fifo[1].length = n64.rsp.registers.regs[SpReg::RdLen as usize]
-        }
-        n64.rsp.memory.fifo[1].memaddr = n64.rsp.registers.regs[SpReg::MemAddr as usize];
-        n64.rsp.memory.fifo[1].dramaddr = n64.rsp.registers.regs[SpReg::DramAddr as usize];
-        n64.rsp.registers.regs[SpReg::DmaFull as usize] = 1;
-        n64.rsp.registers.regs[SpReg::Status as usize] |= SpStatus::DmaFull as u32;
-    } else {
-        n64.rsp.memory.fifo[0].dir = dir;
-        if dir == DmaDir::Read {
-            n64.rsp.memory.fifo[0].length = n64.rsp.registers.regs[SpReg::WrLen as usize]
-        } else {
-            n64.rsp.memory.fifo[0].length = n64.rsp.registers.regs[SpReg::RdLen as usize]
-        }
-        n64.rsp.memory.fifo[0].memaddr = n64.rsp.registers.regs[SpReg::MemAddr as usize];
-        n64.rsp.memory.fifo[0].dramaddr = n64.rsp.registers.regs[SpReg::DramAddr as usize];
-        n64.rsp.registers.regs[SpReg::DmaBusy as usize] = 1;
-        n64.rsp.registers.regs[SpReg::Status as usize] |= SpStatus::DmaBusy as u32;
-
-        do_dma(n64, n64.rsp.memory.fifo[0])
-    }
-}
-
-fn fifo_pop(n64: &mut N64) {
-    if n64.rsp.registers.regs[SpReg::DmaFull as usize] != 0 {
-        n64.rsp.memory.fifo[0].dir = n64.rsp.memory.fifo[1].dir;
-        n64.rsp.memory.fifo[0].length = n64.rsp.memory.fifo[1].length;
-        n64.rsp.memory.fifo[0].memaddr = n64.rsp.memory.fifo[1].memaddr;
-        n64.rsp.memory.fifo[0].dramaddr = n64.rsp.memory.fifo[1].dramaddr;
-        n64.rsp.registers.regs[SpReg::DmaFull as usize] = 0;
-        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::DmaFull as u32);
-
-        do_dma(n64, n64.rsp.memory.fifo[0])
-    } else {
-        n64.rsp.registers.regs[SpReg::DmaBusy as usize] = 0;
-        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::DmaBusy as u32);
-    }
-}
-
-pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as u32 {
-        x if x == SpReg::Semaphore as u32 => {
-            let value = n64.rsp.registers.regs[reg as usize];
-            n64.rsp.registers.regs[reg as usize] = 1;
-            value
-        }
-        _ => n64.rsp.registers.regs[reg as usize],
-    }
-}
-
-pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as u32 {
-        x if x == SpReg::Status as u32 => update_sp_status(n64, value),
-        x if x == SpReg::RdLen as u32 => {
-            memory::masked_write_32(&mut n64.rsp.registers.regs[reg as usize], value, mask);
-            fifo_push(n64, DmaDir::Write)
-        }
-        x if x == SpReg::WrLen as u32 => {
-            memory::masked_write_32(&mut n64.rsp.registers.regs[reg as usize], value, mask);
-            fifo_push(n64, DmaDir::Read)
-        }
-        x if x == SpReg::Semaphore as u32 => {
-            memory::masked_write_32(&mut n64.rsp.registers.regs[reg as usize], 0, mask)
-        }
-        _ => {
-            memory::masked_write_32(&mut n64.rsp.registers.regs[reg as usize], value, mask);
-        }
-    }
-}
-
-pub fn read_regs2(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    n64.rsp.registers.regs2[((address & 0xFFFF) >> 2) as usize]
-}
-
-pub fn write_regs2(n64: &mut N64, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
-    match reg as u32 {
-        x if x == SpReg2::Pc as u32 => {
-            memory::masked_write_32(
-                &mut n64.rsp.registers.regs2[reg as usize],
-                value & 0xFFC,
-                mask,
-            );
-        }
-        _ => memory::masked_write_32(&mut n64.rsp.registers.regs2[reg as usize], value, mask),
-    }
-}
-
-fn update_sp_status(n64: &mut N64, w: u32) {
-    let was_halted = n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::Halt as u32 != 0;
-
-    fn update_status(n64: &mut N64, w: u32, clr: u32, set: u32, status: u32) {
-        if w & clr != 0 && w & set == 0 {
-            n64.rsp.registers.regs[SpReg::Status as usize] &= !status
-        }
-        if w & set != 0 && w & clr == 0 {
-            n64.rsp.registers.regs[SpReg::Status as usize] |= status
-        }
-    }
-
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrHalt as u32,
-        SpStatusWrite::SetHalt as u32,
-        SpStatus::Halt as u32,
-    );
-    if w & SpStatusWrite::SetHalt as u32 != 0 && w & SpStatusWrite::ClrHalt as u32 == 0 {
-        remove_event(n64, EventType::SP)
-    }
-    if w & SpStatusWrite::ClrBroke as u32 != 0 {
-        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::Broke as u32)
-    }
-    if w & SpStatusWrite::ClrIntr as u32 != 0 && w & SpStatusWrite::SetIntr as u32 == 0 {
-        clear_rcp_interrupt(n64, MI_INTR_SP)
-    }
-    if w & SpStatusWrite::SetIntr as u32 != 0 && w & SpStatusWrite::ClrIntr as u32 == 0 {
-        schedule_rcp_interrupt(n64, MI_INTR_SP)
-    }
-
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSstep as u32,
-        SpStatusWrite::SetSstep as u32,
-        SpStatus::Sstep as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrIntrBreak as u32,
-        SpStatusWrite::SetIntrBreak as u32,
-        SpStatus::IntrBreak as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig0 as u32,
-        SpStatusWrite::SetSig0 as u32,
-        SpStatus::Sig0 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig1 as u32,
-        SpStatusWrite::SetSig1 as u32,
-        SpStatus::Sig1 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig2 as u32,
-        SpStatusWrite::SetSig2 as u32,
-        SpStatus::Sig2 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig3 as u32,
-        SpStatusWrite::SetSig3 as u32,
-        SpStatus::Sig3 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig4 as u32,
-        SpStatusWrite::SetSig4 as u32,
-        SpStatus::Sig4 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig5 as u32,
-        SpStatusWrite::SetSig5 as u32,
-        SpStatus::Sig5 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig6 as u32,
-        SpStatusWrite::SetSig6 as u32,
-        SpStatus::Sig6 as u32,
-    );
-    update_status(
-        n64,
-        w,
-        SpStatusWrite::ClrSig7 as u32,
-        SpStatusWrite::SetSig7 as u32,
-        SpStatus::Sig7 as u32,
-    );
-
-    if n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::Halt as u32 == 0 && was_halted {
-        n64.rsp.processor.broken = false;
-        n64.rsp.processor.halted = false;
-        n64.rsp.processor.sync_point = false;
-        do_task(n64);
-    }
-}
-
-fn do_task(n64: &mut N64) {
-    let timer = rsp::run(n64);
-
-    create_event(
-        n64,
-        EventType::SP,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + timer,
-        rsp_event,
-    )
-}
-
-fn rsp_event(n64: &mut N64) {
-    if n64.rsp.processor.broken {
-        n64.rsp.registers.regs[SpReg::Status as usize] |=
-            SpStatus::Halt as u32 | SpStatus::Broke as u32;
-
-        if n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::IntrBreak as u32 != 0 {
-            set_rcp_interrupt(n64, mips::MI_INTR_SP)
-        }
-        return;
-    }
-    if n64.rsp.processor.halted {
-        n64.rsp.registers.regs[SpReg::Status as usize] |= SpStatus::Halt as u32;
-        return;
-    }
-    n64.rsp.processor.sync_point = false;
-    do_task(n64)
-}
-
-// Define a macro for field extraction
-macro_rules! field {
-    ($name:ident, $shift:expr, $mask:expr) => {
-        #[inline(always)]
-        fn $name(opcode: u32) -> u32 {
-            (opcode >> $shift) & $mask
-        }
-    };
-}
-
-// Special cases for different return types
-macro_rules! field_u16 {
-    ($name:ident) => {
-        #[inline(always)]
-        fn $name(opcode: u32) -> u16 {
-            opcode as u16
-        }
-    };
-}
-
-macro_rules! field_u8 {
-    ($name:ident, $shift:expr, $mask:expr) => {
-        #[inline(always)]
-        fn $name(opcode: u32) -> u8 {
-            ((opcode >> $shift) & $mask) as u8
-        }
-    };
-}
-
-// Define the instruction fields
-field!(rd, 11, 0x1F);
-field!(rs, 21, 0x1F);
-field!(sa, 6, 0x1F);
-field_u16!(imm);
-field_u8!(voffset, 0, 0x7F);
-field_u8!(velement, 7, 0xF);
-
-// Keep se16 as is since it's a special case
-#[inline(always)]
-fn se16(value: i16) -> u32 {
-    value as i32 as u32
-}
-
-fn sign_extend_7bit_offset(offset: u8, shift_amount: u32) -> u32 {
-    let soffset = (((offset << 1) & 0x80) | offset) as i8;
-
-    (((soffset) as i32) as u32) << shift_amount
-}
-
-fn modify_vpr_byte(vpr: &mut u128, value: u8, element: u8) {
-    let pos = 15 - (element & 15);
-    let mask = 0xFF << (pos * 8);
-    *vpr &= !mask;
-    *vpr |= (value as u128) << (pos * 8);
-}
-
-fn get_vpr_byte(vpr: u128, element: u8) -> u8 {
-    let pos = 15 - (element & 15);
-    (vpr >> (pos * 8)) as u8
-}
-
-fn modify_vpr_element(vpr: &mut u128, value: u16, element: u8) {
-    let pos = 7 - (element & 7);
-    let mask = 0xFFFF << (pos * 16);
-    *vpr &= !mask;
-    *vpr |= (value as u128) << (pos * 16);
-}
-
-fn get_vpr_element(vpr: u128, element: u8) -> u16 {
-    let pos = 7 - (element & 7);
-    (vpr >> (pos * 16)) as u16
-}
-
-// Macro for standard branch instructions
-macro_rules! branch_if {
-    ($name:ident, $condition:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            if $condition(n64, opcode) {
-                n64.rsp.processor.branch_state.state = CpuState::Take;
-                n64.rsp.processor.branch_state.pc = n64.rsp.registers.regs2[SpReg2::Pc as usize]
-                    .wrapping_add(se16(imm(opcode) as i16) << 2)
-                    + 4;
-            } else {
-                n64.rsp.processor.branch_state.state = CpuState::NotTaken;
-            }
-        }
-    };
-}
-
-// Implement condition functions
-fn beq_condition(n64: &N64, opcode: u32) -> bool {
-    n64.rsp.registers.gpr[rs(opcode) as usize] == n64.rsp.registers.gpr[rt(opcode) as usize]
-}
-fn bne_condition(n64: &N64, opcode: u32) -> bool {
-    n64.rsp.registers.gpr[rs(opcode) as usize] != n64.rsp.registers.gpr[rt(opcode) as usize]
-}
-fn blez_condition(n64: &N64, opcode: u32) -> bool {
-    n64.rsp.registers.gpr[rs(opcode) as usize] as i32 <= 0
-}
-fn bgtz_condition(n64: &N64, opcode: u32) -> bool {
-    n64.rsp.registers.gpr[rs(opcode) as usize] as i32 > 0
-}
-
-// Generate branch instructions
-branch_if!(beq, beq_condition);
-branch_if!(bne, bne_condition);
-branch_if!(blez, blez_condition);
-branch_if!(bgtz, bgtz_condition);
-
-// Jump instructions kept separate due to different logic
-
-macro_rules! gen_imm_op {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            n64.rsp.registers.gpr[rt(opcode) as usize] =
-                $op(n64.rsp.registers.gpr[rs(opcode) as usize], imm(opcode));
-        }
-    };
-}
-
-macro_rules! gen_imm_op_signed {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            n64.rsp.registers.gpr[rt(opcode) as usize] = $op(
-                n64.rsp.registers.gpr[rs(opcode) as usize] as i32,
-                imm(opcode) as i16 as i32,
-            ) as u32;
-        }
-    };
-}
-
-gen_imm_op!(addi, |a: u32, b| a.wrapping_add(b as i16 as i32 as u32));
-gen_imm_op!(addiu, |a: u32, b| a.wrapping_add(b as i16 as i32 as u32));
-gen_imm_op_signed!(slti, |a, b| (a < b) as u32);
-gen_imm_op!(sltiu, |a, b| (a < b as i16 as i32 as u32) as u32);
-gen_imm_op!(andi, |a, b| a & b as u32);
-gen_imm_op!(ori, |a, b| a | b as u32);
-gen_imm_op!(xori, |a, b| a ^ b as u32);
-
-macro_rules! gen_load_op {
-    ($name:ident, $size:expr, $sign_extend:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(imm(opcode) as i16 as i32 as u32);
-            let mut w = [0; $size];
-            for i in 0..$size {
-                w[i] = n64.rsp.memory.mem[(address as usize + i) & ADDR_MASK as usize];
-            }
-            let value = match $size {
-                1 => w[0] as u32,
-                2 => (((w[0] as u16) << 8) | w[1] as u16) as u32,
-                4 => (w[0] as u32) << 24 | (w[1] as u32) << 16 | (w[2] as u32) << 8 | (w[3] as u32),
-                _ => unreachable!(),
-            };
-            n64.rsp.registers.gpr[rt(opcode) as usize] = if $sign_extend {
-                match $size {
-                    1 => value as i8 as i32 as u32,
-                    2 => value as i16 as i32 as u32,
-                    4 => value,
-                    _ => unreachable!(),
-                }
-            } else {
-                value
-            };
-        }
-    };
-}
-
-gen_load_op!(lb, 1, true);
-gen_load_op!(lh, 2, true);
-gen_load_op!(lw, 4, true);
-gen_load_op!(lbu, 1, false);
-gen_load_op!(lhu, 2, false);
-gen_load_op!(lwu, 4, false);
-
-macro_rules! gen_shift_op {
-    ($name:ident, $op:expr, $use_sa:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let shift_amount = if $use_sa {
-                sa(opcode)
-            } else {
-                n64.rsp.registers.gpr[rs(opcode) as usize] & 31
-            };
-            n64.rsp.registers.gpr[rd(opcode) as usize] =
-                $op(n64.rsp.registers.gpr[rt(opcode) as usize], shift_amount);
-        }
-    };
-}
-
-gen_shift_op!(sll, |a, b| a << b, true);
-gen_shift_op!(srl, |a, b| a >> b, true);
-gen_shift_op!(sra, |a, b| ((a as i32) >> b) as u32, true);
-gen_shift_op!(sllv, |a, b| a << b, false);
-gen_shift_op!(srlv, |a, b| a >> b, false);
-gen_shift_op!(srav, |a, b| ((a as i32) >> b) as u32, false);
-
-macro_rules! gen_arith_op {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            n64.rsp.registers.gpr[rd(opcode) as usize] = $op(
-                n64.rsp.registers.gpr[rs(opcode) as usize],
-                n64.rsp.registers.gpr[rt(opcode) as usize],
-            );
-        }
-    };
-}
-
-gen_arith_op!(add, |a: u32, b| a.wrapping_add(b));
-gen_arith_op!(addu, |a: u32, b| a.wrapping_add(b));
-gen_arith_op!(sub, |a: u32, b| a.wrapping_sub(b));
-gen_arith_op!(subu, |a: u32, b| a.wrapping_sub(b));
-
-macro_rules! gen_bitwise_op {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            n64.rsp.registers.gpr[rd(opcode) as usize] = $op(
-                n64.rsp.registers.gpr[rs(opcode) as usize],
-                n64.rsp.registers.gpr[rt(opcode) as usize],
-            );
-        }
-    };
-}
-
-gen_bitwise_op!(and, |a, b| a & b);
-gen_bitwise_op!(or, |a, b| a | b);
-gen_bitwise_op!(xor, |a, b| a ^ b);
-gen_bitwise_op!(nor, |a: u32, b: u32| !(a | b));
-
-macro_rules! gen_branch_op {
-    ($name:ident, $cond:expr, $link:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            if $cond(n64.rsp.registers.gpr[rs(opcode) as usize] as i32) {
-                n64.rsp.processor.branch_state.state = CpuState::Take;
-                n64.rsp.processor.branch_state.pc = n64.rsp.registers.regs2[SpReg2::Pc as usize]
-                    .wrapping_add(se16(imm(opcode) as i16) << 2)
-                    + 4;
-            } else {
-                n64.rsp.processor.branch_state.state = CpuState::NotTaken;
-            }
-            if $link {
-                n64.rsp.registers.gpr[31] =
-                    (n64.rsp.registers.regs2[SpReg2::Pc as usize] + 8) & ADDR_MASK;
-            }
-        }
-    };
-}
-
-gen_branch_op!(bltz, |a| a < 0, false);
-gen_branch_op!(bgez, |a| a >= 0, false);
-gen_branch_op!(bltzal, |a| a < 0, true);
-gen_branch_op!(bgezal, |a| a >= 0, true);
-
-fn mfc0(n64: &mut N64, opcode: u32) {
-    if rd(opcode) < SpReg::RegsCount as u32 {
-        n64.rsp.registers.gpr[rt(opcode) as usize] =
-            rsp::read_regs(n64, (rd(opcode) << 2) as u64, memory::AccessSize::Word)
-    } else {
-        n64.rsp.registers.gpr[rt(opcode) as usize] = rdp::read_regs_dpc(
-            n64,
-            ((rd(opcode) as u32 - SpReg::RegsCount as u32) << 2) as u64,
-            memory::AccessSize::Word,
-        )
-    }
-    n64.rsp.processor.cycle_counter += 4; // needed for DK64
-    n64.rsp.processor.sync_point = true;
-}
-
-fn mtc0(n64: &mut N64, opcode: u32) {
-    if rd(opcode) < SpReg::RegsCount as u32 {
-        rsp::write_regs(
-            n64,
-            (rd(opcode) << 2) as u64,
-            n64.rsp.registers.gpr[rt(opcode) as usize],
-            0xFFFFFFFF,
-        )
-    } else {
-        rdp::write_regs_dpc(
-            n64,
-            ((rd(opcode) as u32 - SpReg::RegsCount as u32) << 2) as u64,
-            n64.rsp.registers.gpr[rt(opcode) as usize],
-            0xFFFFFFFF,
-        )
-    }
-    if rd(opcode) == SpReg::Status as u32
-        && n64.rsp.registers.gpr[rt(opcode) as usize] & SpStatusWrite::SetHalt as u32 != 0
-    {
-        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::Halt as u32); // set halt when event happens
-        n64.rsp.processor.halted = true; // the RSP can halt itself by setting SP_SET_HALT
-    }
-    n64.rsp.processor.sync_point = true;
-}
-
-fn mfc2(n64: &mut N64, opcode: u32) {
-    let hi = get_vpr_byte(n64.rsp.registers.vpr[rd(opcode) as usize], velement(opcode));
-    let lo = get_vpr_byte(
-        n64.rsp.registers.vpr[rd(opcode) as usize],
-        velement(opcode) + 1,
-    );
-    n64.rsp.registers.gpr[rt(opcode) as usize] =
-        ((hi as u16) << 8 | (lo as u16)) as i16 as i32 as u32
-}
-
-fn cfc2(n64: &mut N64, opcode: u32) {
-    let hi;
-    let lo;
-    let mut zero = unsafe { _mm_setzero_si128() };
-    match rd(opcode) & 3 {
-        0x00 => {
-            hi = &mut n64.rsp.vector_control.vcoh;
-            lo = &mut n64.rsp.vector_control.vcol;
-        }
-        0x01 => {
-            hi = &mut n64.rsp.vector_control.vcch;
-            lo = &mut n64.rsp.vector_control.vccl;
-        }
-        0x02 | 0x03 => {
-            hi = &mut zero;
-            lo = &mut n64.rsp.vector_control.vce;
-        }
-        _ => {
-            panic!("unknown ctc2")
-        }
-    }
-
-    unsafe {
-        let reverse = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-        n64.rsp.registers.gpr[rt(opcode) as usize] =
-            (_mm_movemask_epi8(_mm_shuffle_epi8(_mm_packs_epi16(*hi, *lo), reverse))) as i16 as u32;
-    }
-}
-
-fn mtc2(n64: &mut N64, opcode: u32) {
-    modify_vpr_byte(
-        &mut n64.rsp.registers.vpr[rd(opcode) as usize],
-        (n64.rsp.registers.gpr[rt(opcode) as usize] >> 8) as u8,
-        velement(opcode),
-    );
-    if velement(opcode) != 15 {
-        modify_vpr_byte(
-            &mut n64.rsp.registers.vpr[rd(opcode) as usize],
-            n64.rsp.registers.gpr[rt(opcode) as usize] as u8,
-            velement(opcode) + 1,
-        );
-    }
-}
-
-fn ctc2(n64: &mut N64, opcode: u32) {
-    unsafe {
-        let zero = _mm_setzero_si128();
-        let rt_val = n64.rsp.registers.gpr[rt(opcode) as usize];
-        let mask = _mm_set_epi16(
-            0x0101,
-            0x0202,
-            0x0404,
-            0x0808,
-            0x1010,
-            0x2020,
-            0x4040,
-            0x8080u16 as i16,
-        );
-
-        let computed_value =
-            _mm_cmpeq_epi8(_mm_and_si128(_mm_set1_epi8(!rt_val as i8), mask), zero);
-
-        let computed_high = _mm_cmpeq_epi8(
-            _mm_and_si128(_mm_set1_epi8(!(rt_val >> 8) as i8), mask),
-            zero,
-        );
-
-        // Direct assignment based on opcode
-        match rd(opcode) & 3 {
-            0x00 => {
-                n64.rsp.vector_control.vcoh = computed_high;
-                n64.rsp.vector_control.vcol = computed_value;
-            }
-            0x01 => {
-                n64.rsp.vector_control.vcch = computed_high;
-                n64.rsp.vector_control.vccl = computed_value;
-            }
-            0x02 | 0x03 => {
-                n64.rsp.vector_control.vce = computed_value;
-            }
-            _ => panic!("Invalid CTC2 opcode"),
-        }
-    }
-}
-
 const VPR_SIZE: u8 = 16;
+
 const ELEMENT_MASK: u32 = 15;
 
-macro_rules! impl_vector_load {
-    ($name:ident, $shift:expr, $elem_size:expr, $special_addr:expr, $max_elems:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $shift));
-
-            let initial_element = velement(opcode);
-            let start_element = if $special_addr {
-                VPR_SIZE.wrapping_sub(
-                    ((base_address & ELEMENT_MASK) as u8).wrapping_sub(initial_element),
-                )
-            } else {
-                initial_element
-            };
-
-            let aligned_address = if $special_addr {
-                base_address & !ELEMENT_MASK
-            } else {
-                base_address
-            };
-            let end_element = if $max_elems > 0 {
-                std::cmp::min(start_element + $max_elems, VPR_SIZE)
-            } else {
-                VPR_SIZE
-            };
-
-            (start_element..end_element)
-                .enumerate()
-                .for_each(|(offset, element)| {
-                    let current_address = (aligned_address + offset as u32) & ADDR_MASK;
-                    modify_vpr_byte(
-                        &mut n64.rsp.registers.vpr[rt(opcode) as usize],
-                        n64.rsp.memory.mem[current_address as usize],
-                        element,
-                    );
-                });
-        }
-    };
-
-    ($name:ident, $shift:expr, $elem_mult:expr, $data_shift:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $shift));
-
-            let index = ((base_address & 7) as u8).wrapping_sub(velement(opcode));
-            let aligned_address = base_address & ADDR_ALIGN_MASK;
-
-            (0..VECTOR_SIZE).for_each(|offset| {
-                let offset = offset as u8;
-                let element_index = (index.wrapping_add(offset * $elem_mult)) & ELEMENT_MASK as u8;
-                let current_address = (aligned_address + element_index as u32) & ADDR_MASK;
-
-                modify_vpr_element(
-                    &mut n64.rsp.registers.vpr[rt(opcode) as usize],
-                    (n64.rsp.memory.mem[current_address as usize] as u16) << $data_shift,
-                    offset,
-                );
-            });
-        }
-    };
-}
-
-impl_vector_load!(lbv, 0, 1, false, 1);
-impl_vector_load!(lsv, 1, 2, false, 2);
-impl_vector_load!(llv, 2, 4, false, 4);
-impl_vector_load!(ldv, 3, 8, false, 8);
-impl_vector_load!(lrv, 4, 16, true, 0);
-
-// Special vector loads
-impl_vector_load!(lpv, 3, 1, 8);
-impl_vector_load!(luv, 3, 1, 7);
-impl_vector_load!(lhv, 4, 2, 7);
-
-macro_rules! impl_vector_store {
-    // Basic vector stores with fixed count
-    ($name:ident, $shift:expr, $elem_count:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $shift));
-            let start_element = velement(opcode);
-
-            (0..$elem_count).for_each(|offset| {
-                let current_address = (base_address.wrapping_add(offset)) & ADDR_MASK;
-                let current_element = start_element.wrapping_add(offset as u8);
-                n64.rsp.memory.mem[current_address as usize] =
-                    get_vpr_byte(n64.rsp.registers.vpr[rt(opcode) as usize], current_element);
-            });
-        }
-    };
-
-    // Special stores with dynamic end calculation
-    ($name:ident, $shift:expr, dynamic_end) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $shift));
-            let start_element = velement(opcode);
-            let element_count = (VPR_SIZE - (base_address & 15)) as u8;
-
-            (0..element_count).for_each(|offset| {
-                let current_address = (base_address.wrapping_add(offset)) & ADDR_MASK;
-                let current_element = start_element.wrapping_add(offset);
-                n64.rsp.memory.mem[current_address as usize] =
-                    get_vpr_byte(n64.rsp.registers.vpr[rt(opcode) as usize], current_element);
-            });
-        }
-    };
-
-    // Special stores with custom element handling
-    ($name:ident, $shift:expr, $handler:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $shift));
-            let start_element = velement(opcode);
-
-            (0..8).for_each(|offset| {
-                let current_address = (base_address.wrapping_add(offset)) & ADDR_MASK;
-                let current_element = start_element.wrapping_add(offset as u8);
-                n64.rsp.memory.mem[current_address as usize] =
-                    $handler(n64, opcode, current_element);
-            });
-        }
-    };
-}
-
-impl_vector_store!(ssv, 1, 2);
-impl_vector_store!(slv, 2, 4);
-impl_vector_store!(sdv, 3, 8);
-
-macro_rules! impl_vec_store {
-    ($name:ident, $addr_shift:expr, $count_fn:expr, $element_logic:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let base_address = n64.rsp.registers.gpr[rs(opcode) as usize]
-                .wrapping_add(sign_extend_7bit_offset(voffset(opcode), $addr_shift));
-
-            let start_element = velement(opcode);
-            let element_count = ($count_fn)(base_address);
-
-            (0..element_count).for_each(|offset| {
-                let current_address = (base_address.wrapping_add(offset as u32)) & ADDR_MASK;
-                let current_element = start_element + offset as u8;
-                n64.rsp.memory.mem[current_address as usize] =
-                    $element_logic(n64, opcode, current_element);
-            });
-        }
-    };
-}
-
-impl_vec_store!(sqv, 4, |addr: u32| (16 - (addr & 15)) as u8, sqv_element);
-impl_vec_store!(spv, 3, |_| 8, spv_element);
-impl_vec_store!(suv, 3, |_| 8, suv_element);
-
-#[inline(always)]
-fn sqv_element(n64: &N64, opcode: u32, element: u8) -> u8 {
-    get_vpr_byte(n64.rsp.registers.vpr[rt(opcode) as usize], element)
-}
-
-#[inline(always)]
-fn spv_element(n64: &N64, opcode: u32, element: u8) -> u8 {
-    if (element & 15) < 8 {
-        get_vpr_byte(
-            n64.rsp.registers.vpr[rt(opcode) as usize],
-            (element & 7) << 1,
-        )
-    } else {
-        (get_vpr_element(n64.rsp.registers.vpr[rt(opcode) as usize], element) >> 7) as u8
-    }
-}
-
-#[inline(always)]
-fn suv_element(n64: &N64, opcode: u32, element: u8) -> u8 {
-    if (element & 15) < 8 {
-        (get_vpr_element(n64.rsp.registers.vpr[rt(opcode) as usize], element) >> 7) as u8
-    } else {
-        get_vpr_byte(
-            n64.rsp.registers.vpr[rt(opcode) as usize],
-            (element & 7) << 1,
-        )
-    }
-}
-
-fn get_vpr_byte_value(n64: &mut N64, opcode: u32, element: u8) -> u8 {
-    get_vpr_byte(n64.rsp.registers.vpr[rt(opcode) as usize], element)
-}
-
 const VECTOR_SIZE: usize = 8;
-const ADDR_ALIGN_MASK: u32 = !7;
+
+const GROUP_ALIGNMENT: u32 = 8;
+const VECTOR_ALIGNMENT: u32 = 16;
+
 const BASE_MASK: u32 = 15;
+
 const BYTE_SHIFT_LEFT: u32 = 1;
+
 const BYTE_SHIFT_RIGHT: u32 = 7;
 
 const ELEMENTS_PER_GROUP: usize = 4;
+
 const VPR_SHIFT: u32 = 7;
-
-#[derive(Debug, Clone, Copy)]
-struct ElementPattern([usize; ELEMENTS_PER_GROUP]);
-
-impl ElementPattern {
-    const fn new(pattern: [usize; ELEMENTS_PER_GROUP]) -> Self {
-        Self(pattern)
-    }
-}
 
 const ELEMENT_PATTERNS: &[(u8, ElementPattern)] = &[
     (0, ElementPattern::new([0, 1, 2, 3])),
@@ -1445,107 +69,676 @@ const ELEMENT_PATTERNS: &[(u8, ElementPattern)] = &[
 ];
 
 const ADDR_MASK: u32 = 0xFFF;
+const COP0_REGISTER_SELECTOR_MASK: u32 = 0x0f;
+const EXECUTION_SLICE_CYCLES: u64 = 4096;
+
 const ELEMENT_COUNT: u8 = 16;
 
 const VPR_ELEMENTS: usize = 16;
 
-fn vt(opcode: u32) -> u32 {
-    (opcode >> 16) & 0x1F
+const STATUS_COMMANDS: &[(u32, u32, u32)] = &[
+    (
+        SpStatusWrite::ClrSstep as u32,
+        SpStatusWrite::SetSstep as u32,
+        SpStatus::Sstep as u32,
+    ),
+    (
+        SpStatusWrite::ClrIntrBreak as u32,
+        SpStatusWrite::SetIntrBreak as u32,
+        SpStatus::IntrBreak as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig0 as u32,
+        SpStatusWrite::SetSig0 as u32,
+        SpStatus::Sig0 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig1 as u32,
+        SpStatusWrite::SetSig1 as u32,
+        SpStatus::Sig1 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig2 as u32,
+        SpStatusWrite::SetSig2 as u32,
+        SpStatus::Sig2 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig3 as u32,
+        SpStatusWrite::SetSig3 as u32,
+        SpStatus::Sig3 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig4 as u32,
+        SpStatusWrite::SetSig4 as u32,
+        SpStatus::Sig4 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig5 as u32,
+        SpStatusWrite::SetSig5 as u32,
+        SpStatus::Sig5 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig6 as u32,
+        SpStatusWrite::SetSig6 as u32,
+        SpStatus::Sig6 as u32,
+    ),
+    (
+        SpStatusWrite::ClrSig7 as u32,
+        SpStatusWrite::SetSig7 as u32,
+        SpStatus::Sig7 as u32,
+    ),
+];
+
+fn in_delay_slot_taken(n64: &N64) -> bool {
+    let rsp = n64.rsp();
+
+    rsp.processor.branch_state.state == CpuState::DelaySlotTaken
 }
-fn ve(opcode: u32) -> u32 {
-    (opcode >> 21) & 0xF
+
+#[cfg(test)]
+fn run(n64: &mut N64) -> u64 {
+    run_at(n64, n64.cp0_register(MmuRegister::Count))
 }
-fn vs(opcode: u32) -> u32 {
-    (opcode >> 11) & 0x1F
+
+fn run_at(n64: &mut N64, start: u64) -> u64 {
+    n64.rsp_mut().processor.cpu_slice_start = start;
+    n64.rsp_mut().begin_execution();
+    while !n64.rsp().processor.sync_point
+        && n64.rsp().processor.cycle_counter < EXECUTION_SLICE_CYCLES
+    {
+        let instruction = n64.rsp_mut().begin_instruction();
+        (instruction.func)(n64, instruction.opcode);
+        n64.rsp_mut().retire_instruction();
+
+        if n64.rsp().processor.broken {
+            break;
+        }
+    }
+
+    n64.rsp_mut().finish_execution()
 }
-fn vd(opcode: u32) -> u32 {
-    (opcode >> 6) & 0x1F
+
+fn decode_opcode(n64: &N64, opcode: u32) -> fn(&mut N64, u32) {
+    n64.rsp().instruction_tables.decode(opcode)
 }
-fn de(opcode: u32) -> u32 {
-    (opcode >> 11) & 0x7
+
+pub fn start_rsp(n64: &mut N64) {
+    let rsp = n64.rsp_mut();
+    rsp.vector.initialize_division_tables();
+
+    rsp.vector.shuffle = {
+        let mut shuffle =
+            [from_bytes_reversed([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); 16];
+
+        shuffle[0] = from_bytes_reversed([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        shuffle[1] = from_bytes_reversed([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+
+        shuffle[2] = from_bytes_reversed([15, 14, 15, 14, 11, 10, 11, 10, 7, 6, 7, 6, 3, 2, 3, 2]);
+        shuffle[3] = from_bytes_reversed([13, 12, 13, 12, 9, 8, 9, 8, 5, 4, 5, 4, 1, 0, 1, 0]);
+
+        for i in 0..4 {
+            shuffle[4 + i] = from_bytes_reversed([
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (7 - 2 * i) as i8,
+                (6 - 2 * i) as i8,
+                (7 - 2 * i) as i8,
+                (6 - 2 * i) as i8,
+                (7 - 2 * i) as i8,
+                (6 - 2 * i) as i8,
+                (7 - 2 * i) as i8,
+                (6 - 2 * i) as i8,
+            ]);
+        }
+
+        for i in 0..8 {
+            shuffle[8 + i] = from_bytes_reversed([
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+                (15 - 2 * i) as i8,
+                (14 - 2 * i) as i8,
+            ]);
+        }
+
+        shuffle
+    };
+
+    rsp.instruction_tables = InstructionTables::initialized();
+}
+
+pub fn read_mem_fast(n64: &mut N64, address: u64, _access_size: bus::AccessSize) -> u32 {
+    let rsp = n64.rsp_mut();
+    let masked_address = address as usize & RSP_MEM_MASK;
+
+    u32::from_be_bytes(
+        rsp.memory.mem[masked_address..masked_address + 4]
+            .try_into()
+            .unwrap(),
+    )
+}
+
+pub fn read_mem(n64: &mut N64, address: u64, access_size: bus::AccessSize) -> u32 {
+    read_mem_fast(n64, address, access_size)
+}
+
+pub fn write_mem(n64: &mut N64, address: u64, value: u32, _mask: u32) {
+    let masked_address = address as usize & RSP_MEM_MASK;
+    let data = value;
+    // The CPU-facing SP bus writes a whole shifted word even for SB and SH.
+    n64.rsp.memory.mem[masked_address..masked_address + 4].copy_from_slice(&data.to_be_bytes());
+
+    if masked_address & IMEM_SELECT as usize != 0 {
+        n64.rsp.instruction.instructions[(masked_address & ADDR_MASK as usize) / 4].func =
+            rsp::decode_opcode(n64, data);
+        n64.rsp.instruction.instructions[(masked_address & ADDR_MASK as usize) / 4].opcode = data;
+    }
+}
+
+fn do_dma(n64: &mut N64, dma: RspDma) {
+    let start = if n64.rsp().processor.running {
+        n64.rsp().slice_cpu_time()
+    } else {
+        n64.cp0_register(MmuRegister::Count)
+    };
+    do_dma_at(n64, dma, start);
+}
+
+fn do_dma_at(n64: &mut N64, dma: RspDma, start: u64) {
+    let DmaLayout {
+        length,
+        count,
+        skip,
+        memory_address: mut mem_addr,
+        dram_address: mut dram_addr,
+        bank: offset,
+    } = DmaLayout::decode(&dma);
+
+    let read_data = |n64: &N64, addr: usize, len: usize| -> u32 {
+        u32::from_be_bytes(n64.rsp.memory.mem[addr..addr + len].try_into().unwrap())
+    };
+
+    // RDRAM uses canonical little-endian words; SP memory uses guest big-endian bytes.
+    // DMA converts the representations regardless of the host endianness.
+    let write_data = |n64: &mut N64, addr: usize, data: u32| {
+        #[cfg(feature = "accuracy-diagnostics")]
+        if crate::rdram::write_watched(addr as u64) {
+            crate::rdram::trace_write(
+            n64,
+            &format!(
+                "rsp-dma length_raw={:#x} length={length:#x} count={count:#x} skip={skip:#x} mem_start={:#x} dram_start={:#x} bank={offset:#x}",
+                dma.length, dma.memaddr, dma.dramaddr
+            ),
+            addr as u64,
+            data,
+            u32::MAX,
+            );
+        }
+        if let Some(destination) = n64.rdram.mem.data.get_mut(addr..addr + 4) {
+            destination.copy_from_slice(&data.to_le_bytes());
+            crate::rdram::record_write(n64, addr as u64);
+        }
+    };
+
+    let mut process_dma = |n64: &mut N64, dir: DmaDir| {
+        for _ in 0..count {
+            for _ in (0..length).step_by(4) {
+                let rsp_addr = (offset + (mem_addr & ADDR_MASK)) as usize;
+                let bus_address = dram_addr as usize & crate::rdram::RDRAM_MASK;
+
+                if dir == DmaDir::Read {
+                    let data = read_data(n64, rsp_addr, 4);
+                    write_data(n64, bus_address, data);
+                } else {
+                    let data = n64
+                        .rdram
+                        .mem
+                        .data
+                        .get(bus_address..bus_address + 4)
+                        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+                        .unwrap_or(0);
+
+                    if offset != 0 {
+                        let instr_idx = ((mem_addr & ADDR_MASK) / 4) as usize;
+                        n64.rsp.instruction.instructions[instr_idx].func =
+                            rsp::decode_opcode(n64, data);
+                        n64.rsp.instruction.instructions[instr_idx].opcode = data;
+                    }
+
+                    n64.rsp.memory.mem[rsp_addr..rsp_addr + 4].copy_from_slice(&data.to_be_bytes());
+                }
+
+                mem_addr += 4;
+                dram_addr = (dram_addr + 4) & crate::rdram::RDRAM_MASK as u32;
+            }
+            dram_addr = (dram_addr + skip) & crate::rdram::RDRAM_MASK as u32;
+        }
+    };
+
+    process_dma(n64, dma.dir);
+
+    n64.rsp.registers.regs[SpReg::MemAddr as usize] = (mem_addr & ADDR_MASK) + offset;
+    n64.rsp.registers.regs[SpReg::DramAddr as usize] = dram_addr;
+    n64.rsp.registers.regs[SpReg::RdLen as usize] = DMA_LENGTH_READBACK;
+    n64.rsp.registers.regs[SpReg::WrLen as usize] = DMA_LENGTH_READBACK;
+
+    create_event(
+        n64,
+        EventType::SPDma,
+        start + rdram_calculate_cycles((count * length) as u64) + DMA_START_CYCLES,
+        rsp::fifo_pop,
+    );
+}
+
+fn fifo_push(n64: &mut N64, dir: DmaDir) {
+    let rsp = n64.rsp_mut();
+    let length_register = if dir == DmaDir::Read {
+        SpReg::WrLen
+    } else {
+        SpReg::RdLen
+    };
+    let command = RspDma {
+        dir,
+        length: rsp.registers.regs[length_register as usize],
+        memaddr: rsp.registers.regs[SpReg::MemAddr as usize],
+        dramaddr: rsp.registers.regs[SpReg::DramAddr as usize],
+    };
+
+    if rsp.registers.regs[SpReg::DmaBusy as usize] != 0 {
+        // A new submission replaces the pending command, even when DMAFull is set.
+        rsp.memory.fifo[1] = command;
+        rsp.registers.regs[SpReg::DmaFull as usize] = 1;
+        rsp.registers.regs[SpReg::Status as usize] |= SpStatus::DmaFull as u32;
+    } else {
+        rsp.memory.fifo[0] = command;
+        rsp.registers.regs[SpReg::DmaBusy as usize] = 1;
+        rsp.registers.regs[SpReg::Status as usize] |= SpStatus::DmaBusy as u32;
+
+        do_dma(n64, command)
+    }
+}
+
+fn fifo_pop(n64: &mut N64) {
+    if n64.rsp.registers.regs[SpReg::DmaFull as usize] != 0 {
+        n64.rsp.memory.fifo[0] = n64.rsp.memory.fifo[1];
+        n64.rsp.registers.regs[SpReg::DmaFull as usize] = 0;
+        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::DmaFull as u32);
+
+        let start = n64.cpu().event_deadline(EventType::SPDma);
+        do_dma_at(n64, n64.rsp.memory.fifo[0], start)
+    } else {
+        n64.rsp.registers.regs[SpReg::DmaBusy as usize] = 0;
+        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::DmaBusy as u32);
+    }
+}
+
+pub fn read_regs(n64: &mut N64, address: u64, _access_size: bus::AccessSize) -> u32 {
+    let rsp = n64.rsp_mut();
+    let reg = register_index(address);
+
+    match reg as u32 {
+        x if x == SpReg::Semaphore as u32 => {
+            let value = rsp.registers.regs[reg];
+            rsp.registers.regs[reg] = 1;
+
+            value
+        }
+        _ => rsp.registers.regs[reg],
+    }
+}
+
+pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
+    let reg = register_index(address);
+
+    match reg as u32 {
+        x if x == SpReg::Status as u32 => update_sp_status(n64, value),
+        x if x == SpReg::RdLen as u32 => {
+            bus::masked_write_32(&mut n64.rsp.registers.regs[reg], value, mask);
+
+            fifo_push(n64, DmaDir::Write)
+        }
+        x if x == SpReg::WrLen as u32 => {
+            bus::masked_write_32(&mut n64.rsp.registers.regs[reg], value, mask);
+
+            fifo_push(n64, DmaDir::Read)
+        }
+        x if x == SpReg::Semaphore as u32 => {
+            bus::masked_write_32(&mut n64.rsp.registers.regs[reg], 0, mask)
+        }
+        _ => {
+            bus::masked_write_32(&mut n64.rsp.registers.regs[reg], value, mask);
+        }
+    }
+}
+
+pub fn read_regs2(n64: &mut N64, address: u64, _access_size: bus::AccessSize) -> u32 {
+    let rsp = n64.rsp_mut();
+
+    rsp.registers.regs2[register_index(address)]
+}
+
+pub fn write_regs2(n64: &mut N64, address: u64, value: u32, mask: u32) {
+    let rsp = n64.rsp_mut();
+    let reg = register_index(address);
+
+    match reg as u32 {
+        x if x == SpReg2::Pc as u32 => {
+            bus::masked_write_32(&mut rsp.registers.regs2[reg], value & 0xFFC, mask);
+        }
+        _ => bus::masked_write_32(&mut rsp.registers.regs2[reg], value, mask),
+    }
+}
+
+fn update_sp_status(n64: &mut N64, w: u32) {
+    let was_halted = n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::Halt as u32 != 0;
+
+    n64.rsp_mut().registers.apply_status_command(
+        w,
+        SpStatusWrite::ClrHalt as u32,
+        SpStatusWrite::SetHalt as u32,
+        SpStatus::Halt as u32,
+    );
+    if w & SpStatusWrite::SetHalt as u32 != 0 && w & SpStatusWrite::ClrHalt as u32 == 0 {
+        remove_event(n64, EventType::SP)
+    }
+
+    if w & SpStatusWrite::ClrBroke as u32 != 0 {
+        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::Broke as u32)
+    }
+
+    if w & SpStatusWrite::ClrIntr as u32 != 0 && w & SpStatusWrite::SetIntr as u32 == 0 {
+        clear_rcp_interrupt(n64, MI_INTR_SP)
+    }
+
+    if w & SpStatusWrite::SetIntr as u32 != 0 && w & SpStatusWrite::ClrIntr as u32 == 0 {
+        schedule_rcp_interrupt(n64, MI_INTR_SP)
+    }
+
+    let registers = &mut n64.rsp_mut().registers;
+
+    for &(clear, set, flag) in STATUS_COMMANDS {
+        registers.apply_status_command(w, clear, set, flag);
+    }
+
+    if n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::Halt as u32 == 0 && was_halted {
+        n64.rsp.processor.broken = false;
+        n64.rsp.processor.halted = false;
+        n64.rsp.processor.sync_point = false;
+        do_task(n64, n64.cp0_register(MmuRegister::Count));
+    }
+}
+
+fn do_task(n64: &mut N64, start: u64) {
+    let timer = run_at(n64, start);
+
+    create_event(n64, EventType::SP, start + timer, rsp_event)
+}
+
+fn rsp_event(n64: &mut N64) {
+    if n64.rsp.processor.broken {
+        n64.rsp.registers.regs[SpReg::Status as usize] |=
+            SpStatus::Halt as u32 | SpStatus::Broke as u32;
+
+        if n64.rsp.registers.regs[SpReg::Status as usize] & SpStatus::IntrBreak as u32 != 0 {
+            set_rcp_interrupt(n64, mips::MI_INTR_SP)
+        }
+
+        return;
+    }
+
+    if n64.rsp.processor.halted {
+        n64.rsp.registers.regs[SpReg::Status as usize] |= SpStatus::Halt as u32;
+        return;
+    }
+
+    n64.rsp.processor.sync_point = false;
+
+    let start = n64.cpu().event_deadline(EventType::SP);
+    do_task(n64, start)
+}
+
+#[inline(always)]
+fn se16(value: i16) -> u32 {
+    value as i32 as u32
+}
+
+fn sign_extend_7bit_offset(offset: u8, shift_amount: u32) -> u32 {
+    let soffset = (((offset << 1) & 0x80) | offset) as i8;
+
+    (((soffset) as i32) as u32) << shift_amount
+}
+
+fn mfc0(n64: &mut N64, opcode: u32) {
+    let selector = rd(opcode) & COP0_REGISTER_SELECTOR_MASK;
+    n64.rsp.processor.record_cop0_read(rt(opcode) as usize);
+    if selector == SpReg::RegsCount as u32 + rdp::DpcReg::Clock as u32 {
+        // RSP runs ahead of CPU event dispatch; include its elapsed RCP cycles.
+        let start = if n64.rsp.processor.running {
+            n64.rsp.processor.cpu_slice_start
+        } else {
+            n64.cp0_register(MmuRegister::Count)
+        };
+        n64.rsp.registers.gpr[rt(opcode) as usize] = rdp::clock_at(n64, start)
+            .wrapping_add(n64.rsp.processor.cycle_counter as u32)
+            & 0x00ff_ffff;
+        return;
+    }
+
+    if selector < SpReg::RegsCount as u32 {
+        n64.rsp.registers.gpr[rt(opcode) as usize] =
+            rsp::read_regs(n64, (selector << 2) as u64, bus::AccessSize::Word)
+    } else {
+        n64.rsp.registers.gpr[rt(opcode) as usize] = rdp::read_regs_dpc(
+            n64,
+            ((selector - SpReg::RegsCount as u32) << 2) as u64,
+            bus::AccessSize::Word,
+        )
+    }
+    n64.rsp.processor.sync_point = true;
+}
+
+fn mtc0(n64: &mut N64, opcode: u32) {
+    let selector = rd(opcode) & COP0_REGISTER_SELECTOR_MASK;
+    let value = n64.rsp.registers.gpr[rt(opcode) as usize];
+    if selector < SpReg::RegsCount as u32 {
+        rsp::write_regs(n64, (selector << 2) as u64, value, u32::MAX)
+    } else {
+        rdp::write_regs_dpc(
+            n64,
+            ((selector - SpReg::RegsCount as u32) << 2) as u64,
+            value,
+            u32::MAX,
+        )
+    }
+
+    if selector == SpReg::Status as u32
+        && value & (SpStatusWrite::ClrHalt as u32 | SpStatusWrite::SetHalt as u32)
+            == SpStatusWrite::SetHalt as u32
+    {
+        // Defer visible Halt until the scheduled RSP event completes.
+        n64.rsp.registers.regs[SpReg::Status as usize] &= !(SpStatus::Halt as u32);
+        n64.rsp.processor.halted = true;
+    }
+    n64.rsp.processor.sync_point = true;
+}
+
+fn mfc2(n64: &mut N64, opcode: u32) {
+    let rsp = n64.rsp_mut();
+    let hi = get_vpr_byte(rsp.registers.vpr[rd(opcode) as usize], velement(opcode));
+    let lo = get_vpr_byte(rsp.registers.vpr[rd(opcode) as usize], velement(opcode) + 1);
+
+    rsp.registers.gpr[rt(opcode) as usize] = ((hi as u16) << 8 | (lo as u16)) as i16 as i32 as u32
+}
+
+fn cfc2(n64: &mut N64, opcode: u32) {
+    let rsp = n64.rsp_mut();
+    let hi;
+    let lo;
+    let mut zero = { zero() };
+
+    match rd(opcode) & 3 {
+        0x00 => {
+            hi = &mut rsp.vector_control.vcoh;
+            lo = &mut rsp.vector_control.vcol;
+        }
+        0x01 => {
+            hi = &mut rsp.vector_control.vcch;
+            lo = &mut rsp.vector_control.vccl;
+        }
+        0x02 | 0x03 => {
+            hi = &mut zero;
+            lo = &mut rsp.vector_control.vce;
+        }
+        _ => {
+            panic!("unknown ctc2")
+        }
+    }
+
+    {
+        let reverse = from_bytes_reversed([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        rsp.registers.gpr[rt(opcode) as usize] =
+            (byte_sign_mask(shuffle_bytes(pack_signed_bytes(*hi, *lo), reverse))) as i16 as u32;
+    }
+}
+
+fn mtc2(n64: &mut N64, opcode: u32) {
+    let rsp = n64.rsp_mut();
+    modify_vpr_byte(
+        &mut rsp.registers.vpr[rd(opcode) as usize],
+        (rsp.registers.gpr[rt(opcode) as usize] >> 8) as u8,
+        velement(opcode),
+    );
+
+    if velement(opcode) != 15 {
+        modify_vpr_byte(
+            &mut rsp.registers.vpr[rd(opcode) as usize],
+            rsp.registers.gpr[rt(opcode) as usize] as u8,
+            velement(opcode) + 1,
+        );
+    }
+}
+
+fn ctc2(n64: &mut N64, opcode: u32) {
+    let rsp = n64.rsp_mut();
+    let zero = zero();
+    let rt_val = rsp.registers.gpr[rt(opcode) as usize];
+    let mask = from_lanes_reversed([
+        0x0101,
+        0x0202,
+        0x0404,
+        0x0808,
+        0x1010,
+        0x2020,
+        0x4040,
+        0x8080u16 as i16,
+    ]);
+
+    let computed_value = equal_bytes(bit_and(splat_bytes(!rt_val as i8), mask), zero);
+
+    let computed_high = equal_bytes(bit_and(splat_bytes(!(rt_val >> 8) as i8), mask), zero);
+
+    match rd(opcode) & 3 {
+        0x00 => {
+            rsp.vector_control.vcoh = computed_high;
+            rsp.vector_control.vcol = computed_value;
+        }
+        0x01 => {
+            rsp.vector_control.vcch = computed_high;
+            rsp.vector_control.vccl = computed_value;
+        }
+        0x02 | 0x03 => {
+            rsp.vector_control.vce = computed_value;
+        }
+        _ => panic!("Invalid CTC2 opcode"),
+    }
 }
 
 fn clamp_signed_32(value: i32) -> i16 {
     value.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
+
 fn clamp_signed_64(value: i64) -> i16 {
     value.clamp(i16::MIN as i64, i16::MAX as i64) as i16
-}
-fn count_leading_zeros(value: u32) -> u32 {
-    value.leading_zeros()
 }
 
 fn s_clip(x: i64, bits: u32) -> i64 {
     let b = 1_u64 << (bits - 1);
     let m = b * 2 - 1;
+
     ((((x as u64) & m) ^ b).wrapping_sub(b)) as i64
 }
 
-fn vte(n64: &N64, vt: u32, index: usize) -> __m128i {
-    unsafe {
-        _mm_shuffle_epi8(
-            std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                n64.rsp.registers.vpr[vt as usize],
-            ),
-            n64.rsp.vector.shuffle[index],
-        )
-    }
-}
+fn vte(n64: &N64, vt: u32, index: usize) -> Vector {
+    let rsp = n64.rsp();
 
-// Helper functions
-#[inline(always)]
-unsafe fn vs_reg(n64: &N64, opcode: u32) -> __m128i {
-    std::mem::transmute(n64.rsp.registers.vpr[vs(opcode) as usize])
+    shuffle_bytes(
+        vector_from_bits(rsp.registers.vpr[vt as usize]),
+        rsp.vector.shuffle[index],
+    )
 }
 
 #[inline(always)]
-unsafe fn set_vd_reg(n64: &mut N64, opcode: u32, value: __m128i) {
-    n64.rsp.registers.vpr[vd(opcode) as usize] = std::mem::transmute(value);
+fn vs_reg(n64: &N64, opcode: u32) -> Vector {
+    let rsp = n64.rsp();
+
+    vector_from_bits(rsp.registers.vpr[vs(opcode) as usize])
 }
 
-macro_rules! vector_multiply {
-    ($n64:expr, $opcode:expr, $final_op:expr) => {{
-        let vte = vte($n64, vt($opcode), ve($opcode) as usize);
-        unsafe {
-            let vs = vs_reg($n64, $opcode);
-            let lo = _mm_mullo_epi16(vs, vte);
-            let round = _mm_slli_epi16(
-                _mm_cmpeq_epi16(_mm_setzero_si128(), _mm_setzero_si128()),
-                15,
-            );
+#[inline(always)]
+fn set_vd_reg(n64: &mut N64, opcode: u32, value: Vector) {
+    let rsp = n64.rsp_mut();
+    rsp.registers.vpr[vd(opcode) as usize] = vector_to_bits(value);
+}
 
-            let sign1 = _mm_srli_epi16(lo, 15);
-            let lo = _mm_add_epi16(lo, lo);
-            let sign2 = _mm_srli_epi16(lo, 15);
-
-            $n64.rsp.accumulator.accl = _mm_add_epi16(round, lo);
-
-            let hi = _mm_slli_epi16(_mm_mulhi_epi16(vs, vte), 1);
-            let neq = _mm_cmpeq_epi16(vs, vte);
-
-            $n64.rsp.accumulator.accm = _mm_add_epi16(hi, _mm_add_epi16(sign1, sign2));
-            let neg = _mm_srai_epi16($n64.rsp.accumulator.accm, 15);
-
-            $n64.rsp.accumulator.acch = _mm_andnot_si128(neq, neg);
-
-            // Final operation differs between vmulf and vmulu
-            let result = $final_op($n64, neq, neg);
-            set_vd_reg($n64, $opcode, result)
-        }
-    }};
+fn rounded_multiply(
+    n64: &mut N64,
+    opcode: u32,
+    finish: impl FnOnce(&AccumulatorState, Vector, Vector) -> Vector,
+) {
+    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
+    let vs = vs_reg(n64, opcode);
+    let lo = mul_low(vs, vte);
+    let round = shift_left(equal_lanes(zero(), zero()), 15);
+    let sign1 = shift_right_unsigned(lo, 15);
+    let lo = add_wrapping(lo, lo);
+    let sign2 = shift_right_unsigned(lo, 15);
+    let hi = shift_left(mul_high_signed(vs, vte), 1);
+    let equal = equal_lanes(vs, vte);
+    let accumulator = &mut n64.rsp_mut().accumulator;
+    accumulator.accl = add_wrapping(round, lo);
+    accumulator.accm = add_wrapping(hi, add_wrapping(sign1, sign2));
+    let negative = shift_right_signed(accumulator.accm, 15);
+    accumulator.acch = and_not(equal, negative);
+    let result = finish(accumulator, equal, negative);
+    set_vd_reg(n64, opcode, result);
 }
 
 fn vmulf(n64: &mut N64, opcode: u32) {
-    vector_multiply!(n64, opcode, |n64: &N64, neq, neg| {
-        let eq = _mm_and_si128(neq, neg);
-        _mm_add_epi16(n64.rsp.accumulator.accm, eq)
+    rounded_multiply(n64, opcode, |accumulator, equal, negative| {
+        add_wrapping(accumulator.accm, bit_and(equal, negative))
     });
 }
 
 fn vmulu(n64: &mut N64, opcode: u32) {
-    vector_multiply!(n64, opcode, |n64: &N64, _neq, neg| {
-        let hi = _mm_or_si128(n64.rsp.accumulator.accm, neg);
-        _mm_andnot_si128(n64.rsp.accumulator.acch, hi)
+    rounded_multiply(n64, opcode, |accumulator, _, negative| {
+        and_not(accumulator.acch, bit_or(accumulator.accm, negative))
     });
 }
 
@@ -1557,6 +750,7 @@ fn get_accumulator(acch: u128, accm: u128, accl: u128, n: usize) -> i64 {
     acc |= get_vpr_element(accm, n as u8) as i64;
     acc <<= 16;
     acc |= get_vpr_element(accl, n as u8) as i64;
+
     acc << 16 >> 16
 }
 
@@ -1567,22 +761,15 @@ fn set_accumulator(acch: &mut u128, accm: &mut u128, accl: &mut u128, acc: i64, 
     modify_vpr_element(accl, acc as u16, n as u8);
 }
 
-fn vrndp(n64: &mut N64, opcode: u32) {
-    let vte = unsafe {
-        std::mem::transmute::<std::arch::x86_64::__m128i, u128>(vte(
-            n64,
-            vt(opcode),
-            ve(opcode) as usize,
-        ))
-    };
+fn round_accumulator(n64: &mut N64, opcode: u32, negative: bool) {
+    let vte = { vector_to_bits(vte(n64, vt(opcode), ve(opcode) as usize)) };
 
-    let (acch, accm, accl) = unsafe {
-        (
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.acch),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accm),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accl),
-        )
-    };
+    let mut acc_values = (
+        vector_to_bits(n64.rsp.accumulator.acch),
+        vector_to_bits(n64.rsp.accumulator.accm),
+        vector_to_bits(n64.rsp.accumulator.accl),
+    );
+    let (acch, accm, accl) = (&mut acc_values.0, &mut acc_values.1, &mut acc_values.2);
 
     for n in 0..8 {
         let product = if vs(opcode) & 1 != 0 {
@@ -1592,7 +779,8 @@ fn vrndp(n64: &mut N64, opcode: u32) {
         };
 
         let mut acc = get_accumulator(*acch, *accm, *accl, n as usize);
-        if acc >= 0 {
+
+        if (acc < 0) == negative {
             acc = s_clip(acc + product as i64, 48);
         }
 
@@ -1604,9 +792,16 @@ fn vrndp(n64: &mut N64, opcode: u32) {
             n,
         );
     }
+    n64.rsp.accumulator.acch = vector_from_bits(acc_values.0);
+    n64.rsp.accumulator.accm = vector_from_bits(acc_values.1);
+    n64.rsp.accumulator.accl = vector_from_bits(acc_values.2);
 }
 
 #[inline(always)]
+fn vrndp(n64: &mut N64, opcode: u32) {
+    round_accumulator(n64, opcode, false);
+}
+
 fn vector_mul_element(vs: u128, vte: u128, n: usize) -> i32 {
     (get_vpr_element(vs, n as u8) as i16 as i32)
         .wrapping_mul(get_vpr_element(vte, n as u8) as i16 as i32)
@@ -1620,20 +815,19 @@ fn set_acc_elements(acch: &mut u128, accm: &mut u128, accl: &mut u128, product: 
 }
 
 fn vmulq(n64: &mut N64, opcode: u32) {
-    let vte =
-        unsafe { std::mem::transmute::<__m128i, u128>(vte(n64, vt(opcode), ve(opcode) as usize)) };
+    let vte = { vector_to_bits(vte(n64, vt(opcode), ve(opcode) as usize)) };
 
     let vs = n64.rsp.registers.vpr[vs(opcode) as usize];
-    let (acch, accm, accl) = unsafe {
-        (
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.acch),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accm),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accl),
-        )
-    };
+    let mut acc_values = (
+        vector_to_bits(n64.rsp.accumulator.acch),
+        vector_to_bits(n64.rsp.accumulator.accm),
+        vector_to_bits(n64.rsp.accumulator.accl),
+    );
+    let (acch, accm, accl) = (&mut acc_values.0, &mut acc_values.1, &mut acc_values.2);
 
     for n in 0..8 {
         let mut product = vector_mul_element(vs, vte, n);
+
         if product < 0 {
             product += 31
         }
@@ -1642,401 +836,256 @@ fn vmulq(n64: &mut N64, opcode: u32) {
 
         modify_vpr_element(
             &mut n64.rsp.registers.vpr[vd(opcode) as usize],
-            (clamp_signed_32(product >> 1) & !15) as u16,
+            (crate::bits::align_down(clamp_signed_32(product >> 1), 16)) as u16,
             n as u8,
         );
     }
-}
-
-#[inline(always)]
-unsafe fn get_vs_reg(n64: &N64, opcode: u32) -> __m128i {
-    std::mem::transmute(n64.rsp.registers.vpr[vs(opcode) as usize])
+    n64.rsp.accumulator.acch = vector_from_bits(acc_values.0);
+    n64.rsp.accumulator.accm = vector_from_bits(acc_values.1);
+    n64.rsp.accumulator.accl = vector_from_bits(acc_values.2);
 }
 
 fn vmudl(n64: &mut N64, opcode: u32) {
-    unsafe {
-        let vs = get_vs_reg(n64, opcode);
-        let vte = vte(n64, vt(opcode), ve(opcode) as usize);
+    let vs = vs_reg(n64, opcode);
+    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
 
-        n64.rsp.accumulator.accl = _mm_mulhi_epu16(vs, vte);
+    n64.rsp.accumulator.accl = mul_high_unsigned(vs, vte);
 
-        n64.rsp.accumulator.accm = _mm_setzero_si128();
-        n64.rsp.accumulator.acch = _mm_setzero_si128();
+    n64.rsp.accumulator.accm = zero();
+    n64.rsp.accumulator.acch = zero();
 
-        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
-    }
+    set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
 }
 
-macro_rules! impl_vmud {
-    ($name:ident, $operation:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-            unsafe {
-                let vs = vpr_as_m128i(&n64.rsp.registers.vpr[vs(opcode) as usize]);
-
-                n64.rsp.accumulator.accl = _mm_mullo_epi16(vs, vte);
-                n64.rsp.accumulator.accm = _mm_mulhi_epu16(vs, vte);
-
-                let result = $operation(n64, vs, vte);
-
-                n64.rsp.registers.vpr[vd(opcode) as usize] = m128i_as_u128(result);
-            }
-        }
-    };
+fn multiply_accumulator(
+    n64: &mut N64,
+    opcode: u32,
+    operation: impl FnOnce(&mut AccumulatorState, Vector, Vector) -> Vector,
+) {
+    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
+    let vs = vs_reg(n64, opcode);
+    let accumulator = &mut n64.rsp_mut().accumulator;
+    accumulator.accl = mul_low(vs, vte);
+    accumulator.accm = mul_high_unsigned(vs, vte);
+    let result = operation(accumulator, vs, vte);
+    set_vd_reg(n64, opcode, result);
 }
 
-#[inline(always)]
-unsafe fn vpr_as_m128i(vpr: &u128) -> __m128i {
-    std::mem::transmute::<u128, __m128i>(*vpr)
-}
-#[inline(always)]
-unsafe fn m128i_as_u128(val: __m128i) -> u128 {
-    std::mem::transmute::<__m128i, u128>(val)
-}
+fn vmudm(n64: &mut N64, opcode: u32) {
+    multiply_accumulator(n64, opcode, |accumulator, vs, vte| {
+        let sign = shift_right_signed(vs, 15);
+        let vta = bit_and(vte, sign);
+        accumulator.accm = sub_wrapping(accumulator.accm, vta);
+        accumulator.acch = shift_right_signed(accumulator.accm, 15);
 
-impl_vmud!(vmudm, |n64: &mut N64, vs, vte| -> __m128i {
-    let sign = _mm_srai_epi16(vs, 15);
-    let vta = _mm_and_si128(vte, sign);
-    n64.rsp.accumulator.accm = _mm_sub_epi16(n64.rsp.accumulator.accm, vta);
-    n64.rsp.accumulator.acch = _mm_srai_epi16(n64.rsp.accumulator.accm, 15);
-    n64.rsp.accumulator.accm
-});
-
-impl_vmud!(vmudn, |n64: &mut N64, vs, vte| {
-    let sign = _mm_srai_epi16(vte, 15);
-    let vsa = _mm_and_si128(vs, sign);
-    n64.rsp.accumulator.accm = _mm_sub_epi16(n64.rsp.accumulator.accm, vsa);
-    n64.rsp.accumulator.acch = _mm_srai_epi16(n64.rsp.accumulator.accm, 15);
-    n64.rsp.accumulator.accl
-});
-
-impl_vmud!(vmudh, |n64: &mut N64, vs, vte| {
-    n64.rsp.accumulator.accl = _mm_setzero_si128();
-    n64.rsp.accumulator.accm = _mm_mullo_epi16(vs, vte);
-    n64.rsp.accumulator.acch = _mm_mulhi_epi16(vs, vte);
-    let lo = _mm_unpacklo_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-    let hi = _mm_unpackhi_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-    _mm_packs_epi32(lo, hi)
-});
-
-#[inline(always)]
-unsafe fn get_simd_vs(n64: &N64, opcode: u32) -> __m128i {
-    std::mem::transmute(n64.rsp.registers.vpr[vs(opcode) as usize])
+        accumulator.accm
+    });
 }
 
-#[inline(always)]
-unsafe fn set_vd_simd(n64: &mut N64, opcode: u32, value: __m128i) {
-    n64.rsp.registers.vpr[vd(opcode) as usize] = std::mem::transmute(value);
+fn vmudn(n64: &mut N64, opcode: u32) {
+    multiply_accumulator(n64, opcode, |accumulator, vs, vte| {
+        let sign = shift_right_signed(vte, 15);
+        let vsa = bit_and(vs, sign);
+        accumulator.accm = sub_wrapping(accumulator.accm, vsa);
+        accumulator.acch = shift_right_signed(accumulator.accm, 15);
+
+        accumulator.accl
+    });
+}
+
+fn vmudh(n64: &mut N64, opcode: u32) {
+    multiply_accumulator(n64, opcode, |accumulator, vs, vte| {
+        accumulator.accl = zero();
+        accumulator.accm = mul_low(vs, vte);
+        accumulator.acch = mul_high_signed(vs, vte);
+        let lo = interleave_low(accumulator.accm, accumulator.acch);
+        let hi = interleave_high(accumulator.accm, accumulator.acch);
+
+        pack_signed_lanes(lo, hi)
+    });
+}
+
+fn accumulate_fractional_product(accumulator: &mut AccumulatorState, left: Vector, right: Vector) {
+    let low = mul_low(left, right);
+    let high = mul_high_signed(left, right);
+    let middle = bit_or(shift_left(high, 1), shift_right_unsigned(low, 15));
+    let high = shift_right_signed(high, 15);
+    let low = shift_left(low, 1);
+    let (sum, overflow) = handle_accumulator(accumulator.accl, low);
+    accumulator.accl = sum;
+    let middle = sub_wrapping(middle, overflow);
+    let carry = bit_and(equal_lanes(middle, zero()), overflow);
+    let high = sub_wrapping(high, carry);
+    let (sum, overflow) = handle_accumulator(accumulator.accm, middle);
+    accumulator.accm = sum;
+    accumulator.acch = sub_wrapping(add_wrapping(accumulator.acch, high), overflow);
 }
 
 fn vmacf(n64: &mut N64, opcode: u32) {
-    unsafe {
-        let vs = get_simd_vs(n64, opcode);
-        let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-
-        // Multiply step
-        let lo = _mm_mullo_epi16(vs, vte);
-        let hi = _mm_mulhi_epi16(vs, vte);
-        let md = _mm_slli_epi16(hi, 1);
-        let carry = _mm_srli_epi16(lo, 15);
-        let hi = _mm_srai_epi16(hi, 15);
-        let md = _mm_or_si128(md, carry);
-        let lo = _mm_slli_epi16(lo, 1);
-
-        // Accumulate low bits
-        let omask = _mm_adds_epu16(n64.rsp.accumulator.accl, lo);
-        n64.rsp.accumulator.accl = _mm_add_epi16(n64.rsp.accumulator.accl, lo);
-        let omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accl, omask);
-        let omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
-
-        // Handle middle bits
-        let md = _mm_sub_epi16(md, omask);
-        let carry = _mm_cmpeq_epi16(md, _mm_setzero_si128());
-        let carry = _mm_and_si128(carry, omask);
-        let hi = _mm_sub_epi16(hi, carry);
-
-        // Accumulate middle bits
-        let omask = _mm_adds_epu16(n64.rsp.accumulator.accm, md);
-        n64.rsp.accumulator.accm = _mm_add_epi16(n64.rsp.accumulator.accm, md);
-        let omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accm, omask);
-        let omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
-
-        // Accumulate high bits
-        n64.rsp.accumulator.acch = _mm_add_epi16(n64.rsp.accumulator.acch, hi);
-        n64.rsp.accumulator.acch = _mm_sub_epi16(n64.rsp.accumulator.acch, omask);
-
-        // Pack result
-        let lo = _mm_unpacklo_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        let hi = _mm_unpackhi_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        let result = _mm_packs_epi32(lo, hi);
-
-        set_vd_simd(n64, opcode, result);
-    }
+    let left = vs_reg(n64, opcode);
+    let right = vte(n64, vt(opcode), ve(opcode) as usize);
+    let accumulator = &mut n64.rsp_mut().accumulator;
+    accumulate_fractional_product(accumulator, left, right);
+    let low = interleave_low(accumulator.accm, accumulator.acch);
+    let high = interleave_high(accumulator.accm, accumulator.acch);
+    let result = pack_signed_lanes(low, high);
+    set_vd_reg(n64, opcode, result);
 }
 
 fn vmacu(n64: &mut N64, opcode: u32) {
-    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let lo = _mm_mullo_epi16(
-            std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                n64.rsp.registers.vpr[vs(opcode) as usize],
-            ),
-            vte,
-        );
-        let hi = _mm_mulhi_epi16(
-            std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                n64.rsp.registers.vpr[vs(opcode) as usize],
-            ),
-            vte,
-        );
-        let mut md = _mm_slli_epi16(hi, 1);
-        let carry = _mm_srli_epi16(lo, 15);
-        let hi = _mm_srai_epi16(hi, 15);
-        md = _mm_or_si128(md, carry);
-        let lo = _mm_slli_epi16(lo, 1);
-        let mut omask = _mm_adds_epu16(n64.rsp.accumulator.accl, lo);
-        n64.rsp.accumulator.accl = _mm_add_epi16(n64.rsp.accumulator.accl, lo);
-        omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accl, omask);
-        omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
-        md = _mm_sub_epi16(md, omask);
-        let carry = _mm_cmpeq_epi16(md, _mm_setzero_si128());
-        let carry = _mm_and_si128(carry, omask);
-        let hi = _mm_sub_epi16(hi, carry);
-        omask = _mm_adds_epu16(n64.rsp.accumulator.accm, md);
-        n64.rsp.accumulator.accm = _mm_add_epi16(n64.rsp.accumulator.accm, md);
-        omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accm, omask);
-        omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
-        n64.rsp.accumulator.acch = _mm_add_epi16(n64.rsp.accumulator.acch, hi);
-        n64.rsp.accumulator.acch = _mm_sub_epi16(n64.rsp.accumulator.acch, omask);
-
-        let mmask = _mm_srai_epi16(n64.rsp.accumulator.accm, 15);
-        let hmask = _mm_srai_epi16(n64.rsp.accumulator.acch, 15);
-        md = _mm_or_si128(mmask, n64.rsp.accumulator.accm);
-        omask = _mm_cmpgt_epi16(n64.rsp.accumulator.acch, _mm_setzero_si128());
-        md = _mm_andnot_si128(hmask, md);
-        n64.rsp.registers.vpr[vd(opcode) as usize] =
-            std::mem::transmute::<std::arch::x86_64::__m128i, u128>(_mm_or_si128(omask, md));
-    }
-}
-
-#[inline(always)]
-fn get_acc_value(acch: u128, accm: u128, accl: u128, n: usize) -> i64 {
-    let mut acc = 0i64;
-    acc |= get_vpr_element(acch, n as u8) as i64;
-    acc <<= 16;
-    acc |= get_vpr_element(accm, n as u8) as i64;
-    acc <<= 16;
-    acc |= get_vpr_element(accl, n as u8) as i64;
-    acc << 16 >> 16
-}
-
-#[inline(always)]
-fn set_acc_value(acch: &mut u128, accm: &mut u128, accl: &mut u128, acc: i64, n: usize) {
-    modify_vpr_element(acch, (acc >> 32) as u16, n as u8);
-    modify_vpr_element(accm, (acc >> 16) as u16, n as u8);
-    modify_vpr_element(accl, acc as u16, n as u8);
+    let right = vte(n64, vt(opcode), ve(opcode) as usize);
+    let left = vs_reg(n64, opcode);
+    let accumulator = &mut n64.rsp_mut().accumulator;
+    accumulate_fractional_product(accumulator, left, right);
+    let middle_sign = shift_right_signed(accumulator.accm, 15);
+    let high_sign = shift_right_signed(accumulator.acch, 15);
+    let middle = and_not(high_sign, bit_or(middle_sign, accumulator.accm));
+    let positive = greater_signed(accumulator.acch, zero());
+    let result = bit_or(positive, middle);
+    set_vd_reg(n64, opcode, result);
 }
 
 fn vrndn(n64: &mut N64, opcode: u32) {
-    let vte =
-        unsafe { std::mem::transmute::<__m128i, u128>(vte(n64, vt(opcode), ve(opcode) as usize)) };
-
-    let (acch, accm, accl) = unsafe {
-        (
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.acch),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accm),
-            std::mem::transmute::<_, &mut u128>(&mut n64.rsp.accumulator.accl),
-        )
-    };
-
-    for n in 0..8 {
-        let product = if vs(opcode) & 1 != 0 {
-            (get_vpr_element(vte, n) as i16 as i32) << 16
-        } else {
-            get_vpr_element(vte, n) as i16 as i32
-        };
-
-        let mut acc = get_acc_value(*acch, *accm, *accl, n as usize);
-        if acc < 0 {
-            acc = s_clip(acc + product as i64, 48);
-        }
-
-        set_acc_value(acch, accm, accl, acc, n as usize);
-
-        modify_vpr_element(
-            &mut n64.rsp.registers.vpr[vd(opcode) as usize],
-            clamp_signed_64(acc >> 16) as u16,
-            n,
-        );
-    }
+    round_accumulator(n64, opcode, true);
 }
 
 fn vmacq(n64: &mut N64, opcode: u32) {
-    let acch: &mut u128 = unsafe { std::mem::transmute(&mut n64.rsp.accumulator.acch) };
-    let accm: &mut u128 = unsafe { std::mem::transmute(&mut n64.rsp.accumulator.accm) };
+    let rsp = n64.rsp_mut();
+    let mut high = vector_to_bits(rsp.accumulator.acch);
+    let acch = &mut high;
+    let mut mid = vector_to_bits(rsp.accumulator.accm);
+    let accm = &mut mid;
 
     let mut n = 0;
+
     while n < 8 {
         let mut product =
             (get_vpr_element(*acch, n) as i32) << 16 | (get_vpr_element(*accm, n) as i32);
+
         if product < 0 && (product & (1 << 5)) == 0 {
             product += 32
         } else if product >= 32 && (product & (1 << 5)) == 0 {
             product -= 32
         }
+
         modify_vpr_element(acch, (product >> 16) as u16, n);
         modify_vpr_element(accm, (product) as u16, n);
         modify_vpr_element(
-            &mut n64.rsp.registers.vpr[vd(opcode) as usize],
-            (clamp_signed_32(product >> 1) & !15) as u16,
+            &mut rsp.registers.vpr[vd(opcode) as usize],
+            (crate::bits::align_down(clamp_signed_32(product >> 1), 16)) as u16,
             n,
         );
         n += 1;
     }
-}
-
-#[inline(always)]
-unsafe fn get_vs_simd(n64: &N64, opcode: u32) -> __m128i {
-    std::mem::transmute(n64.rsp.registers.vpr[vs(opcode) as usize])
+    rsp.accumulator.acch = vector_from_bits(high);
+    rsp.accumulator.accm = vector_from_bits(mid);
 }
 
 fn vmadl(n64: &mut N64, opcode: u32) {
-    unsafe {
-        // Get source vectors and multiply high
-        let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-        let vs = get_vs_simd(n64, opcode);
-        let hi = _mm_mulhi_epu16(vs, vte);
+    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
+    let vs = vs_reg(n64, opcode);
+    let hi = mul_high_unsigned(vs, vte);
 
-        // Accumulate low bits
-        let omask = _mm_adds_epu16(n64.rsp.accumulator.accl, hi);
-        n64.rsp.accumulator.accl = _mm_add_epi16(n64.rsp.accumulator.accl, hi);
-        let mut omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accl, omask);
-        omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
+    let omask = add_saturating_unsigned(n64.rsp.accumulator.accl, hi);
+    n64.rsp.accumulator.accl = add_wrapping(n64.rsp.accumulator.accl, hi);
+    let mut omask = equal_lanes(n64.rsp.accumulator.accl, omask);
+    omask = equal_lanes(omask, zero());
 
-        // Handle middle bits
-        let hi = _mm_sub_epi16(_mm_setzero_si128(), omask);
-        let omask = _mm_adds_epu16(n64.rsp.accumulator.accm, hi);
-        n64.rsp.accumulator.accm = _mm_add_epi16(n64.rsp.accumulator.accm, hi);
-        let omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accm, omask);
-        let omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
+    let hi = sub_wrapping(zero(), omask);
+    let omask = add_saturating_unsigned(n64.rsp.accumulator.accm, hi);
+    n64.rsp.accumulator.accm = add_wrapping(n64.rsp.accumulator.accm, hi);
+    let omask = equal_lanes(n64.rsp.accumulator.accm, omask);
+    let omask = equal_lanes(omask, zero());
 
-        // Handle high bits and shifts
-        n64.rsp.accumulator.acch = _mm_sub_epi16(n64.rsp.accumulator.acch, omask);
-        let nhi = _mm_srai_epi16(n64.rsp.accumulator.acch, 15);
-        let nmd = _mm_srai_epi16(n64.rsp.accumulator.accm, 15);
+    n64.rsp.accumulator.acch = sub_wrapping(n64.rsp.accumulator.acch, omask);
+    let nhi = shift_right_signed(n64.rsp.accumulator.acch, 15);
+    let nmd = shift_right_signed(n64.rsp.accumulator.accm, 15);
 
-        // Calculate masks for final blend
-        let shi = _mm_cmpeq_epi16(nhi, n64.rsp.accumulator.acch);
-        let smd = _mm_cmpeq_epi16(nhi, nmd);
-        let cmask = _mm_and_si128(smd, shi);
-        let cval = _mm_cmpeq_epi16(nhi, _mm_setzero_si128());
+    let shi = equal_lanes(nhi, n64.rsp.accumulator.acch);
+    let smd = equal_lanes(nhi, nmd);
+    let cmask = bit_and(smd, shi);
+    let cval = equal_lanes(nhi, zero());
 
-        // Store final result
-        let result = _mm_blendv_epi8(cval, n64.rsp.accumulator.accl, cmask);
-        set_vd_simd(n64, opcode, result);
-    }
+    let result = blend_bytes(cval, n64.rsp.accumulator.accl, cmask);
+    set_vd_reg(n64, opcode, result);
 }
 
 fn vmadm(n64: &mut N64, opcode: u32) {
-    unsafe {
-        // Get source vectors
-        let vs = get_vs_simd(n64, opcode);
-        let vte = vte(n64, vt(opcode), ve(opcode) as usize);
+    let vs = vs_reg(n64, opcode);
+    let vte = vte(n64, vt(opcode), ve(opcode) as usize);
 
-        // Multiply step
-        let lo = _mm_mullo_epi16(vs, vte);
-        let hi = _mm_mulhi_epu16(vs, vte);
-        let sign = _mm_srai_epi16(vs, 15);
-        let vta = _mm_and_si128(vte, sign);
-        let hi = _mm_sub_epi16(hi, vta);
+    let lo = mul_low(vs, vte);
+    let hi = mul_high_unsigned(vs, vte);
+    let sign = shift_right_signed(vs, 15);
+    let vta = bit_and(vte, sign);
+    let hi = sub_wrapping(hi, vta);
 
-        // Accumulate low bits
-        let mut omask = _mm_adds_epu16(n64.rsp.accumulator.accl, lo);
-        n64.rsp.accumulator.accl = _mm_add_epi16(n64.rsp.accumulator.accl, lo);
-        omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accl, omask);
-        omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
+    let mut omask = add_saturating_unsigned(n64.rsp.accumulator.accl, lo);
+    n64.rsp.accumulator.accl = add_wrapping(n64.rsp.accumulator.accl, lo);
+    omask = equal_lanes(n64.rsp.accumulator.accl, omask);
+    omask = equal_lanes(omask, zero());
 
-        // Handle middle bits
-        let hi = _mm_sub_epi16(hi, omask);
-        let omask = _mm_adds_epu16(n64.rsp.accumulator.accm, hi);
-        n64.rsp.accumulator.accm = _mm_add_epi16(n64.rsp.accumulator.accm, hi);
-        let omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accm, omask);
-        let omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
+    let hi = sub_wrapping(hi, omask);
+    let omask = add_saturating_unsigned(n64.rsp.accumulator.accm, hi);
+    n64.rsp.accumulator.accm = add_wrapping(n64.rsp.accumulator.accm, hi);
+    let omask = equal_lanes(n64.rsp.accumulator.accm, omask);
+    let omask = equal_lanes(omask, zero());
 
-        // Handle high bits
-        let hi = _mm_srai_epi16(hi, 15);
-        n64.rsp.accumulator.acch = _mm_add_epi16(n64.rsp.accumulator.acch, hi);
-        n64.rsp.accumulator.acch = _mm_sub_epi16(n64.rsp.accumulator.acch, omask);
+    let hi = shift_right_signed(hi, 15);
+    n64.rsp.accumulator.acch = add_wrapping(n64.rsp.accumulator.acch, hi);
+    n64.rsp.accumulator.acch = sub_wrapping(n64.rsp.accumulator.acch, omask);
 
-        // Pack result
-        let lo = _mm_unpacklo_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        let hi = _mm_unpackhi_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        let result = _mm_packs_epi32(lo, hi);
+    let lo = interleave_low(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
+    let hi = interleave_high(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
+    let result = pack_signed_lanes(lo, hi);
 
-        set_vd_simd(n64, opcode, result);
-    }
+    set_vd_reg(n64, opcode, result);
 }
 
-#[macro_export]
-macro_rules! vpr_as_m128i {
-    ($n64:expr, $idx:expr) => {
-        unsafe {
-            std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                $n64.rsp.registers.vpr[$idx as usize],
-            )
-        }
-    };
+#[inline(always)]
+fn vector_at(n64: &N64, index: u32) -> Vector {
+    vector_from_bits(n64.rsp().registers.vpr[index as usize])
 }
 
-macro_rules! m128i_as_vpr {
-    ($val:expr) => {
-        std::mem::transmute::<std::arch::x86_64::__m128i, u128>($val)
-    };
-}
+fn handle_accumulator(acc: Vector, value: Vector) -> (Vector, Vector) {
+    let sum = add_saturating_unsigned(acc, value);
+    let result = add_wrapping(acc, value);
+    let omask = equal_lanes(equal_lanes(result, sum), zero());
 
-fn handle_accumulator(acc: __m128i, value: __m128i) -> (__m128i, __m128i) {
-    unsafe {
-        let sum = _mm_adds_epu16(acc, value);
-        let result = _mm_add_epi16(acc, value);
-        let omask = _mm_cmpeq_epi16(_mm_cmpeq_epi16(result, sum), _mm_setzero_si128());
-        (result, omask)
-    }
+    (result, omask)
 }
 
 fn vmadn(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
 
-        // Multiply and sign handling
-        let lo = _mm_mullo_epi16(vs, vte);
-        let sign = _mm_srai_epi16(vte, 15);
-        let mut hi = _mm_sub_epi16(_mm_mulhi_epu16(vs, vte), _mm_and_si128(vs, sign));
+    {
+        let vs = vs_reg(n64, opcode);
 
-        // Accumulator handling
+        let lo = mul_low(vs, vte);
+        let sign = shift_right_signed(vte, 15);
+        let mut hi = sub_wrapping(mul_high_unsigned(vs, vte), bit_and(vs, sign));
+
         let (accl, omask1) = handle_accumulator(n64.rsp.accumulator.accl, lo);
-        hi = _mm_sub_epi16(hi, omask1);
+        hi = sub_wrapping(hi, omask1);
         let (accm, omask2) = handle_accumulator(n64.rsp.accumulator.accm, hi);
 
-        // Update accumulators
         n64.rsp.accumulator.accl = accl;
         n64.rsp.accumulator.accm = accm;
-        n64.rsp.accumulator.acch = _mm_sub_epi16(
-            _mm_add_epi16(n64.rsp.accumulator.acch, _mm_srai_epi16(hi, 15)),
+        n64.rsp.accumulator.acch = sub_wrapping(
+            add_wrapping(n64.rsp.accumulator.acch, shift_right_signed(hi, 15)),
             omask2,
         );
 
-        // Final result calculation
-        let nhi = _mm_srai_epi16(n64.rsp.accumulator.acch, 15);
-        let cmask = _mm_and_si128(
-            _mm_cmpeq_epi16(nhi, _mm_srai_epi16(accm, 15)),
-            _mm_cmpeq_epi16(nhi, n64.rsp.accumulator.acch),
+        let nhi = shift_right_signed(n64.rsp.accumulator.acch, 15);
+        let cmask = bit_and(
+            equal_lanes(nhi, shift_right_signed(accm, 15)),
+            equal_lanes(nhi, n64.rsp.accumulator.acch),
         );
 
-        set_vd_register(
+        set_vd_reg(
             n64,
             opcode,
-            _mm_blendv_epi8(_mm_cmpeq_epi16(nhi, _mm_setzero_si128()), accl, cmask),
+            blend_bytes(equal_lanes(nhi, zero()), accl, cmask),
         );
     }
 }
@@ -2044,488 +1093,393 @@ fn vmadn(n64: &mut N64, opcode: u32) {
 fn vmadh(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
     let (mut lo, mut hi, mut omask);
-    unsafe {
-        lo = _mm_mullo_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        hi = _mm_mulhi_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        omask = _mm_adds_epu16(n64.rsp.accumulator.accm, lo);
-        n64.rsp.accumulator.accm = _mm_add_epi16(n64.rsp.accumulator.accm, lo);
-        omask = _mm_cmpeq_epi16(n64.rsp.accumulator.accm, omask);
-        omask = _mm_cmpeq_epi16(omask, _mm_setzero_si128());
-        hi = _mm_sub_epi16(hi, omask);
-        n64.rsp.accumulator.acch = _mm_add_epi16(n64.rsp.accumulator.acch, hi);
-        lo = _mm_unpacklo_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        hi = _mm_unpackhi_epi16(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
-        n64.rsp.registers.vpr[vd(opcode) as usize] = m128i_as_vpr!(_mm_packs_epi32(lo, hi));
+
+    {
+        lo = mul_low(vs_reg(n64, opcode), vte);
+        hi = mul_high_signed(vs_reg(n64, opcode), vte);
+        omask = add_saturating_unsigned(n64.rsp.accumulator.accm, lo);
+        n64.rsp.accumulator.accm = add_wrapping(n64.rsp.accumulator.accm, lo);
+        omask = equal_lanes(n64.rsp.accumulator.accm, omask);
+        omask = equal_lanes(omask, zero());
+        hi = sub_wrapping(hi, omask);
+        n64.rsp.accumulator.acch = add_wrapping(n64.rsp.accumulator.acch, hi);
+        lo = interleave_low(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
+        hi = interleave_high(n64.rsp.accumulator.accm, n64.rsp.accumulator.acch);
+        n64.rsp.registers.vpr[vd(opcode) as usize] = vector_to_bits(pack_signed_lanes(lo, hi));
     }
 }
 
 fn vadd(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
     let (sum, mut min, max);
-    unsafe {
-        sum = _mm_add_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        n64.rsp.accumulator.accl = _mm_sub_epi16(sum, n64.rsp.vector_control.vcol);
-        min = _mm_min_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        max = _mm_max_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        min = _mm_subs_epi16(min, n64.rsp.vector_control.vcol);
-        n64.rsp.registers.vpr[vd(opcode) as usize] = m128i_as_vpr!(_mm_adds_epi16(min, max));
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
+
+    {
+        sum = add_wrapping(vs_reg(n64, opcode), vte);
+        n64.rsp.accumulator.accl = sub_wrapping(sum, n64.rsp.vector_control.vcol);
+        min = min_signed(vs_reg(n64, opcode), vte);
+        max = max_signed(vs_reg(n64, opcode), vte);
+        min = sub_saturating_signed(min, n64.rsp.vector_control.vcol);
+        n64.rsp.registers.vpr[vd(opcode) as usize] =
+            vector_to_bits(add_saturating_signed(min, max));
+        n64.rsp.vector_control.vcol = zero();
+        n64.rsp.vector_control.vcoh = zero();
     }
 }
 
-/// Vector subtract with saturation and overflow handling
 #[inline]
 fn vsub(n64: &mut N64, opcode: u32) {
     let dest = vd(opcode) as usize;
     let vector_t = vte(n64, vt(opcode), ve(opcode) as usize);
-    let vector_s = vpr_as_m128i!(n64, vs(opcode));
+    let vector_s = vs_reg(n64, opcode);
 
-    unsafe {
-        // Calculate differences
-        let udiff = _mm_sub_epi16(vector_t, n64.rsp.vector_control.vcol);
-        let sdiff = _mm_subs_epi16(vector_t, n64.rsp.vector_control.vcol);
+    {
+        let udiff = sub_wrapping(vector_t, n64.rsp.vector_control.vcol);
+        let sdiff = sub_saturating_signed(vector_t, n64.rsp.vector_control.vcol);
 
-        // Update accumulator and detect overflow
-        n64.rsp.accumulator.accl = _mm_sub_epi16(vector_s, udiff);
-        let overflow = _mm_cmpgt_epi16(sdiff, udiff);
+        n64.rsp.accumulator.accl = sub_wrapping(vector_s, udiff);
+        let overflow = greater_signed(sdiff, udiff);
 
-        // Store result with overflow correction
-        n64.rsp.registers.vpr[dest] = m128i_as_vpr!(_mm_subs_epi16(vector_s, sdiff));
+        n64.rsp.registers.vpr[dest] = vector_to_bits(sub_saturating_signed(vector_s, sdiff));
         n64.rsp.registers.vpr[dest] =
-            m128i_as_vpr!(_mm_adds_epi16(vpr_as_m128i!(n64, dest), overflow));
+            vector_to_bits(add_saturating_signed(vector_at(n64, dest as u32), overflow));
 
-        // Clear carry flags
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
+        n64.rsp.vector_control.vcol = zero();
+        n64.rsp.vector_control.vcoh = zero();
     }
 }
 
 fn vzero(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        n64.rsp.accumulator.accl = _mm_add_epi16(vpr_as_m128i!(n64, vs(opcode)), vte);
-        n64.rsp.registers.vpr[vd(opcode) as usize] = m128i_as_vpr!(_mm_xor_si128(
-            vpr_as_m128i!(n64, vd(opcode)),
-            vpr_as_m128i!(n64, vd(opcode))
+
+    {
+        n64.rsp.accumulator.accl = add_wrapping(vs_reg(n64, opcode), vte);
+        n64.rsp.registers.vpr[vd(opcode) as usize] = vector_to_bits(bit_xor(
+            vector_at(n64, vd(opcode)),
+            vector_at(n64, vd(opcode)),
         ));
-    }
-}
-
-// Helper functions
-fn get_vs_register(n64: &N64, opcode: u32) -> __m128i {
-    unsafe { std::mem::transmute::<u128, __m128i>(n64.rsp.registers.vpr[vs(opcode) as usize]) }
-}
-
-fn set_vd_register(n64: &mut N64, opcode: u32, value: __m128i) {
-    unsafe {
-        n64.rsp.registers.vpr[vd(opcode) as usize] = std::mem::transmute::<__m128i, u128>(value);
     }
 }
 
 fn vabs(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let vs0 = _mm_cmpeq_epi16(vs, _mm_setzero_si128());
-        let slt = _mm_srai_epi16(vs, 15);
 
-        let mut result = _mm_andnot_si128(vs0, vte);
-        result = _mm_xor_si128(result, slt);
+    {
+        let vs = vs_reg(n64, opcode);
+        let vs0 = equal_lanes(vs, zero());
+        let slt = shift_right_signed(vs, 15);
 
-        n64.rsp.accumulator.accl = _mm_sub_epi16(result, slt);
-        set_vd_register(n64, opcode, _mm_subs_epi16(result, slt));
+        let mut result = and_not(vs0, vte);
+        result = bit_xor(result, slt);
+
+        n64.rsp.accumulator.accl = sub_wrapping(result, slt);
+        set_vd_reg(n64, opcode, sub_saturating_signed(result, slt));
     }
 }
 
 fn vaddc(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let sum = _mm_adds_epu16(vs, vte);
-        n64.rsp.accumulator.accl = _mm_add_epi16(vs, vte);
 
-        n64.rsp.vector_control.vcol = _mm_cmpeq_epi16(sum, n64.rsp.accumulator.accl);
-        n64.rsp.vector_control.vcol =
-            _mm_cmpeq_epi16(n64.rsp.vector_control.vcol, _mm_setzero_si128());
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
+    {
+        let vs = vs_reg(n64, opcode);
+        let sum = add_saturating_unsigned(vs, vte);
+        n64.rsp.accumulator.accl = add_wrapping(vs, vte);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcol = equal_lanes(sum, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcol = equal_lanes(n64.rsp.vector_control.vcol, zero());
+        n64.rsp.vector_control.vcoh = zero();
+
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vsubc(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let udiff = _mm_subs_epu16(vs, vte);
-        let equal = _mm_cmpeq_epi16(vs, vte);
-        let diff0 = _mm_cmpeq_epi16(udiff, _mm_setzero_si128());
 
-        n64.rsp.vector_control.vcoh = _mm_cmpeq_epi16(equal, _mm_setzero_si128());
-        n64.rsp.vector_control.vcol = _mm_andnot_si128(equal, diff0);
-        n64.rsp.accumulator.accl = _mm_sub_epi16(vs, vte);
+    {
+        let vs = vs_reg(n64, opcode);
+        let udiff = sub_saturating_unsigned(vs, vte);
+        let equal = equal_lanes(vs, vte);
+        let diff0 = equal_lanes(udiff, zero());
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcoh = equal_lanes(equal, zero());
+        n64.rsp.vector_control.vcol = and_not(equal, diff0);
+        n64.rsp.accumulator.accl = sub_wrapping(vs, vte);
+
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
-fn transmute_acc(acc: __m128i) -> u128 {
-    unsafe { std::mem::transmute::<__m128i, u128>(acc) }
+fn accumulator_bits(acc: Vector) -> u128 {
+    vector_to_bits(acc)
 }
 
 fn vsar(n64: &mut N64, opcode: u32) {
+    let rsp = n64.rsp_mut();
     let value = match ve(opcode) {
-        0x8 => transmute_acc(n64.rsp.accumulator.acch),
-        0x9 => transmute_acc(n64.rsp.accumulator.accm),
-        0xa => transmute_acc(n64.rsp.accumulator.accl),
+        0x8 => accumulator_bits(rsp.accumulator.acch),
+        0x9 => accumulator_bits(rsp.accumulator.accm),
+        0xa => accumulator_bits(rsp.accumulator.accl),
         _ => 0,
     };
-    n64.rsp.registers.vpr[vd(opcode) as usize] = value;
+
+    rsp.registers.vpr[vd(opcode) as usize] = value;
 }
 
 fn vlt(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let eq = _mm_and_si128(
-            _mm_and_si128(n64.rsp.vector_control.vcoh, _mm_cmpeq_epi16(vs, vte)),
+
+    {
+        let vs = vs_reg(n64, opcode);
+        let eq = bit_and(
+            bit_and(n64.rsp.vector_control.vcoh, equal_lanes(vs, vte)),
             n64.rsp.vector_control.vcol,
         );
-        n64.rsp.vector_control.vccl = _mm_or_si128(_mm_cmplt_epi16(vs, vte), eq);
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vte, vs, n64.rsp.vector_control.vccl);
+        n64.rsp.vector_control.vccl = bit_or(less_signed(vs, vte), eq);
+        n64.rsp.accumulator.accl = blend_bytes(vte, vs, n64.rsp.vector_control.vccl);
 
-        // Clear condition codes
-        n64.rsp.vector_control.vcch = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
+        n64.rsp.vector_control.vcch = zero();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn veq(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let eq = _mm_cmpeq_epi16(vs, vte);
-        n64.rsp.vector_control.vccl = _mm_andnot_si128(n64.rsp.vector_control.vcoh, eq);
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vte, vs, n64.rsp.vector_control.vccl);
 
-        // Clear condition codes
-        n64.rsp.vector_control.vcch = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
+    {
+        let vs = vs_reg(n64, opcode);
+        let eq = equal_lanes(vs, vte);
+        n64.rsp.vector_control.vccl = and_not(n64.rsp.vector_control.vcoh, eq);
+        n64.rsp.accumulator.accl = blend_bytes(vte, vs, n64.rsp.vector_control.vccl);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcch = zero();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
+
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vne(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let eq = _mm_cmpeq_epi16(vs, vte);
-        let ne = _mm_cmpeq_epi16(eq, _mm_setzero_si128());
 
-        n64.rsp.vector_control.vccl =
-            _mm_or_si128(_mm_and_si128(n64.rsp.vector_control.vcoh, eq), ne);
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vte, vs, n64.rsp.vector_control.vccl);
+    {
+        let vs = vs_reg(n64, opcode);
+        let eq = equal_lanes(vs, vte);
+        let ne = equal_lanes(eq, zero());
 
-        // Clear condition codes
-        n64.rsp.vector_control.vcch = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
+        n64.rsp.vector_control.vccl = bit_or(bit_and(n64.rsp.vector_control.vcoh, eq), ne);
+        n64.rsp.accumulator.accl = blend_bytes(vte, vs, n64.rsp.vector_control.vccl);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcch = zero();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
+
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vge(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let eq = _mm_cmpeq_epi16(vs, vte);
-        let gt = _mm_cmpgt_epi16(vs, vte);
-        let es = _mm_and_si128(n64.rsp.vector_control.vcoh, n64.rsp.vector_control.vcol);
 
-        n64.rsp.vector_control.vccl = _mm_or_si128(gt, _mm_andnot_si128(es, eq));
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vte, vs, n64.rsp.vector_control.vccl);
+    {
+        let vs = vs_reg(n64, opcode);
+        let eq = equal_lanes(vs, vte);
+        let gt = greater_signed(vs, vte);
+        let es = bit_and(n64.rsp.vector_control.vcoh, n64.rsp.vector_control.vcol);
 
-        // Clear condition codes
-        n64.rsp.vector_control.vcch = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
+        n64.rsp.vector_control.vccl = bit_or(gt, and_not(es, eq));
+        n64.rsp.accumulator.accl = blend_bytes(vte, vs, n64.rsp.vector_control.vccl);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcch = zero();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
+
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vcl(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let nvt = _mm_sub_epi16(
-            _mm_xor_si128(vte, n64.rsp.vector_control.vcol),
+
+    {
+        let vs = vs_reg(n64, opcode);
+        let nvt = sub_wrapping(
+            bit_xor(vte, n64.rsp.vector_control.vcol),
             n64.rsp.vector_control.vcol,
         );
 
-        let diff = _mm_sub_epi16(vs, nvt);
-        let ncarry = _mm_cmpeq_epi16(_mm_adds_epu16(vs, vte), diff);
-        let nvce = _mm_cmpeq_epi16(n64.rsp.vector_control.vce, _mm_setzero_si128());
-        let diff0 = _mm_cmpeq_epi16(diff, _mm_setzero_si128());
+        let diff = sub_wrapping(vs, nvt);
+        let ncarry = equal_lanes(add_saturating_unsigned(vs, vte), diff);
+        let nvce = equal_lanes(n64.rsp.vector_control.vce, zero());
+        let diff0 = equal_lanes(diff, zero());
 
-        let lec1 = _mm_and_si128(nvce, _mm_and_si128(diff0, ncarry));
-        let lec2 = _mm_and_si128(n64.rsp.vector_control.vce, _mm_or_si128(diff0, ncarry));
-        let leeq = _mm_or_si128(lec1, lec2);
+        let lec1 = bit_and(nvce, bit_and(diff0, ncarry));
+        let lec2 = bit_and(n64.rsp.vector_control.vce, bit_or(diff0, ncarry));
+        let leeq = bit_or(lec1, lec2);
 
-        let geeq = _mm_cmpeq_epi16(_mm_subs_epu16(vte, vs), _mm_setzero_si128());
-        let le = _mm_blendv_epi8(
+        let geeq = equal_lanes(sub_saturating_unsigned(vte, vs), zero());
+        let le = blend_bytes(
             n64.rsp.vector_control.vccl,
             leeq,
-            _mm_andnot_si128(n64.rsp.vector_control.vcoh, n64.rsp.vector_control.vcol),
+            and_not(n64.rsp.vector_control.vcoh, n64.rsp.vector_control.vcol),
         );
 
-        let ge = _mm_blendv_epi8(
+        let ge = blend_bytes(
             geeq,
             n64.rsp.vector_control.vcch,
-            _mm_or_si128(n64.rsp.vector_control.vcol, n64.rsp.vector_control.vcoh),
+            bit_or(n64.rsp.vector_control.vcol, n64.rsp.vector_control.vcoh),
         );
 
-        let mask = _mm_blendv_epi8(ge, le, n64.rsp.vector_control.vcol);
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vs, nvt, mask);
+        let mask = blend_bytes(ge, le, n64.rsp.vector_control.vcol);
+        n64.rsp.accumulator.accl = blend_bytes(vs, nvt, mask);
 
-        // Update condition codes
         n64.rsp.vector_control.vcch = ge;
         n64.rsp.vector_control.vccl = le;
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
-        n64.rsp.vector_control.vce = _mm_setzero_si128();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
+        n64.rsp.vector_control.vce = zero();
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vch(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
 
-        n64.rsp.vector_control.vcol = _mm_cmplt_epi16(_mm_xor_si128(vs, vte), _mm_setzero_si128());
-        let nvt = _mm_sub_epi16(
-            _mm_xor_si128(vte, n64.rsp.vector_control.vcol),
+    {
+        let vs = vs_reg(n64, opcode);
+
+        n64.rsp.vector_control.vcol = less_signed(bit_xor(vs, vte), zero());
+        let nvt = sub_wrapping(
+            bit_xor(vte, n64.rsp.vector_control.vcol),
             n64.rsp.vector_control.vcol,
         );
-        let diff = _mm_sub_epi16(vs, nvt);
+        let diff = sub_wrapping(vs, nvt);
 
-        let diff0 = _mm_cmpeq_epi16(diff, _mm_setzero_si128());
-        let vtn = _mm_cmplt_epi16(vte, _mm_setzero_si128());
-        let dlez = _mm_cmpeq_epi16(
-            _mm_setzero_si128(),
-            _mm_cmpgt_epi16(diff, _mm_setzero_si128()),
-        );
-        let dgez = _mm_or_si128(_mm_cmpgt_epi16(diff, _mm_setzero_si128()), diff0);
+        let diff0 = equal_lanes(diff, zero());
+        let vtn = less_signed(vte, zero());
+        let dlez = equal_lanes(zero(), greater_signed(diff, zero()));
+        let dgez = bit_or(greater_signed(diff, zero()), diff0);
 
-        n64.rsp.vector_control.vcch = _mm_blendv_epi8(dgez, vtn, n64.rsp.vector_control.vcol);
-        n64.rsp.vector_control.vccl = _mm_blendv_epi8(vtn, dlez, n64.rsp.vector_control.vcol);
-        n64.rsp.vector_control.vce = _mm_and_si128(
-            _mm_cmpeq_epi16(diff, n64.rsp.vector_control.vcol),
+        n64.rsp.vector_control.vcch = blend_bytes(dgez, vtn, n64.rsp.vector_control.vcol);
+        n64.rsp.vector_control.vccl = blend_bytes(vtn, dlez, n64.rsp.vector_control.vcol);
+        n64.rsp.vector_control.vce = bit_and(
+            equal_lanes(diff, n64.rsp.vector_control.vcol),
             n64.rsp.vector_control.vcol,
         );
-        n64.rsp.vector_control.vcoh = _mm_cmpeq_epi16(
-            _mm_or_si128(diff0, n64.rsp.vector_control.vce),
-            _mm_setzero_si128(),
-        );
+        n64.rsp.vector_control.vcoh =
+            equal_lanes(bit_or(diff0, n64.rsp.vector_control.vce), zero());
 
-        let mask = _mm_blendv_epi8(
+        let mask = blend_bytes(
             n64.rsp.vector_control.vcch,
             n64.rsp.vector_control.vccl,
             n64.rsp.vector_control.vcol,
         );
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vs, nvt, mask);
+        n64.rsp.accumulator.accl = blend_bytes(vs, nvt, mask);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
     }
 }
 
 fn vcr(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        let vs = get_vs_register(n64, opcode);
-        let sign = _mm_srai_epi16(_mm_xor_si128(vs, vte), 15);
 
-        let dlez = _mm_add_epi16(_mm_and_si128(vs, sign), vte);
-        n64.rsp.vector_control.vccl = _mm_srai_epi16(dlez, 15);
+    {
+        let vs = vs_reg(n64, opcode);
+        let sign = shift_right_signed(bit_xor(vs, vte), 15);
 
-        let dgez = _mm_min_epi16(_mm_or_si128(vs, sign), vte);
-        n64.rsp.vector_control.vcch = _mm_cmpeq_epi16(dgez, vte);
+        let dlez = add_wrapping(bit_and(vs, sign), vte);
+        n64.rsp.vector_control.vccl = shift_right_signed(dlez, 15);
 
-        let nvt = _mm_xor_si128(vte, sign);
-        let mask = _mm_blendv_epi8(
+        let dgez = min_signed(bit_or(vs, sign), vte);
+        n64.rsp.vector_control.vcch = equal_lanes(dgez, vte);
+
+        let nvt = bit_xor(vte, sign);
+        let mask = blend_bytes(
             n64.rsp.vector_control.vcch,
             n64.rsp.vector_control.vccl,
             sign,
         );
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(vs, nvt, mask);
+        n64.rsp.accumulator.accl = blend_bytes(vs, nvt, mask);
 
-        set_vd_register(n64, opcode, n64.rsp.accumulator.accl);
+        set_vd_reg(n64, opcode, n64.rsp.accumulator.accl);
 
-        // Clear condition codes
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vce = _mm_setzero_si128();
+        n64.rsp.vector_control.vcol = zero();
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vce = zero();
     }
 }
 
-macro_rules! vector_op {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-            unsafe {
-                n64.rsp.accumulator.accl = $op(
-                    std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                        n64.rsp.registers.vpr[vs(opcode) as usize],
-                    ),
-                    vte,
-                );
-                n64.rsp.registers.vpr[vd(opcode) as usize] = std::mem::transmute::<
-                    std::arch::x86_64::__m128i,
-                    u128,
-                >(n64.rsp.accumulator.accl);
-            }
-        }
-    };
+#[inline]
+fn vector_binary(n64: &mut N64, opcode: u32, operation: impl FnOnce(Vector, Vector) -> Vector) {
+    let right = vte(n64, vt(opcode), ve(opcode) as usize);
+    let left = vs_reg(n64, opcode);
+    let result = operation(left, right);
+    n64.rsp_mut().accumulator.accl = result;
+    set_vd_reg(n64, opcode, result);
 }
 
-macro_rules! vector_op_with_xor {
-    ($name:ident, $op:expr) => {
-        fn $name(n64: &mut N64, opcode: u32) {
-            let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-            unsafe {
-                n64.rsp.accumulator.accl = $op(
-                    std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                        n64.rsp.registers.vpr[vs(opcode) as usize],
-                    ),
-                    vte,
-                );
-                n64.rsp.accumulator.accl =
-                    _mm_xor_si128(n64.rsp.accumulator.accl, _mm_set1_epi32(-1));
-                n64.rsp.registers.vpr[vd(opcode) as usize] = std::mem::transmute::<
-                    std::arch::x86_64::__m128i,
-                    u128,
-                >(n64.rsp.accumulator.accl);
-            }
-        }
-    };
+fn vand(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, bit_and);
 }
 
-vector_op!(vand, _mm_and_si128);
-vector_op!(vor, _mm_or_si128);
-vector_op!(vxor, _mm_xor_si128);
+fn vor(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, bit_or);
+}
 
-vector_op_with_xor!(vnand, _mm_and_si128);
-vector_op_with_xor!(vnor, _mm_or_si128);
-vector_op_with_xor!(vnxor, _mm_xor_si128);
+fn vxor(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, bit_xor);
+}
+
+fn vnand(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, |a, b| bit_xor(bit_and(a, b), splat_words(-1)));
+}
+
+fn vnor(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, |a, b| bit_xor(bit_or(a, b), splat_words(-1)));
+}
+
+fn vnxor(n64: &mut N64, opcode: u32) {
+    vector_binary(n64, opcode, |a, b| bit_xor(bit_xor(a, b), splat_words(-1)));
+}
 
 fn vmrg(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    unsafe {
-        n64.rsp.accumulator.accl = _mm_blendv_epi8(
+
+    {
+        n64.rsp.accumulator.accl = blend_bytes(
             vte,
-            std::mem::transmute::<u128, std::arch::x86_64::__m128i>(
-                n64.rsp.registers.vpr[vs(opcode) as usize],
-            ),
+            vector_from_bits(n64.rsp.registers.vpr[vs(opcode) as usize]),
             n64.rsp.vector_control.vccl,
         );
-        n64.rsp.vector_control.vcoh = _mm_setzero_si128();
-        n64.rsp.vector_control.vcol = _mm_setzero_si128();
-        n64.rsp.registers.vpr[vd(opcode) as usize] =
-            std::mem::transmute::<std::arch::x86_64::__m128i, u128>(n64.rsp.accumulator.accl);
+        n64.rsp.vector_control.vcoh = zero();
+        n64.rsp.vector_control.vcol = zero();
+        n64.rsp.registers.vpr[vd(opcode) as usize] = vector_to_bits(n64.rsp.accumulator.accl);
     }
 }
 
-macro_rules! vrcp_common {
-    ($n64:expr, $opcode:expr, $input:expr) => {{
-        let mut result;
-        let vte = vte($n64, vt($opcode), ve($opcode) as usize);
-        let input = $input;
-        let mask = input >> 31;
-        let mut data = input ^ mask;
-        if input > -32768 {
-            data -= mask
-        }
-        if data == 0 {
-            result = 0x7fffffff
-        } else if input == -32768 {
-            result = 0xffff0000
-        } else {
-            let shift = count_leading_zeros(data as u32);
-            let index = (((data as u64) << shift) & 0x7fc00000) >> 22;
-            result = $n64.rsp.vector.reciprocals[index as usize] as u32;
-            result = (0x10000 | result) << 14;
-            result = (result >> (31 - shift)) ^ mask as u32
-        }
-        $n64.rsp.division.divdp = false;
-        $n64.rsp.division.divout = (result >> 16) as i16;
-        $n64.rsp.accumulator.accl = vte;
-        modify_vpr_element(
-            &mut $n64.rsp.registers.vpr[vd($opcode) as usize],
-            result as u16,
-            de($opcode) as u8,
-        );
-    }};
-}
-
 fn vrcp(n64: &mut N64, opcode: u32) {
-    vrcp_common!(n64, opcode, {
-        get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8) as i16 as i32
-    });
+    division::divide(n64.rsp_mut(), opcode, DivisionKind::Reciprocal, false);
 }
 
 fn vrcpl(n64: &mut N64, opcode: u32) {
-    vrcp_common!(n64, opcode, {
-        if n64.rsp.division.divdp {
-            (n64.rsp.division.divin as i32) << 16
-                | get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8)
-                    as u16 as i32
-        } else {
-            get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8) as i16
-                as i32
-        }
-    });
-}
-
-macro_rules! vrcp_vrsq_common {
-    ($n64:expr, $opcode:expr) => {{
-        let vte = vte($n64, vt($opcode), ve($opcode) as usize);
-        $n64.rsp.accumulator.accl = vte;
-        $n64.rsp.division.divdp = true;
-
-        $n64.rsp.division.divin = get_vpr_element(
-            $n64.rsp.registers.vpr[vt($opcode) as usize],
-            ve($opcode) as u8,
-        ) as i16;
-        modify_vpr_element(
-            &mut $n64.rsp.registers.vpr[vd($opcode) as usize],
-            $n64.rsp.division.divout as u16,
-            de($opcode) as u8,
-        );
-    }};
+    division::divide(n64.rsp_mut(), opcode, DivisionKind::Reciprocal, true);
 }
 
 fn vrcph(n64: &mut N64, opcode: u32) {
-    vrcp_vrsq_common!(n64, opcode)
+    division::latch_high(n64.rsp_mut(), opcode);
 }
+
 fn vrsqh(n64: &mut N64, opcode: u32) {
-    vrcp_vrsq_common!(n64, opcode)
+    division::latch_high(n64.rsp_mut(), opcode);
 }
 
 fn vmov(n64: &mut N64, opcode: u32) {
     let vte = vte(n64, vt(opcode), ve(opcode) as usize);
-    let value = get_vpr_element(
-        unsafe { std::mem::transmute::<std::arch::x86_64::__m128i, u128>(vte) },
-        de(opcode) as u8,
-    );
+    let value = get_vpr_element(vector_to_bits(vte), de(opcode) as u8);
     modify_vpr_element(
         &mut n64.rsp.registers.vpr[vd(opcode) as usize],
         value,
@@ -2534,83 +1488,18 @@ fn vmov(n64: &mut N64, opcode: u32) {
     n64.rsp.accumulator.accl = vte;
 }
 
-macro_rules! vrsq_common {
-    ($n64:expr, $opcode:expr, $input:expr) => {{
-        let mut result;
-        let vte = vte($n64, vt($opcode), ve($opcode) as usize);
-        let input = $input;
-        let mask = input >> 31;
-        let mut data = input ^ mask;
-        if input > -32768 {
-            data -= mask
-        }
-        if data == 0 {
-            result = 0x7fffffff
-        } else if input == -32768 {
-            result = 0xffff0000
-        } else {
-            let shift = count_leading_zeros(data as u32);
-            let index = (((data as u64) << shift) & 0x7fc00000) as u32 >> 22;
-            result = $n64.rsp.vector.inverse_square_roots[((index & 0x1fe) | (shift & 1)) as usize]
-                as u32;
-            result = (0x10000 | result) << 14;
-            result = (result >> ((31 - shift) >> 1)) ^ mask as u32
-        }
-        $n64.rsp.division.divdp = false;
-        $n64.rsp.division.divout = (result >> 16) as i16;
-        $n64.rsp.accumulator.accl = vte;
-        modify_vpr_element(
-            &mut $n64.rsp.registers.vpr[vd($opcode) as usize],
-            result as u16,
-            de($opcode) as u8,
-        );
-    }};
-}
-
 fn vrsq(n64: &mut N64, opcode: u32) {
-    vrsq_common!(
-        n64,
-        opcode,
-        get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8) as i16 as i32
-    );
+    division::divide(n64.rsp_mut(), opcode, DivisionKind::SquareRoot, false);
 }
 
 fn vrsql(n64: &mut N64, opcode: u32) {
-    vrsq_common!(
-        n64,
-        opcode,
-        if n64.rsp.division.divdp {
-            (n64.rsp.division.divin as i32) << 16
-                | get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8)
-                    as u16 as i32
-        } else {
-            get_vpr_element(n64.rsp.registers.vpr[vt(opcode) as usize], ve(opcode) as u8) as i16
-                as i32
-        }
-    );
+    division::divide(n64.rsp_mut(), opcode, DivisionKind::SquareRoot, true);
 }
 
 fn vnop(_device: &mut N64, _opcode: u32) {}
 
 fn execute_vec(n64: &mut N64, opcode: u32) {
     n64.rsp.instruction.instruction_type = rsp::InstructionType::Vu;
+
     n64.rsp.instruction_tables.vector_table[(opcode & 0x3F) as usize](n64, opcode)
 }
-
-mod scalar;
-use scalar::{j, jal, lui, sb, sh, sw, jr, jalr, break_, slt, sltu};
-
-mod registers;
-pub use registers::{RegisterState, SpReg, SpReg2, SpStatus, SpStatusWrite};
-
-mod vector_transfer;
-use vector_transfer::{
-    lqv, read_memory, lfv, lwv, ltv, sbv, calculate_address, write_memory, srv, shv, sfv, swv, stv,
-};
-
-mod instruction;
-pub use instruction::{InstructionState, InstructionTables, Instructions, InstructionType, OpcodeType};
-use instruction::{InstrFn};
-
-mod processor;
-pub use processor::{ProcessorState, CpuState, BranchState};

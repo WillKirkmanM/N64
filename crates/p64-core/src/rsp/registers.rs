@@ -1,13 +1,31 @@
-use super::*;
+use super::{BranchState, CpuState, ADDR_MASK};
 
-/// Reality Signal Processor (RSP) - Nintendo 64's vector processing unit
-///
-/// General register state
+const PC_MASK: u32 = 0xFFC;
+const JUMP_REGION_MASK: u32 = 0xF000_0000;
+const JUMP_TARGET_MASK: u32 = 0x03FF_FFFF;
+const JUMP_TARGET_SHIFT: u32 = 2;
+use crate::builder::registers::Registers;
+
 pub struct RegisterState {
     pub regs: Registers,
     pub regs2: Registers,
     pub gpr: [u32; 32],
     pub vpr: [u128; 32],
+}
+
+impl Default for RegisterState {
+    fn default() -> Self {
+        Self {
+            regs: Registers::new()
+                .with_size(SpReg::RegsCount as usize)
+                .build(),
+            regs2: Registers::new()
+                .with_size(SpReg2::Regs2Count as usize)
+                .build(),
+            gpr: [0; 32],
+            vpr: [0; 32],
+        }
+    }
 }
 
 #[repr(u32)]
@@ -26,7 +44,6 @@ pub enum SpReg {
 #[repr(u32)]
 pub enum SpReg2 {
     Pc = 0,
-    // Ibist = 1,
     Regs2Count = 2,
 }
 
@@ -36,7 +53,6 @@ pub enum SpStatus {
     Broke = 1 << 1,
     DmaBusy = 1 << 2,
     DmaFull = 1 << 3,
-    // IoFull = 1 << 4,
     Sstep = 1 << 5,
     IntrBreak = 1 << 6,
     Sig0 = 1 << 7,
@@ -78,17 +94,73 @@ pub enum SpStatusWrite {
     SetSig7 = 1 << 24,
 }
 
-impl Default for RegisterState {
-    fn default() -> Self {
-        Self {
-            regs: Registers::new()
-                .with_size(SpReg::RegsCount as usize)
-                .build(),
-            regs2: Registers::new()
-                .with_size(SpReg2::Regs2Count as usize)
-                .build(),
-            gpr: [0; 32],
-            vpr: [0; 32],
+impl RegisterState {
+    pub fn scalar_address(&self, opcode: u32) -> u32 {
+        self.gpr[super::rs(opcode) as usize].wrapping_add(super::se16(super::imm(opcode) as i16))
+    }
+
+    pub fn pc(&self) -> u32 {
+        self.regs2[SpReg2::Pc as usize]
+    }
+
+    pub(super) fn jump_target(&self, opcode: u32) -> u32 {
+        ((self.pc() + 4) & JUMP_REGION_MASK) | ((opcode & JUMP_TARGET_MASK) << JUMP_TARGET_SHIFT)
+    }
+
+    pub fn relative_target(&self, opcode: u32) -> u32 {
+        self.pc()
+            .wrapping_add(super::se16(super::imm(opcode) as i16) << 2)
+            .wrapping_add(4)
+    }
+}
+
+impl RegisterState {
+    pub fn vector_address(&self, opcode: u32, scale: u32) -> u32 {
+        self.gpr[super::rs(opcode) as usize].wrapping_add(super::sign_extend_7bit_offset(
+            super::voffset(opcode),
+            scale,
+        )) & ADDR_MASK
+    }
+}
+
+impl RegisterState {
+    pub(super) fn advance_pc(&mut self, branch: &mut BranchState) -> bool {
+        let pc = &mut self.regs2[SpReg2::Pc as usize];
+        let redirected = branch.state == CpuState::DelaySlotTaken;
+
+        match branch.state {
+            CpuState::Step => *pc += 4,
+            CpuState::Take => {
+                *pc += 4;
+                branch.state = CpuState::DelaySlotTaken;
+            }
+            CpuState::NotTaken => {
+                *pc += 4;
+                branch.state = CpuState::DelaySlotNotTaken;
+            }
+            CpuState::DelaySlotTaken => {
+                *pc = branch.pc;
+                branch.state = CpuState::Step;
+            }
+            CpuState::DelaySlotNotTaken => {
+                *pc += 4;
+                branch.state = CpuState::Step;
+            }
+        }
+        *pc &= PC_MASK;
+        redirected
+    }
+}
+
+impl RegisterState {
+    /// Paired SP commands cancel when both clear and set are asserted.
+    pub(super) fn apply_status_command(&mut self, command: u32, clear: u32, set: u32, flag: u32) {
+        let status = &mut self.regs[SpReg::Status as usize];
+
+        match (command & clear != 0, command & set != 0) {
+            (true, false) => *status &= !flag,
+            (false, true) => *status |= flag,
+            _ => {}
         }
     }
 }
