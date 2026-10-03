@@ -48,3 +48,18 @@ fn horizontal_and_vertical_blanking_retain_latest_fetch() {
     assert_eq!(output.burst(0), None);
     assert_eq!(output.burst(439), None);
 }
+
+#[test]
+fn uneven_burst_spacing_never_fetches_beyond_source_span() {
+    let mut regs = registers();
+    regs[9] = (10 << 16) | 91;
+    regs[12] = 0x400;
+    let output = scanout(&regs);
+    assert_eq!(output.source_bytes, 162);
+    for clock in 440..800 {
+        let (start, address, _) = output.burst(clock).expect("active scanline");
+        assert!(start <= clock);
+        assert!(matches!(address, 0x100000 | 0x100040 | 0x100080));
+    }
+    assert_eq!(output.burst(799).map(|burst| burst.1), Some(0x100080));
+}
