@@ -155,6 +155,31 @@ fn third_dma_submission_replaces_only_the_pending_command() {
     assert_eq!(n64.rsp.registers.regs[SpReg::DmaBusy as usize], 0);
 }
 
+#[test]
+fn nonyielding_rsp_loop_returns_to_the_cpu_scheduler() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    write_mem(&mut n64, 0x1000, 2 << 26, u32::MAX);
+    write_mem(&mut n64, 0x1004, 0, u32::MAX);
+    write_regs(&mut n64, 16, SpStatusWrite::ClrHalt as u32, u32::MAX);
+    assert_eq!(n64.rsp.processor.cycle_counter, EXECUTION_SLICE_CYCLES);
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::SP as usize].count,
+        EXECUTION_SLICE_CYCLES * 3 / 2
+    );
+    assert!(!n64.rsp.processor.running);
+    assert!(!n64.rsp.processor.halted);
+    assert_eq!(n64.rsp.registers.pc(), 4);
+    finish_scheduled_slice(&mut n64);
+    assert_eq!(n64.rsp.processor.cycle_counter, EXECUTION_SLICE_CYCLES + 1);
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::SP as usize].count,
+        (EXECUTION_SLICE_CYCLES * 2 + 1) * 3 / 2
+    );
+    write_regs(&mut n64, 16, SpStatusWrite::SetHalt as u32, u32::MAX);
+    assert!(!n64.cpu.scheduler.events[EventType::SP as usize].enabled);
+}
+
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
