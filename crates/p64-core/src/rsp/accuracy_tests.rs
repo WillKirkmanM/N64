@@ -88,6 +88,32 @@ fn single_step_preserves_taken_and_untaken_branch_delay_slots() {
     }
 }
 
+#[test]
+fn single_step_vector_issue_has_a_nonzero_deadline_without_break_interrupt() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    write_mem(
+        &mut n64,
+        0x1000,
+        (0x12 << 26) | (0x10 << 21) | 0x37,
+        u32::MAX,
+    );
+    write_regs(
+        &mut n64,
+        16,
+        SpStatusWrite::SetSstep as u32
+            | SpStatusWrite::SetIntrBreak as u32
+            | SpStatusWrite::ClrHalt as u32,
+        u32::MAX,
+    );
+    assert_eq!(n64.rsp.registers.pc(), 4);
+    assert_eq!(n64.rsp.processor.cycle_counter, 1);
+    assert!(!n64.rsp.processor.pipeline_full);
+    finish_scheduled_slice(&mut n64);
+    assert!(!n64.rsp.processor.broken);
+    assert_eq!(n64.mips.regs[2] & MI_INTR_SP, 0);
+}
+
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
