@@ -244,3 +244,39 @@ fn dma_wraps_sp_bank_but_does_not_mirror_unpopulated_rdram_tail() {
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
+
+#[test]
+fn vector_loads_ignore_high_address_bits_and_wrap_dmem() {
+    let mut n64 = N64::new();
+
+    for address in 0..0x1000 {
+        n64.rsp.memory.mem[address] = address as u8;
+    }
+    // LDV crosses the end of DMEM, but never reads from IMEM.
+    n64.rsp.memory.mem[0x1000..0x2000].fill(0xaa);
+    n64.rsp.registers.gpr[1] = u32::MAX;
+    ldv(&mut n64, vector_opcode(0));
+
+    assert_eq!(
+        n64.rsp.registers.vpr[2].to_be_bytes(),
+        [0xff, 0, 1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0,]
+    );
+
+    let loads: [InstrFn; 11] = [lbv, lsv, llv, ldv, lqv, lrv, lpv, luv, lhv, lfv, ltv];
+
+    for instruction in loads {
+        for element in 0..16 {
+            for low_address in 0xff0..=0xfff {
+                n64.rsp.registers.vpr.fill(u128::MAX);
+                n64.rsp.registers.gpr[1] = low_address;
+                instruction(&mut n64, vector_opcode(element));
+                let expected = n64.rsp.registers.vpr;
+                n64.rsp.registers.vpr.fill(u128::MAX);
+                n64.rsp.registers.gpr[1] = low_address | 0xffff_f000;
+                instruction(&mut n64, vector_opcode(element));
+
+                assert_eq!(n64.rsp.registers.vpr, expected);
+            }
+        }
+    }
+}
