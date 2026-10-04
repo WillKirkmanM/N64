@@ -427,3 +427,15 @@ fn cop0_selectors_ignore_bit_four_for_all_reads_and_writes() {
         }
     }
 }
+
+#[test]
+fn cop0_conflicting_halt_commands_preserve_running_state() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    n64.rsp.registers.regs[SpReg::Status as usize] = 0;
+    n64.rsp.registers.gpr[1] = 3;
+    mtc0(&mut n64, 0x4081_2000);
+    assert_eq!(n64.rsp.registers.regs[SpReg::Status as usize], 0);
+    assert!(!n64.rsp.processor.halted);
+    assert!(n64.rsp.processor.sync_point);
+}
