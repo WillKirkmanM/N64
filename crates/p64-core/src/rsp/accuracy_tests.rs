@@ -114,6 +114,47 @@ fn single_step_vector_issue_has_a_nonzero_deadline_without_break_interrupt() {
     assert_eq!(n64.mips.regs[2] & MI_INTR_SP, 0);
 }
 
+#[test]
+fn third_dma_submission_replaces_only_the_pending_command() {
+    let mut n64 = N64::new();
+    n64.rdram.mem[0..32].fill(0x5a);
+    write_regs(&mut n64, 0, 0, u32::MAX);
+    write_regs(&mut n64, 4, 0, u32::MAX);
+    write_regs(&mut n64, 8, 7, u32::MAX);
+    let current = n64.rsp.memory.fifo[0];
+    let deadline = n64.cpu.scheduler.events[EventType::SPDma as usize].count;
+
+    write_regs(&mut n64, 0, 0x20, u32::MAX);
+    write_regs(&mut n64, 4, 0x20, u32::MAX);
+    write_regs(&mut n64, 8, 15, u32::MAX);
+    write_regs(&mut n64, 0, 0x40, u32::MAX);
+    write_regs(&mut n64, 4, 0x80, u32::MAX);
+    write_regs(&mut n64, 12, 23, u32::MAX);
+
+    assert_eq!(n64.rsp.memory.fifo[0].memaddr, current.memaddr);
+    assert_eq!(n64.rsp.memory.fifo[0].dramaddr, current.dramaddr);
+    assert_eq!(n64.rsp.memory.fifo[0].length, current.length);
+    assert!(n64.rsp.memory.fifo[0].dir == current.dir);
+    let pending = n64.rsp.memory.fifo[1];
+    assert!(pending.dir == DmaDir::Read);
+    assert_eq!(
+        (pending.memaddr, pending.dramaddr, pending.length),
+        (0x40, 0x80, 23)
+    );
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaFull as usize], 1);
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::SPDma as usize].count,
+        deadline
+    );
+    n64.rsp.memory.mem[0x40..0x58].fill(0xa5);
+    fifo_pop(&mut n64);
+    assert_eq!(&n64.rdram.mem[0x80..0x98], &[0xa5; 24]);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaFull as usize], 0);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaBusy as usize], 1);
+    fifo_pop(&mut n64);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaBusy as usize], 0);
+}
+
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
