@@ -180,6 +180,16 @@ fn nonyielding_rsp_loop_returns_to_the_cpu_scheduler() {
     assert!(!n64.cpu.scheduler.events[EventType::SP as usize].enabled);
 }
 
+#[test]
+fn cpu_sp_subword_stores_replace_the_whole_shifted_word() {
+    let mut n64 = N64::new();
+    for (value, mask) in [(0x7800_0000, 0xff00_0000), (0x1234_5678, 0xffff)] {
+        n64.rsp.memory.mem[0..4].fill(0xaa);
+        write_mem(&mut n64, 0, value, mask);
+        assert_eq!(&n64.rsp.memory.mem[0..4], &value.to_be_bytes());
+    }
+}
+
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
