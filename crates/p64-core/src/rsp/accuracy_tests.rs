@@ -389,3 +389,41 @@ fn ipl3_semaphore_countdown_preserves_delay_slots_across_mmio_yields() {
     assert_eq!(n64.rsp.registers.pc(), 20);
     assert!(n64.rsp.processor.broken);
 }
+
+#[test]
+fn cop0_selectors_ignore_bit_four_for_all_reads_and_writes() {
+    for selector in 0..32 {
+        for write in [false, true] {
+            let mut machines = [N64::new(), N64::new()];
+            for machine in &mut machines {
+                start_rsp(machine);
+                machine.set_cp0_register(MmuRegister::Count, 150);
+                machine.rsp.processor.running = true;
+                machine.rsp.registers.regs[SpReg::DramAddr as usize] = 0x1234;
+                machine.rdp.registers.regs_dpc[rdp::DpcReg::PipeBusy as usize] = 0x4321;
+                machine.rdp.registers.regs_dpc[rdp::DpcReg::Status as usize] = 2;
+            }
+            for (machine, encoding) in machines.iter_mut().zip([selector % 16, selector]) {
+                let opcode =
+                    (16 << 26) | ((u32::from(write) * 4) << 21) | (1 << 16) | (encoding << 11);
+                let handler = machine.rsp.instruction_tables.decode(opcode);
+                handler(machine, opcode);
+                assert_eq!(machine.cp0_register(MmuRegister::Cause), 0);
+                assert_eq!(machine.cp0_register(MmuRegister::Count), 150);
+                assert!(machine.cpu.branch_state.state == crate::cpu::State::Step);
+            }
+            let [base, alias] = &machines;
+            assert_eq!(base.rsp.registers.gpr, alias.rsp.registers.gpr);
+            assert_eq!(base.rsp.registers.regs.regs, alias.rsp.registers.regs.regs);
+            assert_eq!(
+                base.rdp.registers.regs_dpc.regs,
+                alias.rdp.registers.regs_dpc.regs
+            );
+            assert_eq!(base.rsp.processor.halted, alias.rsp.processor.halted);
+            assert_eq!(
+                base.rsp.processor.sync_point,
+                alias.rsp.processor.sync_point
+            );
+        }
+    }
+}
