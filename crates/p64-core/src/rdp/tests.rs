@@ -46,3 +46,24 @@ fn clearing_rdp_counters_clears_their_busy_flags() {
         0
     );
 }
+
+#[test]
+fn full_sync_event_clears_busy_before_asserting_dp_interrupt() {
+    let mut n64 = N64::new();
+    n64.rdp.registers.regs_dpc[DpcReg::Status as usize] = (DpcStatus::START_GCLK
+        | DpcStatus::PIPE_BUSY
+        | DpcStatus::CMD_BUSY
+        | DpcStatus::CBUF_READY
+        | DpcStatus::XBUS_DMEM_DMA)
+        .bits();
+    rdp_interrupt_event(&mut n64);
+
+    assert_eq!(
+        n64.rdp.registers.regs_dpc[DpcReg::Status as usize],
+        (DpcStatus::CBUF_READY | DpcStatus::XBUS_DMEM_DMA).bits()
+    );
+    assert_ne!(
+        mips::read_regs(&mut n64, 8, memory::AccessSize::Word) & mips::MI_INTR_DP,
+        0
+    );
+}
