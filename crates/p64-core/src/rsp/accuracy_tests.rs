@@ -190,6 +190,57 @@ fn cpu_sp_subword_stores_replace_the_whole_shifted_word() {
     }
 }
 
+#[test]
+fn dma_wraps_sp_bank_but_does_not_mirror_unpopulated_rdram_tail() {
+    let mut n64 = N64::new();
+    let bytes: [u8; 16] = core::array::from_fn(|i| (i * 13 + 7) as u8);
+    let end = n64.rdram.mem.len() - 8;
+
+    for offset in [0usize, 0x1000] {
+        n64.rdram.mem[0..8].fill(0x5a);
+        n64.rsp.memory.mem[offset + 0xff8..offset + 0x1000].copy_from_slice(&bytes[..8]);
+        n64.rsp.memory.mem[offset..offset + 8].copy_from_slice(&bytes[8..]);
+        do_dma(
+            &mut n64,
+            RspDma {
+                dir: DmaDir::Read,
+                length: 15,
+                memaddr: (offset + 0xff8) as u32,
+                dramaddr: end as u32,
+            },
+        );
+        let canonical: [u8; 16] = core::array::from_fn(|i| bytes[(i & !3) + (3 - (i & 3))]);
+
+        assert_eq!(&n64.rdram.mem[end..end + 8], &canonical[..8]);
+        assert_eq!(&n64.rdram.mem[0..8], &[0x5a; 8]);
+        n64.rsp.memory.mem[offset + 0xff8..offset + 0x1000].fill(0);
+        n64.rsp.memory.mem[offset..offset + 8].fill(0);
+        do_dma(
+            &mut n64,
+            RspDma {
+                dir: DmaDir::Write,
+                length: 15,
+                memaddr: (offset + 0xff8) as u32,
+                dramaddr: end as u32,
+            },
+        );
+
+        assert_eq!(
+            &n64.rsp.memory.mem[offset + 0xff8..offset + 0x1000],
+            &bytes[..8]
+        );
+        assert_eq!(&n64.rsp.memory.mem[offset..offset + 8], &[0; 8]);
+
+        if offset != 0 {
+            assert_eq!(
+                n64.rsp.instruction.instructions[0xff8 / 4].opcode,
+                u32::from_be_bytes(bytes[..4].try_into().unwrap())
+            );
+            assert_eq!(n64.rsp.instruction.instructions[0].opcode, 0);
+        }
+    }
+}
+
 fn vector_opcode(element: u8) -> u32 {
     (1 << 21) | (2 << 16) | ((element as u32) << 7)
 }
