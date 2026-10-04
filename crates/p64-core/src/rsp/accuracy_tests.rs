@@ -280,3 +280,35 @@ fn vector_loads_ignore_high_address_bits_and_wrap_dmem() {
         }
     }
 }
+
+#[test]
+fn cop0_read_stalls_its_immediate_consumer_until_the_third_cycle() {
+    for (selector, expected) in [(1, 0x03d8), (4, 0), (7, 0), (11, 0x1234)] {
+        let mut n64 = N64::new();
+        start_rsp(&mut n64);
+        n64.set_cp0_register(MmuRegister::Count, 100);
+        n64.rsp.registers.regs[SpReg::DramAddr as usize] = 0x03d8;
+        n64.rdp.registers.regs_dpc[rdp::DpcReg::Status as usize] = 0x1234;
+        for (address, opcode) in [
+            (0, 0x4001_0000 | (selector << 11)),
+            (4, 0x2422_0001),
+            (8, 13),
+        ] {
+            write_mem(&mut n64, 0x1000 + address, opcode, u32::MAX);
+        }
+
+        write_regs(&mut n64, 16, SpStatusWrite::ClrHalt as u32, u32::MAX);
+        assert_eq!(n64.rsp.processor.cycle_counter, 1, "selector={selector}");
+        assert_eq!(n64.rsp.registers.pc(), 4);
+        assert_eq!(n64.rsp.registers.gpr[1], expected);
+        assert_eq!(n64.rsp.registers.gpr[2], 0);
+        assert_eq!(n64.cp0_register(MmuRegister::Count), 100);
+        assert_eq!(n64.cpu.scheduler.events[EventType::SP as usize].count, 101);
+
+        finish_scheduled_slice(&mut n64);
+        assert_eq!(n64.rsp.registers.gpr[2], expected + 1);
+        assert_eq!(n64.rsp.registers.pc(), 12);
+        assert_eq!(n64.rsp.processor.cycle_counter, 4);
+        assert!(n64.rsp.processor.broken);
+    }
+}
