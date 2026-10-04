@@ -1503,3 +1503,6 @@ fn execute_vec(n64: &mut N64, opcode: u32) {
 
     n64.rsp.instruction_tables.vector_table[(opcode & 0x3F) as usize](n64, opcode)
 }
+
+#[cfg(test)]
+mod accuracy_tests;
