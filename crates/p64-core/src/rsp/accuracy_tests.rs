@@ -347,3 +347,45 @@ fn cop0_yields_preserve_fractional_cpu_cycles_across_one_hundred_reads() {
     }
     assert_eq!(previous_deadline - 100, 450);
 }
+
+#[test]
+fn ipl3_semaphore_countdown_preserves_delay_slots_across_mmio_yields() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    n64.set_cp0_register(MmuRegister::Count, 100);
+    n64.rsp.registers.gpr[5] = 0x0020_0000;
+    n64.rsp.registers.regs[SpReg::Semaphore as usize] = 1;
+    for (address, opcode) in [
+        (0, 0x04a0_0003),
+        (4, 0x4003_3800),
+        (8, 0x1460_fffd),
+        (12, 0x20a5_ffff),
+        (16, 13),
+    ] {
+        write_mem(&mut n64, 0x1000 + address, opcode, u32::MAX);
+    }
+
+    write_regs(&mut n64, 16, SpStatusWrite::ClrHalt as u32, u32::MAX);
+    assert_eq!(n64.rsp.registers.pc(), 8);
+    assert_eq!(n64.rsp.processor.cycle_counter, 2);
+    assert_eq!(n64.cpu.scheduler.events[EventType::SP as usize].count, 103);
+
+    for iteration in 1..=100 {
+        finish_scheduled_slice(&mut n64);
+        assert_eq!(n64.rsp.registers.pc(), 8);
+        assert_eq!(n64.rsp.processor.cycle_counter, 7);
+        assert_eq!(n64.rsp.registers.gpr[5], 0x0020_0000 - iteration);
+        assert_eq!(
+            n64.cpu.scheduler.events[EventType::SP as usize].count,
+            103 + u64::from(iteration) * 21 / 2
+        );
+    }
+
+    write_regs(&mut n64, 28, 0, u32::MAX);
+    finish_scheduled_slice(&mut n64);
+    assert_eq!(n64.rsp.registers.gpr[3], 0);
+    finish_scheduled_slice(&mut n64);
+    assert_eq!(n64.rsp.registers.gpr[5], 0x0020_0000 - 102);
+    assert_eq!(n64.rsp.registers.pc(), 20);
+    assert!(n64.rsp.processor.broken);
+}
