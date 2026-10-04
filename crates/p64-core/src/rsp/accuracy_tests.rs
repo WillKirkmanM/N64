@@ -312,3 +312,38 @@ fn cop0_read_stalls_its_immediate_consumer_until_the_third_cycle() {
         assert!(n64.rsp.processor.broken);
     }
 }
+
+#[test]
+fn cop0_yields_preserve_fractional_cpu_cycles_across_one_hundred_reads() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    n64.set_cp0_register(MmuRegister::Count, 100);
+    for instruction in 0..100 {
+        for (offset, opcode) in [(0, 0x2402_0000), (4, 0), (8, 0x4001_2000)] {
+            write_mem(
+                &mut n64,
+                0x1000 + instruction * 12 + offset,
+                opcode,
+                u32::MAX,
+            );
+        }
+    }
+    write_regs(&mut n64, 16, SpStatusWrite::ClrHalt as u32, u32::MAX);
+
+    let mut previous_deadline = 100;
+    for retired in 1..=100 {
+        let deadline = n64.cpu.scheduler.events[EventType::SP as usize].count;
+        assert_eq!(n64.rsp.processor.cycle_counter, 3);
+        assert_eq!(n64.rsp.registers.pc(), retired * 12);
+        assert_eq!(deadline, 100 + u64::from(retired) * 9 / 2);
+        assert_eq!(
+            deadline - previous_deadline,
+            if retired % 2 == 1 { 4 } else { 5 }
+        );
+        previous_deadline = deadline;
+        if retired < 100 {
+            finish_scheduled_slice(&mut n64);
+        }
+    }
+    assert_eq!(previous_deadline - 100, 450);
+}
