@@ -439,3 +439,29 @@ fn cop0_conflicting_halt_commands_preserve_running_state() {
     assert!(!n64.rsp.processor.halted);
     assert!(n64.rsp.processor.sync_point);
 }
+
+#[test]
+fn back_to_back_cop0_reads_keep_each_gpr_result_pending_across_yields() {
+    for destination in [1, 2] {
+        let mut n64 = N64::new();
+        start_rsp(&mut n64);
+        n64.rsp.registers.regs[SpReg::DramAddr as usize] = 0x03d8;
+        for (address, opcode) in [
+            (0, 0x4001_0800),
+            (4, 0x4000_0800 | (destination << 16)),
+            (8, 0x2423_0001),
+            (12, 13),
+        ] {
+            write_mem(&mut n64, 0x1000 + address, opcode, u32::MAX);
+        }
+        write_regs(&mut n64, 16, SpStatusWrite::ClrHalt as u32, u32::MAX);
+        finish_scheduled_slice(&mut n64);
+        assert_eq!(n64.rsp.registers.pc(), 8);
+        finish_scheduled_slice(&mut n64);
+        assert_eq!(n64.rsp.registers.gpr[3], 0x03d9);
+        assert_eq!(
+            n64.rsp.processor.cycle_counter,
+            if destination == 1 { 4 } else { 3 }
+        );
+    }
+}
