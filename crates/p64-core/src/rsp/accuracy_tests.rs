@@ -465,3 +465,20 @@ fn back_to_back_cop0_reads_keep_each_gpr_result_pending_across_yields() {
         );
     }
 }
+
+#[test]
+fn taken_branch_adds_one_bubble_and_vector_delay_slots_issue_alone() {
+    for taken in [false, true] {
+        for delay in [0, 0x4a00_0037] {
+            let mut n64 = N64::new();
+            start_rsp(&mut n64);
+            n64.rsp.registers.gpr[1] = u32::from(!taken);
+            for (address, opcode) in [(0, 0x1020_0003), (4, delay), (8, 13), (16, 13)] {
+                write_mem(&mut n64, 0x1000 + address, opcode, u32::MAX);
+            }
+            run(&mut n64);
+            assert_eq!(n64.rsp.processor.cycle_counter, if taken { 4 } else { 3 });
+            assert_eq!(n64.rsp.registers.pc(), if taken { 20 } else { 12 });
+        }
+    }
+}
