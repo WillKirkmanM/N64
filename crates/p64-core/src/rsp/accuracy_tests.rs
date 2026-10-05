@@ -507,3 +507,17 @@ fn late_rsp_dma_uses_slice_time_and_chains_the_queued_completion_deadline() {
     );
     assert_eq!(n64.cp0_register(MmuRegister::Count), 1000);
 }
+
+#[test]
+fn slice_cpu_time_preserves_fractional_phase_without_consuming_it() {
+    let mut n64 = N64::new();
+    n64.rsp.processor.cpu_slice_start = 100;
+    n64.rsp.processor.cycle_counter = 3;
+    assert_eq!(n64.rsp.slice_cpu_time(), 104);
+    assert_eq!(n64.rsp.slice_cpu_time(), 104);
+    assert_eq!(n64.rsp.finish_execution(), 4);
+    n64.rsp.processor.cpu_slice_start = 200;
+    n64.rsp.processor.cycle_counter = 3;
+    assert_eq!(n64.rsp.slice_cpu_time(), 205);
+    assert_eq!(n64.rsp.finish_execution(), 5);
+}
