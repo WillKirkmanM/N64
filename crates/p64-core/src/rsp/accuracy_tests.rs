@@ -482,3 +482,28 @@ fn taken_branch_adds_one_bubble_and_vector_delay_slots_issue_alone() {
         }
     }
 }
+
+#[test]
+fn late_rsp_dma_uses_slice_time_and_chains_the_queued_completion_deadline() {
+    let mut n64 = N64::new();
+    n64.set_cp0_register(MmuRegister::Count, 900);
+    n64.rsp.processor.running = true;
+    n64.rsp.processor.cpu_slice_start = 150;
+    n64.rsp.processor.cycle_counter = 3;
+    n64.rsp.processor.cpu_cycle_remainder = 1;
+    write_regs(&mut n64, 8, 0, u32::MAX);
+    let completion = n64.cpu.scheduler.events[EventType::SPDma as usize];
+    assert_eq!(completion.count, 197);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 900);
+    write_regs(&mut n64, 0, 16, u32::MAX);
+    write_regs(&mut n64, 4, 16, u32::MAX);
+    write_regs(&mut n64, 8, 0, u32::MAX);
+    n64.set_cp0_register(MmuRegister::Count, 1000);
+    n64.cpu_mut().disable_event(EventType::SPDma);
+    (completion.handler)(&mut n64);
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::SPDma as usize].count,
+        239
+    );
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 1000);
+}
