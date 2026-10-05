@@ -613,3 +613,34 @@ fn vector_stores_ignore_high_address_bits() {
         }
     }
 }
+
+#[test]
+fn scalar_load_widths_preserve_sign_extension_and_wrapped_dmem_bytes() {
+    let mut n64 = N64::new();
+    type LoadCase = (fn(&mut N64, u32), u32);
+    let cases: [LoadCase; 6] = [
+        (lb, 0xffffff80),
+        (lbu, 0x80),
+        (lh, 0xffff80ff),
+        (lhu, 0x80ff),
+        (lw, 0x80ff7f01),
+        (lwu, 0x80ff7f01),
+    ];
+    let opcode = (1 << 21) | (2 << 16) | 2;
+
+    for base in [0u32, 0xffd, 0xffe, 0xfff, u32::MAX - 3, u32::MAX] {
+        let address = base.wrapping_add(2);
+
+        for (index, byte) in [0x80, 0xff, 0x7f, 0x01].into_iter().enumerate() {
+            n64.rsp.memory.mem[address.wrapping_add(index as u32) as usize & ADDR_MASK as usize] =
+                byte;
+        }
+        n64.rsp.registers.gpr[1] = base;
+
+        for (load, expected) in cases {
+            load(&mut n64, opcode);
+
+            assert_eq!(n64.rsp.registers.gpr[2], expected, "base={base:08x}");
+        }
+    }
+}
