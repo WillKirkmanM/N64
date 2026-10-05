@@ -130,3 +130,68 @@ fn scalar_immediate_slots_sign_extend_only_the_documented_operands() {
         }
     }
 }
+
+#[test]
+fn undocumented_vector_slots_preserve_flags_and_use_hardware_zero_or_noop_results() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let snapshot = cpu_snapshot(&n64);
+    let left = [0, 1, 0x10, 0xffff, 0x7fff, 0x8000, 0xfffe, 0xffff];
+    let right = [0, 2, 0x7fff, 0x7fff, 0, 0xffff, 0xfffe, 1];
+    for function in [
+        0x12, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1e, 0x1f, 0x2e, 0x2f, 0x37, 0x38, 0x39,
+        0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+    ] {
+        for (element, lanes) in ELEMENT_LANES.iter().enumerate() {
+            for destination in [1, 2, 3] {
+                n64.rsp_mut().registers.vpr[1] = pack(left);
+                n64.rsp_mut().registers.vpr[2] = pack(right);
+                n64.rsp_mut().registers.vpr[3] = u128::MAX;
+                n64.rsp_mut().accumulator.accl = vector_from_bits(0x1234);
+                n64.rsp_mut().accumulator.accm = vector_from_bits(0x5678);
+                n64.rsp_mut().accumulator.acch = vector_from_bits(0x9abc);
+                let flags = [0xaaaa, 0xbbbb, 0xcccc, 0xdddd, 0xeeee];
+                n64.rsp_mut().vector_control.vcol = vector_from_bits(flags[0]);
+                n64.rsp_mut().vector_control.vcoh = vector_from_bits(flags[1]);
+                n64.rsp_mut().vector_control.vccl = vector_from_bits(flags[2]);
+                n64.rsp_mut().vector_control.vcch = vector_from_bits(flags[3]);
+                n64.rsp_mut().vector_control.vce = vector_from_bits(flags[4]);
+                let before = n64.rsp().registers.vpr;
+                let opcode = (18 << 26)
+                    | ((16 + element as u32) << 21)
+                    | (2 << 16)
+                    | (1 << 11)
+                    | (destination << 6)
+                    | function;
+                let handler = n64.rsp().instruction_tables.decode(opcode);
+                handler(&mut n64, opcode);
+                let noop = function == 0x37 || function == 0x3f;
+                let mut expected = before;
+                if !noop {
+                    expected[destination as usize] = 0;
+                }
+                assert_eq!(n64.rsp().registers.vpr, expected, "opcode={opcode:08x}");
+                let low = if noop {
+                    0x1234
+                } else {
+                    pack(std::array::from_fn(|lane| {
+                        left[lane].wrapping_add(right[lanes[lane]])
+                    }))
+                };
+                assert_eq!(vector_to_bits(n64.rsp().accumulator.accl), low);
+                assert_eq!(vector_to_bits(n64.rsp().accumulator.accm), 0x5678);
+                assert_eq!(vector_to_bits(n64.rsp().accumulator.acch), 0x9abc);
+                let actual = [
+                    n64.rsp().vector_control.vcol,
+                    n64.rsp().vector_control.vcoh,
+                    n64.rsp().vector_control.vccl,
+                    n64.rsp().vector_control.vcch,
+                    n64.rsp().vector_control.vce,
+                ]
+                .map(vector_to_bits);
+                assert_eq!(actual, flags);
+                assert_eq!(cpu_snapshot(&n64), snapshot);
+            }
+        }
+    }
+}
