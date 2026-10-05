@@ -521,3 +521,16 @@ fn slice_cpu_time_preserves_fractional_phase_without_consuming_it() {
     assert_eq!(n64.rsp.slice_cpu_time(), 205);
     assert_eq!(n64.rsp.finish_execution(), 5);
 }
+
+#[test]
+fn cop0_clock_uses_the_rsp_slice_origin_when_cpu_dispatch_is_late() {
+    let mut n64 = N64::new();
+    n64.set_cp0_register(MmuRegister::Count, 900);
+    n64.rsp.processor.running = true;
+    n64.rsp.processor.cpu_slice_start = 150;
+    n64.rsp.processor.cycle_counter = 7;
+    mfc0(&mut n64, 0x4001_6000);
+    assert_eq!(n64.rsp.registers.gpr[1], 107);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 900);
+    assert!(!n64.rsp.processor.sync_point);
+}
