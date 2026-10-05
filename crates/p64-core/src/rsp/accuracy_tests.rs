@@ -585,3 +585,31 @@ fn scalar_vector_pairing_uses_the_previous_instruction_type() {
     assert!(!n64.rsp.processor.pipeline_full);
     assert!(n64.rsp.instruction.last_instruction_type == InstructionType::Su);
 }
+
+#[test]
+fn vector_stores_ignore_high_address_bits() {
+    let mut n64 = N64::new();
+
+    for register in 0..32 {
+        n64.rsp.registers.vpr[register] =
+            u128::from_be_bytes(std::array::from_fn(|byte| (register * 16 + byte) as u8));
+    }
+
+    let stores: [InstrFn; 12] = [sbv, ssv, slv, sdv, sqv, srv, spv, suv, shv, sfv, swv, stv];
+
+    for instruction in stores {
+        for element in 0..16 {
+            for low_address in 0xff0..=0xfff {
+                n64.rsp.memory.mem[0..0x1000].fill(0xaa);
+                n64.rsp.registers.gpr[1] = low_address;
+                instruction(&mut n64, vector_opcode(element));
+                let expected = n64.rsp.memory.mem[0..0x1000].to_vec();
+                n64.rsp.memory.mem[0..0x1000].fill(0xaa);
+                n64.rsp.registers.gpr[1] = low_address | 0xffff_f000;
+                instruction(&mut n64, vector_opcode(element));
+
+                assert_eq!(&n64.rsp.memory.mem[0..0x1000], expected.as_slice());
+            }
+        }
+    }
+}
