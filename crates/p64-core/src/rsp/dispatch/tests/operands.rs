@@ -90,3 +90,43 @@ fn scalar_alu_slots_match_wide_arithmetic_with_register_aliases() {
         }
     }
 }
+
+#[test]
+fn scalar_immediate_slots_sign_extend_only_the_documented_operands() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let snapshot = cpu_snapshot(&n64);
+    for primary in 8..=15 {
+        for destination in [1, 2, 31] {
+            for source in WORD_EDGES {
+                for immediate in [0u32, 1, 0x7fff, 0x8000, 0xffff] {
+                    n64.rsp_mut().registers.gpr[1] = source;
+                    let signed = if immediate >= 0x8000 {
+                        i64::from(immediate) - 0x1_0000
+                    } else {
+                        i64::from(immediate)
+                    };
+                    let expected = match primary {
+                        8 | 9 => (i64::from(source) + signed) as u32,
+                        10 => u32::from(signed_word(source) < signed),
+                        11 => u32::from(source < signed as u32),
+                        12 => source & immediate,
+                        13 => source | immediate,
+                        14 => source ^ immediate,
+                        15 => immediate * 0x1_0000,
+                        _ => unreachable!(),
+                    };
+                    let opcode = (primary << 26) | (1 << 21) | (destination << 16) | immediate;
+                    let handler = n64.rsp().instruction_tables.decode(opcode);
+                    handler(&mut n64, opcode);
+                    assert_eq!(
+                        n64.rsp().registers.gpr[destination as usize],
+                        expected,
+                        "opcode={opcode:08x}"
+                    );
+                    assert_eq!(cpu_snapshot(&n64), snapshot);
+                }
+            }
+        }
+    }
+}
