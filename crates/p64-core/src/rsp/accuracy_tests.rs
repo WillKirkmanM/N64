@@ -534,3 +534,19 @@ fn cop0_clock_uses_the_rsp_slice_origin_when_cpu_dispatch_is_late() {
     assert_eq!(n64.cp0_register(MmuRegister::Count), 900);
     assert!(!n64.rsp.processor.sync_point);
 }
+
+#[test]
+fn cop0_clock_immediate_consumer_stalls_without_forcing_an_external_yield() {
+    let mut n64 = N64::new();
+    start_rsp(&mut n64);
+    n64.set_cp0_register(MmuRegister::Count, 150);
+    for (address, opcode) in [(0, 0x4001_6000), (4, 0x2422_0001), (8, 13)] {
+        write_mem(&mut n64, 0x1000 + address, opcode, u32::MAX);
+    }
+    run(&mut n64);
+    assert_eq!(n64.rsp.registers.gpr[1], 100);
+    assert_eq!(n64.rsp.registers.gpr[2], 101);
+    assert_eq!(n64.rsp.processor.cycle_counter, 5);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 150);
+    assert!(!n64.rsp.processor.sync_point);
+}
