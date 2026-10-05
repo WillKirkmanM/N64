@@ -550,3 +550,38 @@ fn cop0_clock_immediate_consumer_stalls_without_forcing_an_external_yield() {
     assert_eq!(n64.cp0_register(MmuRegister::Count), 150);
     assert!(!n64.rsp.processor.sync_point);
 }
+
+#[test]
+fn scalar_vector_pairing_uses_the_previous_instruction_type() {
+    let mut n64 = N64::new();
+    n64.rsp.instruction.instructions[..4].copy_from_slice(&[
+        Instructions {
+            func: sll,
+            opcode: 0,
+        },
+        Instructions {
+            func: sll,
+            opcode: 0,
+        },
+        Instructions {
+            func: sll,
+            opcode: 0,
+        },
+        Instructions {
+            func: break_,
+            opcode: 0,
+        },
+    ]);
+
+    assert_eq!(run(&mut n64), 6);
+    assert_eq!(n64.rsp.processor.cycle_counter, 4);
+
+    // A vector instruction followed by a scalar can share a cycle.
+    n64.rsp.registers.regs2[SpReg2::Pc as usize] = 0;
+    n64.rsp.instruction.instructions[1].func = execute_vec;
+
+    assert_eq!(run(&mut n64), 4);
+    assert_eq!(n64.rsp.processor.cycle_counter, 3);
+    assert!(!n64.rsp.processor.pipeline_full);
+    assert!(n64.rsp.instruction.last_instruction_type == InstructionType::Su);
+}
