@@ -195,3 +195,56 @@ fn undocumented_vector_slots_preserve_flags_and_use_hardware_zero_or_noop_result
         }
     }
 }
+
+#[test]
+fn every_cop2_transfer_selector_and_element_matches_wire_bytes() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let snapshot = cpu_snapshot(&n64);
+    for vector in 0..32usize {
+        for element in 0..16usize {
+            let bytes: [u8; 16] = std::array::from_fn(|index| (vector * 31 + index * 17) as u8);
+            n64.rsp_mut().registers.vpr[vector] = u128::from_be_bytes(bytes);
+            let opcode = (18 << 26) | (1 << 16) | ((vector as u32) << 11) | ((element as u32) << 7);
+            let expected =
+                i16::from_be_bytes([bytes[element], bytes[(element + 1) % 16]]) as i32 as u32;
+            let handler = n64.rsp().instruction_tables.decode(opcode);
+            handler(&mut n64, opcode);
+            assert_eq!(n64.rsp().registers.gpr[1], expected);
+            let value = 0x8765_4321;
+            n64.rsp_mut().registers.gpr[1] = value;
+            let opcode = opcode | (4 << 21);
+            let handler = n64.rsp().instruction_tables.decode(opcode);
+            handler(&mut n64, opcode);
+            let mut expected = bytes;
+            expected[element] = 0x43;
+            if element < 15 {
+                expected[element + 1] = 0x21;
+            }
+            assert_eq!(n64.rsp().registers.vpr[vector].to_be_bytes(), expected);
+            assert_eq!(cpu_snapshot(&n64), snapshot);
+        }
+    }
+    for selector in 0..32u32 {
+        for value in WORD_EDGES {
+            n64.rsp_mut().registers.gpr[1] = value;
+            let opcode = (18 << 26) | (6 << 21) | (1 << 16) | (selector << 11);
+            let handler = n64.rsp().instruction_tables.decode(opcode);
+            handler(&mut n64, opcode);
+            let opcode = (18 << 26) | (2 << 21) | (2 << 16) | (selector << 11);
+            let handler = n64.rsp().instruction_tables.decode(opcode);
+            handler(&mut n64, opcode);
+            let expected = if selector % 4 < 2 {
+                value as u16 as i16 as i32 as u32
+            } else {
+                value % 256
+            };
+            assert_eq!(
+                n64.rsp().registers.gpr[2],
+                expected,
+                "selector={selector} value={value:08x}"
+            );
+            assert_eq!(cpu_snapshot(&n64), snapshot);
+        }
+    }
+}
