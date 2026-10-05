@@ -197,3 +197,6 @@ fn vector(opcode: usize) -> InstrFn {
         _ => super::vzero,
     }
 }
+
+#[cfg(test)]
+mod tests;
