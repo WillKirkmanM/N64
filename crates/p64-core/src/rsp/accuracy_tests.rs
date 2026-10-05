@@ -644,3 +644,33 @@ fn scalar_load_widths_preserve_sign_extension_and_wrapped_dmem_bytes() {
         }
     }
 }
+
+#[test]
+fn status_commands_preserve_unrelated_bits_and_cancel_paired_writes() {
+    let mut n64 = N64::new();
+    // Raw hardware command positions: STEP, INTR_BREAK, then SIG0..SIG7.
+    for index in 0..10 {
+        let clear = 1 << (5 + index * 2);
+        let set = clear << 1;
+        let flag = 1 << (5 + index);
+
+        for initial_flag in [0, flag] {
+            for (command, expected_flag) in [
+                (0, initial_flag),
+                (clear, 0),
+                (set, flag),
+                (clear | set, initial_flag),
+            ] {
+                let unrelated = 0xFFFF_8001;
+                n64.rsp.registers.regs[SpReg::Status as usize] = unrelated | initial_flag;
+                write_regs(&mut n64, 0x0404_0010, command, 0);
+
+                assert_eq!(
+                    n64.rsp.registers.regs[SpReg::Status as usize],
+                    unrelated | expected_flag,
+                    "command {command:#x}, initial {initial_flag:#x}",
+                );
+            }
+        }
+    }
+}
