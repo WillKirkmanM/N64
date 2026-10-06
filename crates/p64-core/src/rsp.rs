@@ -1506,3 +1506,6 @@ fn execute_vec(n64: &mut N64, opcode: u32) {
 
 #[cfg(test)]
 mod accuracy_tests;
+
+#[cfg(test)]
+mod handler_tests;
