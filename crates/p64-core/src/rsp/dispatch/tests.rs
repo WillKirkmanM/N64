@@ -64,6 +64,20 @@ fn every_undefined_scalar_family_stays_isolated_from_main_cpu() {
     }
 }
 
+#[test]
+fn undefined_special_encodings_use_rsp_local_source_self_shift() {
+    let mut n64 = N64::default();
+    let tables = InstructionTables::initialized();
+    for source in [0, 1, 31, 32, 0x8000_0001, u32::MAX] {
+        n64.rsp_mut().registers.gpr[3] = source;
+        n64.rsp_mut().registers.gpr[4] = 0x5555_5555;
+        let opcode = (3 << 21) | (4 << 11) | 0x0c;
+        tables.decode(opcode)(&mut n64, opcode);
+        assert_eq!(n64.rsp().registers.gpr[4], source / (1u32 << (source % 32)));
+        assert_eq!(n64.rsp().registers.gpr[3], source);
+    }
+}
+
 mod operands;
 
 mod vector_ops;
