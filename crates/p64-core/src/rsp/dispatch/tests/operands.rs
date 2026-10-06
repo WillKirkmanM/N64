@@ -269,3 +269,72 @@ fn all_vector_function_slots_are_callable_without_mutating_main_cpu() {
         }
     }
 }
+
+#[test]
+fn scalar_branch_slots_compare_signed_words_and_wrap_relative_targets() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let cpu = cpu_snapshot(&n64);
+    for (primary, selector) in [
+        (4, 0),
+        (5, 0),
+        (6, 0),
+        (7, 0),
+        (1, 0),
+        (1, 1),
+        (1, 16),
+        (1, 17),
+    ] {
+        for left in WORD_EDGES {
+            for right in WORD_EDGES {
+                for pc in [0u32, 4, 0x7fc, 0xffc] {
+                    for immediate in [0u32, 1, 0x7fff, 0x8000, 0xffff] {
+                        n64.rsp_mut().processor.branch_state.state = CpuState::Step;
+                        n64.rsp_mut().registers.regs2[SpReg2::Pc as usize] = pc;
+                        n64.rsp_mut().registers.gpr[1] = left;
+                        n64.rsp_mut().registers.gpr[2] = right;
+                        n64.rsp_mut().registers.gpr[31] = 0x1234_5678;
+                        let target_register = if primary == 1 { selector } else { 2 };
+                        let opcode =
+                            (primary << 26) | (1 << 21) | (target_register << 16) | immediate;
+                        let taken = match (primary, selector) {
+                            (4, _) => left == right,
+                            (5, _) => left != right,
+                            (6, _) => signed_word(left) <= 0,
+                            (7, _) => signed_word(left) > 0,
+                            (1, 0 | 16) => signed_word(left) < 0,
+                            (1, 1 | 17) => signed_word(left) >= 0,
+                            _ => unreachable!(),
+                        };
+                        let handler = n64.rsp().instruction_tables.decode(opcode);
+                        handler(&mut n64, opcode);
+                        let state = if taken {
+                            CpuState::Take
+                        } else {
+                            CpuState::NotTaken
+                        };
+                        assert!(n64.rsp().processor.branch_state.state == state);
+                        if taken {
+                            let displacement = if immediate >= 0x8000 {
+                                i64::from(immediate) - 0x1_0000
+                            } else {
+                                i64::from(immediate)
+                            };
+                            assert_eq!(
+                                n64.rsp().processor.branch_state.pc,
+                                (i64::from(pc) + 4 + displacement * 4) as u32
+                            );
+                        }
+                        let link = if primary == 1 && selector >= 16 {
+                            (pc + 8) % 4096
+                        } else {
+                            0x1234_5678
+                        };
+                        assert_eq!(n64.rsp().registers.gpr[31], link);
+                        assert_eq!(cpu_snapshot(&n64), cpu);
+                    }
+                }
+            }
+        }
+    }
+}
