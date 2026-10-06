@@ -88,3 +88,7 @@ pub(super) fn latch_high(rsp: &mut Rsp, opcode: u32) {
         de(opcode) as u8,
     );
 }
+
+#[cfg(test)]
+#[path = "division/tests.rs"]
+mod tests;
