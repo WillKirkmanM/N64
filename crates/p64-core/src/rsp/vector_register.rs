@@ -30,3 +30,7 @@ pub(super) fn modify_vpr_element(register: &mut u128, value: u16, element: u8) {
 pub(super) fn get_vpr_element(register: u128, element: u8) -> u16 {
     (register >> lane_shift::<{ u16::BITS }>(element)) as u16
 }
+
+#[cfg(test)]
+#[path = "vector_register/tests.rs"]
+mod tests;
