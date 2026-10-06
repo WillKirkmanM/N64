@@ -1509,3 +1509,6 @@ mod accuracy_tests;
 
 #[cfg(test)]
 mod handler_tests;
+
+#[cfg(test)]
+mod scheduling_tests;
