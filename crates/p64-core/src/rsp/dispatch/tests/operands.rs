@@ -248,3 +248,24 @@ fn every_cop2_transfer_selector_and_element_matches_wire_bytes() {
         }
     }
 }
+
+#[test]
+fn all_vector_function_slots_are_callable_without_mutating_main_cpu() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let snapshot = cpu_snapshot(&n64);
+    for function in 0..64 {
+        for element in 0..16 {
+            n64.rsp_mut().registers.vpr[1] =
+                pack([0, 1, 0x8000, 0xffff, 0x7fff, 3, 0x1234, 0x5678]);
+            n64.rsp_mut().registers.vpr[2] =
+                pack([0xffff, 0x8000, 0, 1, 0x7fff, 0xfffe, 5, 0xabcd]);
+            let opcode =
+                (18 << 26) | ((16 + element) << 21) | (2 << 16) | (1 << 11) | (3 << 6) | function;
+            let handler = n64.rsp().instruction_tables.decode(opcode);
+            handler(&mut n64, opcode);
+            assert_eq!(cpu_snapshot(&n64), snapshot, "opcode={opcode:08x}");
+            assert!(n64.rsp().instruction.instruction_type == InstructionType::Vu);
+        }
+    }
+}
