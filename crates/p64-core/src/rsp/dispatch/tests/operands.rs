@@ -338,3 +338,61 @@ fn scalar_branch_slots_compare_signed_words_and_wrap_relative_targets() {
         }
     }
 }
+
+#[test]
+fn jump_link_and_break_slots_preserve_delay_targets_and_main_cpu_state() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let cpu = cpu_snapshot(&n64);
+    for pc in [0u32, 4, 0xff8, 0xffc] {
+        for state in [
+            CpuState::Step,
+            CpuState::DelaySlotNotTaken,
+            CpuState::DelaySlotTaken,
+        ] {
+            for opcode in [
+                (2 << 26) | 7,
+                (3 << 26) | 7,
+                (1 << 21) | 8,
+                (1 << 21) | (1 << 11) | 9,
+                (1 << 21) | (31 << 11) | 9,
+            ] {
+                n64.rsp_mut().registers.regs2[SpReg2::Pc as usize] = pc;
+                n64.rsp_mut().registers.gpr[1] = 0xffff_f00b;
+                n64.rsp_mut().registers.gpr[31] = 0x5555;
+                n64.rsp_mut().processor.branch_state.state = state;
+                n64.rsp_mut().processor.branch_state.pc = 0x3fc;
+                let handler = n64.rsp().instruction_tables.decode(opcode);
+                handler(&mut n64, opcode);
+                let taken_delay = state == CpuState::DelaySlotTaken;
+                let target = if taken_delay {
+                    0x3fc
+                } else if opcode >> 26 != 0 {
+                    28
+                } else {
+                    0xffff_f00b
+                };
+                assert_eq!(n64.rsp().processor.branch_state.pc, target);
+                let expected_state = if taken_delay { state } else { CpuState::Take };
+                assert_eq!(n64.rsp().processor.branch_state.state, expected_state);
+                let link_register = if opcode >> 26 == 3 {
+                    Some(31)
+                } else if opcode & 63 == 9 {
+                    Some((opcode >> 11) as usize % 32)
+                } else {
+                    None
+                };
+                if let Some(register) = link_register {
+                    let link = if taken_delay { 0x400 } else { (pc + 8) % 4096 };
+                    assert_eq!(n64.rsp().registers.gpr[register], link);
+                }
+                assert_eq!(cpu_snapshot(&n64), cpu);
+            }
+        }
+    }
+    n64.rsp_mut().processor.broken = false;
+    let handler = n64.rsp().instruction_tables.decode(13);
+    handler(&mut n64, 13);
+    assert!(n64.rsp().processor.broken);
+    assert_eq!(cpu_snapshot(&n64), cpu);
+}
