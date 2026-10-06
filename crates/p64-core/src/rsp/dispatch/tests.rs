@@ -12,3 +12,5 @@ fn cpu_snapshot(n64: &N64) -> [u64; 5] {
 }
 
 mod operands;
+
+mod vector_ops;
