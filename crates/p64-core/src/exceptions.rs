@@ -147,3 +147,32 @@ fn exception_general(n64: &mut N64, vector_offset: u32) {
 
     add_cycles(n64, 2);
 }
+
+fn record_fault_address(n64: &mut N64, address: u64) {
+    n64.set_cp0_register(MmuRegister::BadVAddr, address);
+    update_context_registers(n64, address);
+    masked_write_64(
+        n64.cp0_mut().register_mut(MmuRegister::EntryHi),
+        address,
+        crate::bits::replace_bits(crate::mmu::MmuMask::EntryHi as u64, 0, ENTRY_HI_ASID_MASK),
+    );
+}
+
+pub fn address_error_exception(n64: &mut N64, address: u64, access_type: AccessType) {
+    add_cycles(n64, EXCEPTION_STAGE_CYCLES);
+    record_fault_address(n64, address);
+    let cause = if access_type == AccessType::Read {
+        MmuCause::ExccodeAdEL as u64
+    } else {
+        MmuCause::ExccodeAdES as u64
+    };
+
+    set_cause_and_exception(n64, cause);
+}
+
+pub fn overflow_exception(n64: &mut N64) {
+    set_cause_and_exception(n64, MmuCause::ExccodeOv as u64)
+}
+
+const ENTRY_HI_ASID_MASK: u64 = 0xFF;
+const EXCEPTION_STAGE_CYCLES: u64 = 2;

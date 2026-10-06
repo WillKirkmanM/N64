@@ -182,3 +182,17 @@ mod segment;
 use segment::AddressSegment;
 
 pub use types::{MemoryBus, MemoryCaches, PreparedCode};
+
+pub fn reverse_endian(n64: &N64) -> bool {
+    let status = n64.cp0().status();
+
+    status.mode() == 2 && status.reverse_endian()
+}
+
+pub fn reverse_endian_address(n64: &N64, address: u64, bytes: u64) -> u64 {
+    if reverse_endian(n64) {
+        address ^ (8 - bytes)
+    } else {
+        address
+    }
+}

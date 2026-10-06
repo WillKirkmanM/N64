@@ -39,6 +39,9 @@ pub enum MmuStatus {
 
 #[repr(u64)]
 pub enum MmuCause {
+    ExccodeAdEL = 4 << 2,
+    ExccodeAdES = 5 << 2,
+    ExccodeOv = 12 << 2,
     ExccodeMod = 1 << 2,
     ExccodeTLBL = 2 << 2,
     ExccodeTLBS = 3 << 2,

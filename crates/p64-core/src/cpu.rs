@@ -441,3 +441,9 @@ use memory_ops::{
 };
 
 pub use types::{CpuExecutionState, CpuInstructionTables, CpuScheduler, IntegerRegisters};
+
+pub(crate) fn effective_address(n64: &N64, opcode: u32) -> u64 {
+    n64.cpu()
+        .gpr(rs(opcode) as usize)
+        .wrapping_add(se16(imm(opcode) as i16))
+}

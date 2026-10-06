@@ -39,3 +39,21 @@ impl Default for Mmu {
         }
     }
 }
+
+impl Mmu {
+    pub fn register(&self, register: MmuRegister) -> u64 {
+        self.regs[register]
+    }
+    pub fn register_mut(&mut self, register: MmuRegister) -> &mut u64 {
+        &mut self.regs[register]
+    }
+    pub fn set_register(&mut self, register: MmuRegister, value: u64) {
+        self.regs[register] = value;
+    }
+    pub fn update_register(&mut self, register: MmuRegister, update: impl FnOnce(u64) -> u64) {
+        self.set_register(register, update(self.register(register)));
+    }
+    pub fn status(&self) -> super::Status {
+        super::Status(self.register(MmuRegister::Status))
+    }
+}
