@@ -70,3 +70,45 @@ fn masked_writes_check_bounds_after_address_masking() {
 
     assert_eq!(mem.read_u32(4), 0x12345678);
 }
+
+#[test]
+fn word_access_preserves_byte_order_masks_and_mempak_bus_behavior() {
+    for little_endian in [false, true] {
+        let mut memory = Memory::new().with_size(8).build();
+        memory.access.is_little_endian = little_endian;
+
+        for mask in [0, u32::MAX, 0x00ff0000, 0xff00ff00] {
+            memory.write_mem(0, 0x12345678);
+            let bytes = if little_endian {
+                0x12345678u32.to_le_bytes()
+            } else {
+                0x12345678u32.to_be_bytes()
+            };
+
+            assert_eq!(&memory.data[..4], &bytes);
+            assert_eq!(memory.read_u32(0), memory.read_mem_fast(0));
+            memory.write_u32(0, 0xabcdef01, mask);
+
+            assert_eq!(
+                memory.read_u32(0),
+                (0x12345678 & !mask) | (0xabcdef01 & mask)
+            );
+        }
+    }
+
+    let mut memory = Memory::new()
+        .with_size(crate::mempak::MEMPAK_SIZE * 2)
+        .build();
+    memory.access.is_mempak = true;
+    memory.write_mem(0x10004, 0x12345678);
+    // Mempak writes consume the complete bus word, including masked write calls.
+    memory.write_u32(0x10004, 0xabcdef01, 0);
+
+    assert_eq!(memory.read_u32(0x10004), 0xabcdef01);
+    assert_eq!(memory.read_u32(4), 0);
+    assert_eq!(
+        &memory.data[crate::mempak::MEMPAK_SIZE + 4..crate::mempak::MEMPAK_SIZE + 8],
+        &[0xab, 0xcd, 0xef, 0x01]
+    );
+    assert_eq!(memory.read_u32(crate::mempak::MEMPAK_SIZE as u64), 0);
+}
