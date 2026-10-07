@@ -39,3 +39,9 @@ fn realignment_and_clone_preserve_contents_and_independent_storage() {
     assert_eq!(original.data.as_ptr() as usize % 65536, 0);
     assert_eq!(&*original.data, &[0, 0, 0]);
 }
+
+#[test]
+#[should_panic(expected = "Invalid alignment")]
+fn memory_rejects_non_power_of_two_alignment() {
+    Memory::new().with_size(4).with_alignment(3);
+}
