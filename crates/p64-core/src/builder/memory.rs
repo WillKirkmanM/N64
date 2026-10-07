@@ -209,3 +209,6 @@ impl<I: std::slice::SliceIndex<[u8]>> std::ops::IndexMut<I> for Memory {
         &mut self.data[index]
     }
 }
+
+#[cfg(test)]
+mod accuracy_tests;
