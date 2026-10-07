@@ -195,3 +195,5 @@ mod types;
 pub use types::{ICache, DCache};
 
 pub use types::FetchPipeline;
+
+pub(crate) const TAG_PAGE_BYTES: u64 = 4096;

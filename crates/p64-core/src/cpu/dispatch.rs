@@ -6,7 +6,7 @@ pub fn decode_opcode(n64: &N64, opcode: u32) -> fn(&mut N64, u32) {
         1 => n64.cpu.instructions.regimm_instrs[((opcode >> 16) & 0x1F) as usize],
         16..=18 => [
             &n64.cpu.mmu.instrs,
-            &n64.cpu.fpu.instrs,
+            &n64.cpu.fpu.instructions.instrs,
             &n64.cpu.rcp.instrs,
         ][(opcode >> 26) as usize - 16][((opcode >> 21) & 0x1F) as usize],
         _ => n64.cpu.instructions.instrs[(opcode >> 26) as usize],

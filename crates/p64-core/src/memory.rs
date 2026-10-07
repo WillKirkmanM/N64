@@ -1,14 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    audio::{handle_ai_register_read, handle_ai_register_write},
-    cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video,
-};
+use crate::{audio::{handle_ai_register_read, handle_ai_register_write}, cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video};
 
-use super::{
-    cache::{dcache_read, dcache_write},
-    tlb, N64,
-};
+use super::{cache::{dcache_read, dcache_write}, tlb, N64};
 
 const KSEG_MASK: u64 = 0xc0000000;
 const KSEG0_BASE: u64 = 0x80000000;
@@ -194,5 +188,31 @@ pub fn reverse_endian_address(n64: &N64, address: u64, bytes: u64) -> u64 {
         address ^ (8 - bytes)
     } else {
         address
+    }
+}
+
+/// Read both big-endian words through the guest bus, preserving access timing.
+pub fn read_doubleword(n64: &mut N64, address: u64, cached: bool) -> u64 {
+    let high = read_data(n64, address, AccessSize::Dword, cached) as u64;
+    let low = read_data(n64, address + 4, AccessSize::Dword, cached) as u64;
+
+    (high << 32) | low
+}
+
+pub fn peek_translation(n64: &N64, address: u64) -> Option<(u64, bool)> {
+    if !crate::bits::is_aligned(address, AccessSize::Word as u64) {
+        return None;
+    }
+    match segment::AddressSegment::classify(n64.cp0().status(), address) {
+        segment::AddressSegment::Direct { physical, cached } => Some((physical, cached)),
+        segment::AddressSegment::Forbidden => None,
+        segment::AddressSegment::Mapped => {
+            let address = address & 0xffff_ffff;
+            let entry = n64.cpu.mmu.tlb_lut_r.get((address >> 12) as usize)?;
+            (entry.address != 0).then_some((
+                (entry.address & 0x1ffff000) | (address & 0xfff),
+                entry.cached,
+            ))
+        }
     }
 }

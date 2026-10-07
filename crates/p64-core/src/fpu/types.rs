@@ -1,67 +1,51 @@
-use super::*;
+mod control;
+mod instructions;
+mod registers;
+mod timing;
 
+pub use control::FpuControl;
+pub use instructions::FpuInstructionTables;
+pub use registers::FpuRegisters;
+pub use timing::FpuTiming;
+
+#[derive(Default)]
 pub struct Fpu {
-    pub fcr0: u32,
-    pub fcr31: u32,
-    pub flush_mode: u32,
-    pub fgr32: [[u8; 4]; 32],
-    pub fgr64: [[u8; 8]; 32],
-    pub instrs: [fn(&mut N64, u32); 32],
-    pub b_instrs: [fn(&mut N64, u32); 4],
-    pub s_instrs: [fn(&mut N64, u32); 64],
-    pub d_instrs: [fn(&mut N64, u32); 64],
-    pub w_instrs: [fn(&mut N64, u32); 64],
-    pub l_instrs: [fn(&mut N64, u32); 64],
+    pub registers: FpuRegisters,
+    pub control: FpuControl,
+    pub timing: FpuTiming,
+    pub instructions: FpuInstructionTables,
 }
 
-impl Default for Fpu {
-    fn default() -> Self {
-        fn default_instruction(_device: &mut N64, _value: u32) {}
+impl Fpu {
+    pub fn set_single(&mut self, index: usize, value: f32, clear_high: bool, wide: bool) {
+        self.registers.set_single(index, value, clear_high, wide);
+    }
 
-        let mut fpu = Self {
-            fcr0: 0,
-            fcr31: 0,
-            flush_mode: 0,
-            fgr32: [[0; 4]; 32],
-            fgr64: [[0; 8]; 32],
-            instrs: [default_instruction; 32],
-            b_instrs: [default_instruction; 4],
-            s_instrs: [default_instruction; 64],
-            d_instrs: [default_instruction; 64],
-            w_instrs: [default_instruction; 64],
-            l_instrs: [default_instruction; 64],
-        };
+    pub fn single(&self, index: usize, wide: bool) -> f32 {
+        self.registers.single(index, wide)
+    }
 
-        // Set FGR registers
-        let status_reg = 0;
-        let is_32bit_mode = (status_reg & (MmuStatus::FR as u64)) == 0;
+    pub fn set_double(&mut self, index: usize, value: f64, wide: bool) {
+        self.registers.set_double(index, value, wide);
+    }
 
-        (0..32).step_by(2).for_each(|i| {
-            if is_32bit_mode {
-                let bytes = fpu.fgr64[i];
-                fpu.fgr32[i] = bytes[0..4].try_into().unwrap();
-                fpu.fgr32[i + 1] = bytes[4..8].try_into().unwrap();
-            } else {
-                let bytes_lo = fpu.fgr32[i];
-                let bytes_hi = fpu.fgr32[i + 1];
-                fpu.fgr64[i] = [bytes_lo, bytes_hi].concat().try_into().unwrap();
-            }
-        });
+    pub fn double(&self, index: usize, wide: bool) -> f64 {
+        self.registers.double(index, wide)
+    }
 
-        // Initialize FCR0
-        fpu.fcr0 = 0b101000000000;
+    pub fn set_register_mode(&mut self, wide: bool) {
+        self.registers.set_register_mode(wide);
+    }
 
-        // Initialize instruction tables
-        fpu.b_instrs = B_INSTRUCTIONS;
-        fpu.s_instrs = init_s_instructions();
-        fpu.d_instrs = init_d_instructions();
+    pub fn begin_instruction(&mut self) {
+        self.timing.begin_instruction();
+    }
 
-        let (l_instrs, w_instrs) = init_conversion_instructions();
-        fpu.l_instrs = l_instrs;
-        fpu.w_instrs = w_instrs;
+    pub fn exception_pending(&self) -> bool {
+        self.control.exception_pending()
+    }
 
-        fpu.instrs = MAIN_INSTRUCTIONS;
-
-        fpu
+    pub fn record_exception_flags(&mut self, flags: u32) -> bool {
+        self.control.record_exception_flags(flags)
     }
 }
