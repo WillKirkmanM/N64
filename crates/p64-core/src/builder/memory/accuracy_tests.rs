@@ -59,3 +59,14 @@ fn unmasked_memory_keeps_word_addresses_distinct() {
     assert_eq!(mem.read_u32(4), 0x8922cdef);
     assert_eq!(mem.read_u32(0), 0x01234567);
 }
+
+#[test]
+fn masked_writes_check_bounds_after_address_masking() {
+    let mut mem = Memory::new().with_size(8).with_mask(7).build();
+    mem.write_u32(0x1004, 0x12345678, u32::MAX);
+
+    assert_eq!(mem.read_u32(4), 0x12345678);
+    mem.write_u32(7, u32::MAX, u32::MAX);
+
+    assert_eq!(mem.read_u32(4), 0x12345678);
+}
