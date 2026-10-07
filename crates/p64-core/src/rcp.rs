@@ -31,27 +31,39 @@ const INTEGER_CONVERSION_LIMIT: i64 = 1_i64 << 55;
 
 #[inline(always)]
 fn check_rcp_access(n64: &N64) -> bool {
-    n64.cpu.mmu.regs[MmuRegister::Status as usize] & (MmuStatus::CU2 as u64) != 0
+    n64.cp0_register(MmuRegister::Status) & (MmuStatus::CU2 as u64) != 0
 }
 
 fn handle_move(n64: &mut N64, opcode: u32, double: bool, to_rcp: bool) {
     if !check_rcp_access(n64) {
+        add_cycles(n64, 1);
+
         return cop_unusable_exception(n64, MmuCause::CE2 as u64);
     }
-    let rt = rt(opcode) as usize;
+
+    let register = rt(opcode) as usize;
+
     if to_rcp {
-        n64.cpu.rcp.reg_latch = n64.cpu.registers.gpr[rt]
+        n64.rcp_mut().reg_latch = n64.cpu().gpr(register);
     } else {
-        n64.cpu.registers.gpr[rt] = if double {
-            n64.cpu.rcp.reg_latch
+        let latch = n64.rcp().reg_latch;
+        let value = if double {
+            latch
         } else {
-            se32(n64.cpu.rcp.reg_latch as u32 as i32)
-        }
+            se32(latch as u32 as i32)
+        };
+
+        n64.cpu_mut().set_gpr(register, value);
     }
 }
 
 pub fn vector_reserved(n64: &mut N64, _opcode: u32) {
-    reserved_exception(n64, MmuCause::CE2 as u64);
+    if !check_rcp_access(n64) {
+        add_cycles(n64, 1);
+        cop_unusable_exception(n64, MmuCause::CE2 as u64);
+    } else {
+        reserved_exception(n64, MmuCause::CE2 as u64);
+    }
 }
 
 pub fn fs(opcode: u32) -> u32 {
