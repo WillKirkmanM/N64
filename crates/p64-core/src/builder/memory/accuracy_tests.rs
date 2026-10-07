@@ -112,3 +112,20 @@ fn word_access_preserves_byte_order_masks_and_mempak_bus_behavior() {
     );
     assert_eq!(memory.read_u32(crate::mempak::MEMPAK_SIZE as u64), 0);
 }
+
+#[test]
+fn building_memory_preserves_write_interception() {
+    fn intercept(address: u64, value: u32) -> bool {
+        address == 0 && value == 0xDEAD_BEEF
+    }
+    let mut memory = Memory::new()
+        .with_size(4)
+        .with_write_callback(intercept)
+        .build();
+    memory.write_mem(0, 0xDEAD_BEEF);
+    assert_eq!(memory.read_mem_fast(0), 0);
+    memory.write_u32(0, 0xDEAD_BEEF, u32::MAX);
+    assert_eq!(memory.read_mem_fast(0), 0);
+    memory.write_mem(0, 0x1234_5678);
+    assert_eq!(memory.read_mem_fast(0), 0x1234_5678);
+}
