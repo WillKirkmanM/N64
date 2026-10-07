@@ -1,4 +1,7 @@
-use crate::{fpu::RoundingMode, opcode::{Cop1Opcode, FpuFunction}};
+use crate::{
+    fpu::RoundingMode,
+    opcode::{Cop1Opcode, FpuFunction},
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct FloatOperation {

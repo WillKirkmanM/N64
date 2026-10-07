@@ -1,5 +1,8 @@
 use super::operation::FloatOperation;
-use crate::{fpu::RoundingMode, opcode::{Cop1Opcode, FpuFunction}};
+use crate::{
+    fpu::RoundingMode,
+    opcode::{Cop1Opcode, FpuFunction},
+};
 use softfloat_pure::softfloat::*;
 
 /// FCSR positive/negative directions reverse SoftFloat's min/max encodings.

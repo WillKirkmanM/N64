@@ -4,9 +4,17 @@ pub(crate) use rounding::RoundingMode;
 mod types;
 pub use types::{Fpu, FpuControl, FpuInstructionTables, FpuRegisters, FpuTiming};
 
-use crate::{exceptions, opcode::{Cop1Opcode, FpuFunction}};
+use crate::{
+    exceptions,
+    opcode::{Cop1Opcode, FpuFunction},
+};
 
-use super::{cpu, memory::{self, AccessSize, AccessType}, mmu::{MmuCause, MmuRegister, MmuStatus}, rcp, N64};
+use super::{
+    cpu,
+    memory::{self, AccessSize, AccessType},
+    mmu::{MmuCause, MmuRegister, MmuStatus},
+    rcp, N64,
+};
 
 pub const FCR31_CAUSE_UNIMP_BIT: u32 = 1 << 17;
 

@@ -1,6 +1,6 @@
 mod dispatch;
 mod memory;
-
+pub(crate) use memory::{ldc2, lwc2, sdc2, swc2};
 mod encoding;
 mod latency;
 mod operation;
@@ -13,8 +13,16 @@ pub use types::Rcp;
 
 mod float_backend;
 
-use super::{cpu::{self, check_relative_idle_loop, rt, se32, State}, exceptions::{cop_unusable_exception, reserved_exception}, fpu, mmu::{add_cycles, MmuCause, MmuRegister, MmuStatus}};
-use crate::{opcode::{Cop1Opcode, FpuFunction}, N64};
+use super::{
+    cpu::{self, check_relative_idle_loop, rt, se32, State},
+    exceptions::{cop_unusable_exception, reserved_exception},
+    fpu,
+    mmu::{add_cycles, MmuCause, MmuRegister, MmuStatus},
+};
+use crate::{
+    opcode::{Cop1Opcode, FpuFunction},
+    N64,
+};
 
 const FP_INVALID: u32 = softfloat_pure::softfloat::softfloat_flag_invalid as u32;
 const FP_UNDERFLOW: u32 = softfloat_pure::softfloat::softfloat_flag_underflow as u32;

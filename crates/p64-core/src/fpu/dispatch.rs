@@ -1,5 +1,8 @@
 use super::{self as fpu, ArithmeticInstructionTable};
-use crate::{opcode::{Cop1Opcode, FpuBranchOpcode, FpuFunction}, rcp, N64};
+use crate::{
+    opcode::{Cop1Opcode, FpuBranchOpcode, FpuFunction},
+    rcp, N64,
+};
 
 type Handler = fn(&mut N64, u32);
 
