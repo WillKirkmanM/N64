@@ -403,3 +403,6 @@ pub fn set_fgr_registers(n64: &mut N64, status_reg: u64) {
     n64.fpu_mut()
         .set_register_mode(status_reg & MmuStatus::FR as u64 != 0);
 }
+
+#[cfg(test)]
+mod encoding_tests;
