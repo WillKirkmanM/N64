@@ -45,3 +45,17 @@ fn realignment_and_clone_preserve_contents_and_independent_storage() {
 fn memory_rejects_non_power_of_two_alignment() {
     Memory::new().with_size(4).with_alignment(3);
 }
+
+#[test]
+fn unmasked_memory_keeps_word_addresses_distinct() {
+    let mut mem = Memory::new().with_size(8).build();
+    mem.write_mem(0, 0x01234567);
+    mem.write_mem(4, 0x89abcdef);
+
+    assert_eq!(mem.read_mem_fast(0), 0x01234567);
+    assert_eq!(mem.read_mem_fast(4), 0x89abcdef);
+    mem.write_u32(4, 0x11223344, 0x00ff0000);
+
+    assert_eq!(mem.read_u32(4), 0x8922cdef);
+    assert_eq!(mem.read_u32(0), 0x01234567);
+}
