@@ -103,7 +103,7 @@ pub fn write_cartridge_to_memory(n64: &mut N64, rom_file: Vec<u8>) {
         .with_mask(CART_MASK)
         .build();
 
-    n64.cartridge.rom.data = rom_file;
+    n64.cartridge.rom.data = rom_file.into();
 
     set_system_region(n64, n64.cartridge.rom.data[0x3E]);
     set_cic(n64);
