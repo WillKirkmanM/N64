@@ -215,3 +215,6 @@ pub fn dma_event(n64: &mut N64) {
 
     mips::set_rcp_interrupt(n64, mips::MI_INTR_PI);
 }
+
+#[cfg(test)]
+mod tests;
