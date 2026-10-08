@@ -61,6 +61,27 @@ mod accuracy_tests {
     }
 }
 
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_controller_command_does_not_modify_pif_response() {
+        let mut n64 = N64::new();
+        n64.pif.channels[0].buffers.tx_buf = Some(0);
+        n64.pif.channels[0].buffers.rx_buf = Some(4);
+
+        for command in 4..255 {
+            n64.pif.memory.ram.fill(0x5a);
+            n64.pif.memory.ram[0] = command;
+            let before = n64.pif.memory.ram;
+            process(&mut n64, 0);
+
+            assert_eq!(n64.pif.memory.ram, before, "command={command}");
+        }
+    }
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
