@@ -30,12 +30,16 @@ const DOMAIN_RELEASE_MASK: u32 = 0x3;
 const PI_STATUS_ERROR: u32 = 1 << 2;
 
 pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    let reg = (address & 0xFFFF) >> 2;
+    let reg = register_index(address);
+    if reg >= PI_REGS_COUNT as usize {
+        return 0;
+    }
+
     match reg as u32 {
-        x if x == PiRegister::WrLen as u32 || x == PiRegister::RdLen as u32 => 0x7F,
-        x if x == PiRegister::CartAddr as u32 => n64.peripheral.regs[reg as usize] & 0xFFFFFFFE,
-        x if x == PiRegister::DramAddr as u32 => n64.peripheral.regs[reg as usize] & 0xFFFFFE,
-        _ => n64.peripheral.regs[reg as usize],
+        x if x == PiRegister::WrLen as u32 || x == PiRegister::RdLen as u32 => DMA_LENGTH_READBACK,
+        x if x == PiRegister::CartAddr as u32 => n64.peripheral.regs[reg] & CART_ADDRESS_MASK,
+        x if x == PiRegister::DramAddr as u32 => n64.peripheral.regs[reg] & DRAM_ADDRESS_MASK,
+        _ => n64.peripheral.regs[reg],
     }
 }
 
@@ -134,29 +138,50 @@ fn no_device_dma_write(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u3
 }
 
 pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
+    let reg = register_index(address);
+    if reg >= PI_REGS_COUNT as usize {
+        return;
+    }
+
+    let status = n64.peripheral.regs[PiRegister::Status as usize];
+    if reg != PiRegister::Status as usize && status & (PiStatus::DMA_BUSY | PiStatus::IO_BUSY) != 0
+    {
+        n64.peripheral.regs[PiRegister::Status as usize] |= PI_STATUS_ERROR;
+        return;
+    }
+
     match reg as u32 {
         x if x == PiRegister::RdLen as u32 => {
-            memory::masked_write_32(&mut n64.peripheral.regs[reg as usize], value, mask);
+            memory::masked_write_32(&mut n64.peripheral.regs[reg], value, mask);
             dma_read(n64);
         }
         x if x == PiRegister::WrLen as u32 => {
-            memory::masked_write_32(&mut n64.peripheral.regs[reg as usize], value, mask);
+            memory::masked_write_32(&mut n64.peripheral.regs[reg], value, mask);
             dma_write(n64);
         }
         x if x == PiRegister::Status as u32 => {
-            if value & mask & PiStatus::CLR_INTR as u32 != 0 {
-                n64.peripheral.regs[reg as usize] &= !(PiStatus::INTERRUPT as u32);
+            if value & mask & PiStatus::CLR_INTR != 0 {
+                n64.peripheral.regs[reg] &= !(PiStatus::INTERRUPT);
                 mips::clear_rcp_interrupt(n64, mips::MI_INTR_PI);
             }
-            if value & mask & PiStatus::RESET as u32 != 0 {
-                n64.peripheral.regs[PiRegister::Status as usize] = 0;
+
+            if value & mask & PiStatus::RESET != 0 {
+                if status & PiStatus::DMA_BUSY != 0 {
+                    crate::events::remove_event(n64, EventType::PI);
+                }
+                n64.peripheral.regs[reg] &= !(PiStatus::DMA_BUSY | PI_STATUS_ERROR);
             }
         }
         x if (PiRegister::BsdDom1Lat as u32..=PiRegister::BsdDom2Rls as u32).contains(&x) => {
-            memory::masked_write_32(&mut n64.peripheral.regs[reg as usize], value & 0xFF, mask);
+            let register_mask = match (x - PiRegister::BsdDom1Lat as u32) % DOMAIN_REGISTER_COUNT {
+                DOMAIN_PAGE_SIZE_REGISTER => DOMAIN_PAGE_SIZE_MASK,
+                DOMAIN_RELEASE_REGISTER => DOMAIN_RELEASE_MASK,
+                _ => u8::MAX as u32,
+            };
+
+            memory::masked_write_32(&mut n64.peripheral.regs[reg], value & register_mask, mask);
         }
-        _ => memory::masked_write_32(&mut n64.peripheral.regs[reg as usize], value, mask),
+        _ => memory::masked_write_32(&mut n64.peripheral.regs[reg], value, mask),
     }
 }
 
@@ -185,9 +210,8 @@ pub(crate) fn calculate_cycles_for_transfer(
 }
 
 pub fn dma_event(n64: &mut N64) {
-    n64.peripheral.regs[PiRegister::Status as usize] &=
-        !(PiStatus::DMA_BUSY as u32 | PiStatus::IO_BUSY as u32);
-    n64.peripheral.regs[PiRegister::Status as usize] |= PiStatus::INTERRUPT as u32;
+    n64.peripheral.regs[PiRegister::Status as usize] &= !(PiStatus::DMA_BUSY | PiStatus::IO_BUSY);
+    n64.peripheral.regs[PiRegister::Status as usize] |= PiStatus::INTERRUPT;
 
     mips::set_rcp_interrupt(n64, mips::MI_INTR_PI);
 }
