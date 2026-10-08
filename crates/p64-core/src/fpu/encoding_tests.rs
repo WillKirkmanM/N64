@@ -76,3 +76,53 @@ fn cop1_transfer_and_branch_selector_space_preserves_exception_priority() {
         }
     }
 }
+
+#[test]
+fn doubleword_fpu_moves_check_cu1_before_width_and_preserve_faulted_destinations() {
+    let mut machine = N64::new();
+    for mode in [0_u64, 1, 2] {
+        for extended in [false, true] {
+            for enabled in [false, true] {
+                for selector in [1_u32, 5] {
+                    let status = (mode << 3)
+                        | (u64::from(extended) << (7 - mode))
+                        | (1 << 26)
+                        | (u64::from(enabled) << 29);
+                    machine.set_cp0_register(MmuRegister::Status, status);
+                    machine.set_cp0_register(MmuRegister::Cause, 0);
+                    machine.cpu.execution.pc = 0x1000;
+                    machine.cpu.branch_state.state = cpu::State::Step;
+                    machine.cpu_mut().set_gpr(2, 0x1234_5678_9abc_def0);
+                    machine.fpu_mut().registers.fgr64[4] = 0xdead_beef_cafe_babe_u64.to_le_bytes();
+                    let word = (0x11 << 26) | (selector << 21) | (2 << 16) | (4 << 11);
+                    cpu::decode_opcode(&machine, word)(&mut machine, word);
+                    let expected = if !enabled {
+                        (11 << 2) | (1 << 28)
+                    } else if mode != 0 && !extended {
+                        10 << 2
+                    } else {
+                        0
+                    };
+                    assert_eq!(
+                        machine.cp0_register(MmuRegister::Cause) & 0x3000_007c,
+                        expected
+                    );
+                    if expected != 0 {
+                        assert_eq!(machine.cpu().gpr(2), 0x1234_5678_9abc_def0);
+                        assert_eq!(
+                            u64::from_le_bytes(machine.fpu().registers.fgr64[4]),
+                            0xdead_beef_cafe_babe
+                        );
+                    } else if selector == 1 {
+                        assert_eq!(machine.cpu().gpr(2), 0xdead_beef_cafe_babe);
+                    } else {
+                        assert_eq!(
+                            u64::from_le_bytes(machine.fpu().registers.fgr64[4]),
+                            0x1234_5678_9abc_def0
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
