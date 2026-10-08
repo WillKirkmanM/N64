@@ -17,6 +17,22 @@ mod accuracy_tests {
 
         assert_eq!(&n64.pif.memory.ram[4..7], &[0x05, 0x00, 0x00]);
     }
+
+    #[test]
+    fn pi_timing_uses_page_size_and_release_registers_in_hardware_order() {
+        let mut n64 = N64::new();
+
+        for (domain, base) in [
+            (1, PiRegister::BsdDom1Lat as usize),
+            (2, PiRegister::BsdDom2Lat as usize),
+        ] {
+            // SDK rcp.h places PGS at LAT+8 and RLS at LAT+12.
+            write_regs(&mut n64, ((base + 2) * 4) as u64, 2, u32::MAX);
+            write_regs(&mut n64, ((base + 3) * 4) as u64, 3, u32::MAX);
+            // Two 16-byte pages: ((15+5)*2 + (1+4)*16) * 1.5.
+            assert_eq!(calculate_cycles(&n64, domain, 32), 180);
+        }
+    }
 }
 
 fn no_pi_interrupt(n64: &mut N64) {
