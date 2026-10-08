@@ -108,28 +108,21 @@ fn dma_transfer(
 ) -> u64 {
     dram_addr &= RDRAM_MASK as u32;
     cart_addr &= CART_MASK as u32;
-
-    let mut i = dram_addr;
-    let mut j = cart_addr;
-
-    while i < dram_addr + length && j < n64.cartridge.rom.len() as u32 {
+    for offset in 0..length {
+        let dram = dram_addr.wrapping_add(offset);
+        let cart = cart_addr.wrapping_add(offset) as usize;
         if is_read {
-            n64.cartridge.rom[j as usize] = n64.rdram.mem[i as usize ^ n64.byte_swap];
+            let value = memory::read_rdram_byte(n64, dram);
+            if let Some(destination) = n64.cartridge.rom.data.get_mut(cart) {
+                *destination = value;
+            }
         } else {
-            n64.rdram.mem[i as usize ^ n64.byte_swap] = n64.cartridge.rom[j as usize];
+            let value = n64.cartridge.rom.data.get(cart).copied().unwrap_or(0);
+            memory::write_rdram_byte(n64, dram, value);
         }
-        i += 1;
-        j += 1;
     }
 
-    while i < dram_addr + length {
-        if !is_read {
-            n64.rdram.mem[i as usize ^ n64.byte_swap] = 0;
-        }
-        i += 1;
-    }
-
-    peripheral::calculate_cycles(n64, 1, length)
+    peripheral::calculate_cycles_for_transfer(n64, 1, cart_addr, length)
 }
 
 pub fn dma_read(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
@@ -137,7 +130,39 @@ pub fn dma_read(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u
 }
 
 pub fn dma_write(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
-    dma_transfer(n64, cart_addr, dram_addr, length, false)
+    let layout = peripheral::cart_dma_layout(dram_addr, length);
+
+    for offset in 0..layout.destination_length {
+        let Some(source_offset) = layout.source_offset(offset) else {
+            continue;
+        };
+
+        let rom_address = (cart_addr.wrapping_add(source_offset) as usize) & CART_MASK;
+        let value = n64
+            .cartridge
+            .rom
+            .data
+            .get(rom_address)
+            .copied()
+            .unwrap_or(0);
+        let dram_address = ((dram_addr.wrapping_add(offset) as usize) & RDRAM_MASK) ^ n64.byte_swap;
+
+        #[cfg(feature = "accuracy-diagnostics")]
+        crate::rdram::trace_write(
+            n64,
+            "pi-dma-byte",
+            (dram_address ^ n64.byte_swap) as u64,
+            u32::from(value),
+            0xff,
+        );
+
+        if let Some(destination) = n64.rdram.mem.data.get_mut(dram_address) {
+            *destination = value;
+            crate::rdram::record_write(n64, (dram_address ^ n64.byte_swap) as u64);
+        }
+    }
+
+    peripheral::calculate_cycles_for_transfer(n64, 1, cart_addr, layout.source_length)
 }
 
 pub fn write_cartridge_to_memory(n64: &mut N64, rom_file: Vec<u8>) {
