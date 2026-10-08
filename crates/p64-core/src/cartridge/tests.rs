@@ -162,3 +162,14 @@ mod accuracy_tests {
         }
     }
 }
+
+#[test]
+fn cart_dma_reads_zero_beyond_installed_rdram_without_overwriting_ram_start() {
+    let mut n64 = N64::default();
+    n64.cartridge.rom = Memory::from(vec![0xff; 8]);
+    memory::write_rdram_byte(&mut n64, 0x7ffffe, 0x12);
+    memory::write_rdram_byte(&mut n64, 0x7fffff, 0x34);
+    dma_read(&mut n64, 0, 0x7ffffe, 4);
+    assert_eq!(&n64.cartridge.rom.data[..4], &[0x12, 0x34, 0, 0]);
+    assert_eq!(n64.rdram.mem.read_u32(0), 0);
+}
