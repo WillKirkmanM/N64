@@ -230,3 +230,6 @@ fn calculate_hash(data: &[u8]) -> String {
 
     format!("{:X}", hasher.finalize())
 }
+
+#[cfg(test)]
+mod tests;
