@@ -1,8 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{audio::{handle_ai_register_read, handle_ai_register_write}, cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video};
+use crate::{
+    audio::{handle_ai_register_read, handle_ai_register_write},
+    cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, video,
+};
 
-use super::{cache::{dcache_read, dcache_write}, tlb, N64};
+use super::{
+    cache::{dcache_read, dcache_write},
+    tlb, N64,
+};
 
 const KSEG_MASK: u64 = 0xc0000000;
 const KSEG0_BASE: u64 = 0x80000000;

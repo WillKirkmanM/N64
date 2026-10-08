@@ -13,7 +13,11 @@ use super::memory;
 use super::mmu::add_cycles;
 use super::peripheral;
 use super::rdram::RDRAM_MASK;
-use super::{events::EventType, mmu::MmuRegister, peripheral::{PiRegister, PiStatus}};
+use super::{
+    events::EventType,
+    mmu::MmuRegister,
+    peripheral::{PiRegister, PiStatus},
+};
 
 pub const CART_MASK: usize = 0xFFFFFFF;
 
@@ -46,15 +50,35 @@ fn read_rom_word(n64: &N64, address: u64) -> u32 {
     }))
 }
 
-pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
+fn read_cart_bus(n64: &mut N64, address: u64, subword: bool) -> u32 {
+    // Sample the bus before charging its access time: this read can outlast
+    // the write latch, but must still return the value latched at its start.
+    let value = if n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::IO_BUSY != 0 {
+        let latched = n64.cartridge.latch;
+        n64.peripheral.regs[PiRegister::Status as usize] &= !PiStatus::IO_BUSY;
+
+        latched
+    } else if subword {
+        (read_rom_word(n64, address) & CART_UPPER_HALFWORD_MASK)
+            | (read_rom_word(n64, address + 4) >> 16)
+    } else {
+        read_rom_word(n64, address)
+    };
+
     let cycles = peripheral::calculate_cycles(n64, 1, 4);
     add_cycles(n64, cycles);
 
-    if n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::IO_BUSY != 0 {
-        n64.cartridge.latch
-    } else {
-        n64.cartridge.rom.read_mem_fast(address) as u32
-    }
+    value
+}
+
+pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
+    read_cart_bus(n64, address, false)
+}
+
+pub fn read_subword(n64: &mut N64, address: u64) -> u32 {
+    // PI subword reads advance its 16-bit bus to the following word for the
+    // low half; the CPU still selects bytes/halfwords from this bus value.
+    read_cart_bus(n64, address, true)
 }
 
 pub fn write_mem(n64: &mut N64, _address: u64, value: u32, _mask: u32) {

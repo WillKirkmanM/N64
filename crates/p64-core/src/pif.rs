@@ -1,6 +1,12 @@
 use crate::serial;
 
-use super::{events::{create_event, EventType}, memory::{self}, mmu::{add_cycles, MmuRegister}, serial::{DmaDir, SerialRegister, SerialStatus}, N64};
+use super::{
+    events::{create_event, EventType},
+    memory::{self},
+    mmu::{add_cycles, MmuRegister},
+    serial::{DmaDir, SerialRegister, SerialStatus},
+    N64,
+};
 
 pub const PIF_RAM_SIZE: usize = 64;
 const PIF_RAM_OFFSET: usize = 0x7C0;

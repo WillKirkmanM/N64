@@ -5,7 +5,12 @@ mod joybus;
 pub use joybus::process;
 use types::{DomainRegs, JoyCommand, PiDomain};
 
-use super::{events::{create_event, EventType}, memory::{self, MemoryMap}, mmu::MmuRegister, N64};
+use super::{
+    events::{create_event, EventType},
+    memory::{self, MemoryMap},
+    mmu::MmuRegister,
+    N64,
+};
 use crate::{cartridge, mips, sram};
 
 pub const PI_REGS_COUNT: u32 = 13;

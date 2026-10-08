@@ -1,5 +1,12 @@
 use crate::{mips, pif};
-use super::{builder::registers::Registers, mmu::MmuRegister, events::{create_event, EventType}, memory, rdram::RDRAM_MASK, N64};
+use super::{
+    builder::registers::Registers,
+    mmu::MmuRegister,
+    events::{create_event, EventType},
+    memory,
+    rdram::RDRAM_MASK,
+    N64,
+};
 
 #[repr(u32)]
 pub enum SerialRegister {
