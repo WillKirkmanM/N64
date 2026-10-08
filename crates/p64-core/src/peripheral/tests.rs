@@ -82,6 +82,27 @@ mod command_tests {
     }
 }
 
+#[test]
+fn pak_write_uses_transmit_payload_and_returns_augmented_crc() {
+    let mut n64 = N64::default();
+    n64.pif.memory.ram[..5].copy_from_slice(&[35, 1, 3, 6, 0]);
+    n64.pif.memory.ram[5..37].fill(0x5a);
+    n64.pif.memory.ram[37] = 0xff;
+    n64.pif.channels[0].buffers.tx = Some(0);
+    n64.pif.channels[0].buffers.rx = Some(1);
+    n64.pif.channels[0].buffers.tx_buf = Some(2);
+    n64.pif.channels[0].buffers.rx_buf = Some(37);
+    process(&mut n64, 0);
+    assert_eq!(&n64.save_data().mempak.data[0x600..0x620], &[0x5a; 32]);
+    assert_eq!(n64.pif.memory.ram[37], 0xd1);
+    n64.pif.memory.ram[..5].copy_from_slice(&[3, 33, 2, 6, 0]);
+    n64.pif.memory.ram[5..38].fill(0);
+    n64.pif.channels[0].buffers.rx_buf = Some(5);
+    process(&mut n64, 0);
+    assert_eq!(&n64.pif.memory.ram[5..37], &[0x5a; 32]);
+    assert_eq!(n64.pif.memory.ram[37], 0xd1);
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
