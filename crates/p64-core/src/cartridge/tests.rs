@@ -76,4 +76,89 @@ mod accuracy_tests {
             0x56ba_0000
         );
     }
+
+    #[test]
+    fn pi_dma_matches_nemu_small_misaligned_and_page_end_vectors() {
+        let mut n64 = N64::new();
+        n64.cartridge.rom.data = (0..512).map(|byte| byte as u8).collect::<Vec<_>>().into();
+        // Expected vectors: nemu64-test PIDMASmallSize/PIDMAMisaligned/Page.
+        for misalignment in [0u32, 2, 4, 6] {
+            for page_offset in [16u32, 1984, 2040] {
+                for requested in 1u32..=300 {
+                    let mut expected = vec![0xaa; 4096];
+                    let start = page_offset + misalignment;
+                    let boundary = if page_offset == 2040 {
+                        8 - misalignment
+                    } else if page_offset == 1984 {
+                        64 - misalignment
+                    } else {
+                        128 - misalignment
+                    };
+                    let threshold = if page_offset == 2040 && misalignment != 0 {
+                        boundary
+                    } else {
+                        boundary - 2
+                    };
+                    let rom_length = if requested >= threshold {
+                        (requested + 1) & !1
+                    } else {
+                        requested
+                    };
+                    let mut written_extent = if rom_length < boundary {
+                        rom_length.saturating_sub(misalignment)
+                    } else {
+                        rom_length
+                    };
+
+                    let second_hole = boundary + 128 - misalignment;
+
+                    if page_offset == 2040 && written_extent > second_hole {
+                        written_extent += misalignment;
+                    }
+
+                    for offset in 0..written_extent {
+                        let first_hole = boundary.saturating_sub(misalignment);
+
+                        if offset >= first_hole && offset < boundary {
+                            continue;
+                        }
+
+                        let source = if page_offset == 2040 && offset >= second_hole {
+                            if offset < second_hole + misalignment {
+                                continue;
+                            }
+
+                            offset - misalignment
+                        } else {
+                            offset
+                        };
+
+                        expected[(start + offset) as usize] = source as u8;
+                    }
+
+                    n64.rdram.mem.data[..4096].fill(0xaa);
+                    n64.peripheral.regs[PiRegister::CartAddr as usize] = 0x1000_0000;
+                    n64.peripheral.regs[PiRegister::DramAddr as usize] = start;
+                    n64.peripheral.regs[PiRegister::WrLen as usize] = requested - 1;
+                    peripheral::dma_write(&mut n64);
+                    for (address, expected_byte) in expected.iter().enumerate() {
+                        assert_eq!(
+                            n64.rdram.mem.data[address ^ n64.byte_swap],
+                            *expected_byte,
+                            "PI DMA misalignment={misalignment} page_offset={page_offset} size={requested} byte={address}"
+                        );
+                    }
+
+                    assert_eq!(
+                        n64.peripheral.regs[PiRegister::CartAddr as usize],
+                        0x1000_0000 + ((rom_length + 1) & !1)
+                    );
+                    assert_eq!(
+                        n64.peripheral.regs[PiRegister::DramAddr as usize],
+                        (start + written_extent + 7) & !7
+                    );
+                }
+            }
+        }
+    }
 }
