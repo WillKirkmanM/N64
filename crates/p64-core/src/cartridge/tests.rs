@@ -52,4 +52,28 @@ mod accuracy_tests {
             0x0123_4567
         );
     }
+
+    #[test]
+    fn cart_write_latch_keeps_first_write_and_all_driven_bits() {
+        let mut n64 = N64::new();
+        n64.cartridge.rom.data = vec![0x01, 0x23, 0x45, 0x67].into();
+        write_mem(&mut n64, 0x1000_0000, 0xbadc_0ffe, u32::MAX);
+        write_mem(&mut n64, 0x1000_1000, 0xdecaf, u32::MAX);
+
+        assert_eq!(
+            read_mem(&mut n64, 0x1000_0000, memory::AccessSize::Word),
+            0xbadc_0ffe
+        );
+        assert_eq!(
+            read_mem(&mut n64, 0x1000_0000, memory::AccessSize::Word),
+            0x0123_4567
+        );
+        // SB of 0x123456BA at byte offset 1 drives 0x56BA0000 onto the bus.
+        write_mem(&mut n64, 0x1000_0000, 0x56ba_0000, 0x00ff_0000);
+
+        assert_eq!(
+            read_mem(&mut n64, 0x1000_0000, memory::AccessSize::Word),
+            0x56ba_0000
+        );
+    }
 }
