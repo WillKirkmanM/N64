@@ -33,6 +33,32 @@ mod accuracy_tests {
             assert_eq!(calculate_cycles(&n64, domain, 32), 180);
         }
     }
+
+    #[test]
+    fn pi_timing_registers_ignore_unimplemented_bits() {
+        let mut n64 = N64::new();
+
+        for base in [
+            PiRegister::BsdDom1Lat as usize,
+            PiRegister::BsdDom2Lat as usize,
+        ] {
+            for (offset, expected) in [(0, 0xff), (1, 0xff), (2, 0xf), (3, 3)] {
+                let address = ((base + offset) * 4) as u64;
+                write_regs(&mut n64, address, u32::MAX, u32::MAX);
+
+                assert_eq!(
+                    read_regs(&mut n64, address, memory::AccessSize::Word),
+                    expected
+                );
+                write_regs(&mut n64, address, 0, 1);
+
+                assert_eq!(
+                    read_regs(&mut n64, address, memory::AccessSize::Word),
+                    expected & !1
+                );
+            }
+        }
+    }
 }
 
 fn no_pi_interrupt(n64: &mut N64) {
