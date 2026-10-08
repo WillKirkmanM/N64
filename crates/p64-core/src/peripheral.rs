@@ -1,15 +1,28 @@
-use p64_gui::input;
+use crate::builder::registers::register_index;
+mod types;
+pub use types::*;
+mod joybus;
+pub use joybus::process;
+use types::{DomainRegs, JoyCommand, PiDomain};
 
+use super::{events::{create_event, EventType}, memory::{self, MemoryMap}, mmu::MmuRegister, N64};
 use crate::{cartridge, mips, sram};
-use super::{
-    builder::registers::Registers,
-    mmu::MmuRegister,
-    events::{create_event, EventType},
-    memory::{self, MemoryMap},
-    N64,
-};
 
 pub const PI_REGS_COUNT: u32 = 13;
+
+const CONTROLLER_FLAGS: u16 = 0x0005;
+
+const PAK_CHUNK_SIZE: usize = 0x20;
+const DMA_LENGTH_MASK: u32 = 0x00FF_FFFF;
+const CART_ADDRESS_MASK: u32 = 0xFFFF_FFFE;
+const DRAM_ADDRESS_MASK: u32 = 0x00FF_FFFE;
+const DMA_LENGTH_READBACK: u32 = 0x7F;
+const DOMAIN_REGISTER_COUNT: u32 = 4;
+const DOMAIN_PAGE_SIZE_REGISTER: u32 = 2;
+const DOMAIN_RELEASE_REGISTER: u32 = 3;
+const DOMAIN_PAGE_SIZE_MASK: u32 = 0xF;
+const DOMAIN_RELEASE_MASK: u32 = 0x3;
+const PI_STATUS_ERROR: u32 = 1 << 2;
 
 pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
     let reg = (address & 0xFFFF) >> 2;
@@ -21,21 +34,34 @@ pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) 
     }
 }
 
+pub(crate) fn cart_dma_layout(dram_addr: u32, requested_length: u32) -> PiDmaLayout {
+    PiDmaLayout::new(dram_addr, requested_length)
+}
+
 fn dma_transfer(n64: &mut N64, is_read: bool) {
     let handler = get_handler(n64.peripheral.regs[PiRegister::CartAddr as usize]);
 
-    let cart_addr = n64.peripheral.regs[PiRegister::CartAddr as usize] & !1;
-    let dram_addr = n64.peripheral.regs[PiRegister::DramAddr as usize] & 0xFFFFFE;
+    let cart_addr = crate::bits::align_down(n64.peripheral.regs[PiRegister::CartAddr as usize], 2);
+    let dram_addr = n64.peripheral.regs[PiRegister::DramAddr as usize] & DRAM_ADDRESS_MASK;
     let mut length = (n64.peripheral.regs[if is_read {
         PiRegister::RdLen
     } else {
         PiRegister::WrLen
     } as usize]
-        & 0xFFFFFF)
+        & DMA_LENGTH_MASK)
         + 1;
 
-    if length >= 0x7f && (length & 1) != 0 {
-        length += 1;
+    let destination_length;
+
+    if !is_read && cart_addr >= MemoryMap::CartRom as u32 {
+        let layout = cart_dma_layout(dram_addr, length);
+        length = layout.source_length;
+        destination_length = layout.destination_length;
+    } else {
+        if length >= DMA_LENGTH_READBACK && (length & 1) != 0 {
+            length += 1;
+        }
+        destination_length = length;
     }
 
     let cycles = if is_read {
@@ -47,16 +73,16 @@ fn dma_transfer(n64: &mut N64, is_read: bool) {
     create_event(
         n64,
         EventType::PI,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + cycles,
+        n64.cp0_register(MmuRegister::Count) + cycles,
         dma_event,
     );
 
     n64.peripheral.regs[PiRegister::DramAddr as usize] =
-        (n64.peripheral.regs[PiRegister::DramAddr as usize] + length + 7) & !7;
+        crate::bits::align_up(dram_addr + destination_length, 8);
     n64.peripheral.regs[PiRegister::CartAddr as usize] =
-        (n64.peripheral.regs[PiRegister::CartAddr as usize] + length + 1) & !1;
+        crate::bits::align_up_wrapping(cart_addr.wrapping_add(length), 2);
 
-    n64.peripheral.regs[PiRegister::Status as usize] |= PiStatus::DMA_BUSY as u32;
+    n64.peripheral.regs[PiRegister::Status as usize] |= PiStatus::DMA_BUSY;
 }
 
 pub fn dma_read(n64: &mut N64) {
@@ -82,10 +108,24 @@ pub fn get_handler(address: u32) -> PiHandler {
             handler.read = sram::dma_read;
             handler.write = sram::dma_write;
         }
-        _ => panic!("unknown pi handler"),
+        _ => {
+            handler.read = no_device_dma_read;
+            handler.write = no_device_dma_write;
+        }
     }
 
     handler
+}
+
+fn no_device_dma_read(n64: &mut N64, cart_addr: u32, _dram_addr: u32, length: u32) -> u64 {
+    calculate_cycles_for_transfer(n64, 1, cart_addr, length)
+}
+
+fn no_device_dma_write(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) -> u64 {
+    for offset in 0..length {
+        memory::write_rdram_byte(n64, dram_addr.wrapping_add(offset), 0);
+    }
+    calculate_cycles_for_transfer(n64, 1, cart_addr, length)
 }
 
 pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
@@ -124,17 +164,19 @@ fn get_pi_domain(domain_id: i32) -> PiDomain {
 }
 
 pub fn calculate_cycles(n64: &N64, domain_id: i32, length: u32) -> u64 {
-    let regs = DomainRegs::from_device(n64, get_pi_domain(domain_id));
+    let regs = DomainRegs::from_registers(&n64.peripheral.regs, get_pi_domain(domain_id));
 
-    let page_size = 2.0_f64.powf((regs.page_size + PAGE_SIZE_OFFSET) as f64);
-    let total_pages = (length as f64 / page_size).ceil();
+    regs.cycles(length)
+}
 
-    let latency_cycles = (BASE_CYCLES + (regs.latency + 1) as f64) * total_pages;
-    let transfer_cycles =
-        ((regs.pulse_width + 1) as f64 + (regs.release + 1) as f64) * (length as f64 / 2.0);
-    let overhead_cycles = PAGE_CYCLES * total_pages;
-
-    ((latency_cycles + transfer_cycles + overhead_cycles) * RCP_TO_CPU_CLOCK_RATIO) as u64
+pub(crate) fn calculate_cycles_for_transfer(
+    n64: &N64,
+    domain_id: i32,
+    cart_address: u32,
+    length: u32,
+) -> u64 {
+    let regs = DomainRegs::from_registers(&n64.peripheral.regs, get_pi_domain(domain_id));
+    regs.transfer_cycles(cart_address, length)
 }
 
 pub fn dma_event(n64: &mut N64) {
@@ -144,103 +186,3 @@ pub fn dma_event(n64: &mut N64) {
 
     mips::set_rcp_interrupt(n64, mips::MI_INTR_PI);
 }
-
-const CONTROLLER_FLAGS: u16 = 0x0005; // JDT_JOY_ABS_COUNTERS | JDT_JOY_PORT
-const PAK_CHUNK_SIZE: usize = 0x20;
-
-pub fn process(n64: &mut N64, channel: usize) {
-    let cmd = n64.pif.ram[n64.pif.channels[channel].tx_buf.unwrap()];
-    let cmd = unsafe { std::mem::transmute(cmd) };
-
-    match cmd {
-        JoyCommand::Status | JoyCommand::Reset => handle_status(n64, channel),
-        JoyCommand::ControllerRead => handle_read(n64, channel),
-        JoyCommand::PakRead => handle_pak_read(n64, channel),
-        JoyCommand::PakWrite => handle_pak_write(n64, channel),
-    }
-}
-
-fn handle_status(n64: &mut N64, channel: usize) {
-    let rx_buf = n64.pif.channels[channel].rx_buf.unwrap();
-    n64.pif.ram[rx_buf..rx_buf + 2].copy_from_slice(&CONTROLLER_FLAGS.to_ne_bytes());
-    n64.pif.ram[rx_buf + 2] = if n64.pif.channels[channel].pak_handler.is_some() {
-        1
-    } else {
-        0
-    };
-}
-
-fn handle_read(n64: &mut N64, channel: usize) {
-    let offset = n64.pif.channels[channel].rx_buf.unwrap();
-    let input = input::get(&mut n64.ui, channel);
-    n64.pif.ram[offset..offset + 4].copy_from_slice(&input.to_ne_bytes());
-}
-
-fn handle_pak_read(n64: &mut N64, channel: usize) {
-    let (addr_offset, data_offset) = get_pak_offsets(n64, channel);
-    let address = get_pak_address(n64, addr_offset);
-
-    if let Some(handler) = n64.pif.channels[channel].pak_handler {
-        (handler.read)(n64, channel, address, data_offset, PAK_CHUNK_SIZE);
-        n64.pif.ram[data_offset + PAK_CHUNK_SIZE] = calculate_crc(n64, data_offset);
-    }
-}
-
-fn handle_pak_write(n64: &mut N64, channel: usize) {
-    let (addr_offset, data_offset) = get_pak_offsets(n64, channel);
-    let address = get_pak_address(n64, addr_offset);
-
-    if data_offset + PAK_CHUNK_SIZE >= n64.pif.ram.len() {
-        return;
-    }
-
-    if let Some(handler) = n64.pif.channels[channel].pak_handler {
-        (handler.write)(n64, channel, address, data_offset, PAK_CHUNK_SIZE);
-        // Only write CRC if we have space
-        if data_offset + PAK_CHUNK_SIZE < n64.pif.ram.len() {
-            n64.pif.ram[data_offset + PAK_CHUNK_SIZE] = calculate_crc(n64, data_offset);
-        }
-    }
-}
-
-#[inline]
-fn get_pak_address(n64: &N64, addr_offset: usize) -> u16 {
-    (n64.pif.ram[addr_offset] as u16) << 8 | (n64.pif.ram[addr_offset + 1] & 0xe0) as u16
-}
-
-#[inline]
-fn get_pak_offsets(n64: &N64, channel: usize) -> (usize, usize) {
-    let tx = n64.pif.channels[channel].tx_buf.unwrap();
-    let rx = n64.pif.channels[channel].rx_buf.unwrap();
-    (tx + 1, rx)
-}
-
-fn calculate_crc(n64: &N64, data_offset: usize) -> u8 {
-    // Early return if starting offset is already out of bounds
-    if data_offset >= n64.pif.ram.len() {
-        return 0;
-    }
-
-    // Calculate how many bytes we can safely read
-    let available_bytes = n64.pif.ram.len() - data_offset;
-    let chunk_size = std::cmp::min(PAK_CHUNK_SIZE, available_bytes);
-
-    (0..chunk_size).fold(0u8, |crc, i| {
-        (0..8).fold(crc, |crc, bit| {
-            let xor_tap = if crc & 0x80 != 0 { 0x85 } else { 0x00 };
-            let mut crc = crc << 1;
-
-            if n64.pif.ram[data_offset + i] & (0x80 >> bit) != 0 {
-                crc |= 1;
-            }
-            crc ^ xor_tap
-        })
-    })
-}
-
-mod types;
-pub use types::{PiRegister, PiStatus, Peripheral, PiHandler, PakHandler};
-use types::{
-    RCP_TO_CPU_CLOCK_RATIO, BASE_CYCLES, PAGE_CYCLES, PAGE_SIZE_OFFSET, PiDomain, DomainRegs,
-    JoyCommand,
-};

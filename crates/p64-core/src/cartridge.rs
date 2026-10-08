@@ -1,35 +1,49 @@
-use chrono::Datelike;
-use chrono::Timelike;
+mod types;
+pub use types::*;
+mod joybus;
+pub use joybus::process;
 
+use crate::builder::memory::Memory;
 use crate::N64;
-use p64_gui::storage::SaveTypes;
 
 use sha2::{Digest, Sha256};
 
-use super::mmu::add_cycles;
 use super::events::create_event;
 use super::memory;
+use super::mmu::add_cycles;
 use super::peripheral;
 use super::rdram::RDRAM_MASK;
-use super::{
-    builder::memory::Memory,
-    mmu::MmuRegister,
-    events::EventType,
-    peripheral::{PiRegister, PiStatus},
-};
+use super::{events::EventType, mmu::MmuRegister, peripheral::{PiRegister, PiStatus}};
 
 pub const CART_MASK: usize = 0xFFFFFFF;
 
 pub const EEPROM_BLOCK_SIZE: usize = 8;
-pub const EEPROM_MAX_SIZE: usize = 0x800;
 
-#[derive(Clone, Default)]
-pub struct AfRtc {
-    pub control: u16,
-}
+pub const EEPROM_MAX_SIZE: usize = 0x800;
+const ROM_GAME_ID_START: usize = 0x3B;
+const ROM_COUNTRY_OFFSET: usize = 0x3E;
+const IPL3_START: usize = 0x40;
+const IPL3_END: usize = 0x1000;
+const RDRAM_SIZE_BOOT_OFFSET: usize = 0x318;
+const CIC_6105_RDRAM_SIZE_BOOT_OFFSET: usize = 0x3F0;
+const CART_UPPER_HALFWORD_MASK: u32 = 0xffff_0000;
+const PAL_COUNTRY_CODES: &[u8] = b"DFIPSUXY";
 
 pub fn read_mem_fast(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
     n64.cartridge.rom.read_mem_fast(address)
+}
+
+fn read_rom_word(n64: &N64, address: u64) -> u32 {
+    let offset = address as usize & CART_MASK;
+
+    u32::from_be_bytes(std::array::from_fn(|byte| {
+        n64.cartridge
+            .rom
+            .data
+            .get(offset + byte)
+            .copied()
+            .unwrap_or(0)
+    }))
 }
 
 pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
@@ -43,15 +57,20 @@ pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -
     }
 }
 
-pub fn write_mem(n64: &mut N64, _address: u64, value: u32, mask: u32) {
-    n64.cartridge.latch = value & mask;
+pub fn write_mem(n64: &mut N64, _address: u64, value: u32, _mask: u32) {
+    if n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::IO_BUSY != 0 {
+        return;
+    }
+    // PI latches all driven data lines, including the shifted upper bytes
+    // of SB/SH; byte-enable masks do not restrict this write latch.
+    n64.cartridge.latch = value;
     n64.peripheral.regs[PiRegister::Status as usize] |= PiStatus::IO_BUSY;
 
     let cycles = peripheral::calculate_cycles(n64, 1, 4);
     create_event(
         n64,
         EventType::PI,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + cycles,
+        n64.cp0_register(MmuRegister::Count) + cycles,
         peripheral::dma_event,
     );
 }
@@ -105,54 +124,49 @@ pub fn write_cartridge_to_memory(n64: &mut N64, rom_file: Vec<u8>) {
 
     n64.cartridge.rom.data = rom_file.into();
 
-    set_system_region(n64, n64.cartridge.rom.data[0x3E]);
+    set_system_region(n64, n64.cartridge.rom.data[ROM_COUNTRY_OFFSET]);
     set_cic(n64);
 
     n64.ui.game_info.hash = calculate_hash(&n64.cartridge.rom.data);
 
-    n64.ui.game_info.id = String::from_utf8(n64.cartridge.rom.data[0x3B..0x3E].to_vec())
-        .unwrap_or_else(|_| String::from("UNK"));
+    n64.ui.game_info.id =
+        String::from_utf8(n64.cartridge.rom.data[ROM_GAME_ID_START..ROM_COUNTRY_OFFSET].to_vec())
+            .unwrap_or_else(|_| String::from("UNK"));
 }
 
 pub fn load_rom_save(n64: &mut N64) {
-    if n64.ui.save_data.data.romsave.data.is_empty() {
-        return;
-    }
-    for (key, value) in n64.ui.save_data.data.romsave.data.iter() {
-        n64.cartridge.rom[key.parse::<usize>().unwrap()] =
-            serde_json::from_value(value.clone()).unwrap()
-    }
+    n64.restore_rom_save();
 }
 
 pub fn set_system_region(n64: &mut N64, country: u8) {
-    let pal_codes: [u8; 8] = [b'D', b'F', b'I', b'P', b'S', b'U', b'X', b'Y'];
-    n64.cartridge.boot.pal = pal_codes.contains(&country);
+    n64.cartridge.boot.pal = PAL_COUNTRY_CODES.contains(&country);
 }
 
 fn set_cic(n64: &mut N64) {
-    let hash = calculate_hash(&n64.cartridge.rom[0x40..0x1000]);
+    let hash = calculate_hash(&n64.cartridge.rom[IPL3_START..IPL3_END]);
     let (cic_type, cic_seed, rdram_size_offset) = match hash.as_str() {
         "B99F06C4802C2377E31E388435955EF3E99C618A6D55D24699D828EB1075F1EB" => {
-            (CicType::CicNus6101, 0x3F, 0x318)
+            (CicType::CicNus6101, 0x3F, RDRAM_SIZE_BOOT_OFFSET)
         }
         "61E88238552C356C23D19409FE5570EE6910419586BC6FC740F638F761ADC46E" => {
-            (CicType::CicNus6102, 0x3F, 0x318)
+            (CicType::CicNus6102, 0x3F, RDRAM_SIZE_BOOT_OFFSET)
         }
         "BF3620D30817007091EBE9BDDD1B88C23B8A0052170B3309CDE5B6B4238E45E7" => {
-            (CicType::CicNus6103, 0x78, 0x318)
+            (CicType::CicNus6103, 0x78, RDRAM_SIZE_BOOT_OFFSET)
         }
         "04B7BC6717A9F0EB724CF927E74AD3876C381CBB280D841736FC5E55580B756B" => {
-            (CicType::CicNus6105, 0x91, 0x3F0)
+            (CicType::CicNus6105, 0x91, CIC_6105_RDRAM_SIZE_BOOT_OFFSET)
         }
         "36ADC40148AF56F0D78CD505EB6A90117D1FD6F11C6309E52ED36BC4C6BA340E" => {
-            (CicType::CicNus6106, 0x85, 0x318)
+            (CicType::CicNus6106, 0x85, RDRAM_SIZE_BOOT_OFFSET)
         }
         "53C0088FB777870D0AF32F0251E964030E2E8B72E830C26042FD191169508C05" => {
-            (CicType::CicNus5167, 0xdd, 0x318)
+            (CicType::CicNus5167, 0xdd, RDRAM_SIZE_BOOT_OFFSET)
         }
         _ => {
             println!("unknown IPL3 {}", hash);
-            (CicType::CicNus6102, 0x3F, 0x318)
+
+            (CicType::CicNus6102, 0x3F, RDRAM_SIZE_BOOT_OFFSET)
         }
     };
 
@@ -164,34 +178,6 @@ fn set_cic(n64: &mut N64) {
 fn calculate_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
+
     format!("{:X}", hasher.finalize())
 }
-
-fn byte2bcd(mut n: u32) -> u8 {
-    n %= 100;
-    (((n / 10) << 4) | (n % 10)) as u8
-}
-
-fn time2data(n64: &mut N64, offset: usize) {
-    let now: chrono::DateTime<chrono::Local> = chrono::Local::now();
-
-    n64.pif.ram[offset] = byte2bcd(now.second());
-    n64.pif.ram[offset + 1] = byte2bcd(now.minute());
-    n64.pif.ram[offset + 2] = 0x80 + byte2bcd(now.hour());
-    n64.pif.ram[offset + 3] = byte2bcd(now.day());
-    n64.pif.ram[offset + 4] = byte2bcd(now.weekday().num_days_from_sunday());
-    n64.pif.ram[offset + 5] = byte2bcd(now.month());
-    n64.pif.ram[offset + 6] = byte2bcd(now.year() as u32 - 1900);
-    n64.pif.ram[offset + 7] = byte2bcd((now.year() as u32 - 1900) / 100);
-}
-
-mod joybus;
-pub use joybus::{process};
-use joybus::{
-    handle_status_or_reset, handle_eeprom_read, handle_eeprom_write, handle_af_rtc_status,
-    handle_af_rtc_read, handle_af_rtc_write, format_eeprom, eeprom_read_block, eeprom_write_block,
-    af_rtc_read_block, af_rtc_write_block,
-};
-
-mod types;
-pub use types::{CicType, Cartridge, JCmd, Jdt};

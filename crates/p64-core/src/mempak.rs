@@ -100,15 +100,15 @@ fn handle_read_write(
         let offset = (channel * MEMPAK_SIZE) + address as usize;
         if is_write {
             n64.ui.save_data.data.mempak.data[offset..offset + size]
-                .copy_from_slice(&n64.pif.ram[data..data + size]);
+                .copy_from_slice(&n64.pif.memory.ram[data..data + size]);
             n64.ui.save_data.data.mempak.dirty = true;
         } else {
-            n64.pif.ram[data..data + size]
+            n64.pif.memory.ram[data..data + size]
                 .copy_from_slice(&n64.ui.save_data.data.mempak.data[offset..offset + size]);
         }
     } else {
         for i in 0..size {
-            n64.pif.ram[data + i] = 0;
+            n64.pif.memory.ram[data + i] = 0;
         }
     }
 }

@@ -117,3 +117,30 @@ impl N64 {
         (registers, &mut self.rsp.memory.mem.data[..])
     }
 }
+
+impl N64 {
+    pub(crate) fn restore_rom_save(&mut self) {
+        self.cartridge
+            .restore_rom(&self.ui.save_data.data.romsave.data);
+    }
+    pub(crate) fn pak_buffers(&mut self) -> SavePacketBuffers<'_> {
+        let saved = &mut self.ui.save_data.data.mempak;
+        let (save, dirty) = (&mut saved.data, &mut saved.dirty);
+
+        SavePacketBuffers {
+            save,
+            dirty,
+            packet: &mut self.pif.memory.ram,
+        }
+    }
+    pub(crate) fn eeprom_buffers(&mut self) -> SavePacketBuffers<'_> {
+        let saved = &mut self.ui.save_data.data.eeprom;
+        let (save, dirty) = (&mut saved.data, &mut saved.dirty);
+
+        SavePacketBuffers {
+            save,
+            dirty,
+            packet: &mut self.pif.memory.ram,
+        }
+    }
+}

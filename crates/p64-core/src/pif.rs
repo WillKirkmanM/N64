@@ -1,44 +1,37 @@
 use crate::serial;
 
-// use crate::{n64, serial};
-use super::{
-    cartridge,
-    mmu::{add_cycles, MmuRegister},
-    events::{create_event, EventType},
-    memory::{self, masked_write_32},
-    mempak,
-    peripheral::{self, PakHandler},
-    serial::{DmaDir, SerialRegister, SerialStatus},
-    N64,
-};
+use super::{events::{create_event, EventType}, memory::{self}, mmu::{add_cycles, MmuRegister}, serial::{DmaDir, SerialRegister, SerialStatus}, N64};
 
-/// PIF Memory Layout
 pub const PIF_RAM_SIZE: usize = 64;
 const PIF_RAM_OFFSET: usize = 0x7C0;
-const PIF_MASK: usize = 0xFFFF;
+const PIF_MASK: usize = 0x7FF;
 const PIF_CHANNELS_COUNT: usize = 5;
+const MEMORY_READ_CYCLES: u64 = 3000;
+const MEMORY_WRITE_CYCLES: u64 = 3200;
+const TRANSFER_SETUP_CYCLES: usize = 24_000;
+const CHANNEL_TRANSFER_CYCLES: usize = 28_000;
+const CHANNEL_LENGTH_MASK: u8 = 0x3f;
+const CHANNEL_NO_DEVICE: u8 = 0x80;
+const STATUS_READY: u8 = 0x80;
 
-/// PIF RAM Command Values
 const PIF_RAM_COMMAND_ADDR: usize = 0x3F;
 const PIF_CIC_SEED_ADDR1: usize = 0x26;
 const PIF_CIC_SEED_ADDR2: usize = 0x27;
 
-/// Channel Configuration
 const CONTROLLER_CHANNEL: usize = 0;
-const CART_CHANNEL: usize = 4;
+pub(crate) const CART_CHANNEL: usize = 4;
 
-/// RAM Control Bytes
 const RAM_EMPTY: u8 = 0x00;
 const RAM_TERMINATOR: u8 = 0xFE;
 const RAM_SKIP: u8 = 0xFF;
 const RAM_DISABLE: u8 = 0xFD;
 
-/// CIC Challenge Parameters
 const CIC_CHALLENGE_SIZE: usize = 15;
 const CIC_RAM_OFFSET: usize = 0x30;
 const CIC_RESPONSE_LENGTH: usize = 28;
+const CIC_NIBBLE_COUNT: usize = CIC_CHALLENGE_SIZE * 2;
+const CIC_STATUS_OFFSET: usize = 0x2e;
 
-/// CIC Challenge Lookup Tables
 const LUT0: [u8; 16] = [
     0x4, 0x7, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1, 0xC, 0xF, 0x8, 0xF, 0x6, 0x3, 0x6, 0x9,
 ];
@@ -46,48 +39,48 @@ const LUT1: [u8; 16] = [
     0x4, 0x1, 0xA, 0x7, 0xE, 0x5, 0xE, 0x1, 0xC, 0x9, 0x8, 0x5, 0x6, 0x3, 0xC, 0x9,
 ];
 
+mod rom;
+pub use rom::{NTSC_PIF_ROM, PAL_PIF_ROM};
+mod types;
+use types::PifCommand;
+pub use types::{Pif, PifChannel};
+
 pub fn read_mem(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    add_cycles(n64, 3000);
+    add_cycles(n64, MEMORY_READ_CYCLES);
 
     let masked_address = address as usize & PIF_MASK;
-    if masked_address < PIF_RAM_OFFSET {
-        u32::from_be_bytes(
-            n64.pif.rom[masked_address..masked_address + 4]
-                .try_into()
-                .unwrap(),
-        )
+
+    let bytes = if masked_address < PIF_RAM_OFFSET {
+        n64.pif.memory.rom.get(masked_address..masked_address + 4)
     } else {
-        let ram_address = masked_address - PIF_RAM_OFFSET;
-        u32::from_be_bytes(
-            n64.pif.ram[ram_address..ram_address + 4]
-                .try_into()
-                .unwrap(),
-        )
-    }
+        let offset = masked_address - PIF_RAM_OFFSET;
+        n64.pif.memory.ram.get(offset..offset + 4)
+    };
+    bytes
+        .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
+        .unwrap_or(0)
 }
 
-pub fn write_mem(n64: &mut N64, address: u64, value: u32, mask: u32) {
+pub fn write_mem(n64: &mut N64, address: u64, value: u32, _mask: u32) {
     let masked_address = address as usize & PIF_MASK;
 
-    // Hack so n64-systemtest runs.
     if masked_address < PIF_RAM_OFFSET {
         return;
     }
 
     let ram_address = masked_address - PIF_RAM_OFFSET;
-    let mut data = u32::from_be_bytes(
-        n64.pif.ram[ram_address..ram_address + 4]
-            .try_into()
-            .unwrap(),
-    );
-    masked_write_32(&mut data, value, mask);
-    n64.pif.ram[ram_address..ram_address + 4].copy_from_slice(&data.to_be_bytes());
+    // PIF's bus ignores byte enables: SB/SH overwrite the entire word with
+    // the CPU's shifted 32-bit bus value.
+    let Some(destination) = n64.pif.memory.ram.get_mut(ram_address..ram_address + 4) else {
+        return;
+    };
+    destination.copy_from_slice(&value.to_be_bytes());
 
     n64.serial.dma_dir = DmaDir::Write;
     create_event(
         n64,
         EventType::SI,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + 3200,
+        n64.cp0_register(MmuRegister::Count) + MEMORY_WRITE_CYCLES,
         serial::dma_event,
     );
     n64.serial.regs[SerialRegister::Status as usize] |=
@@ -95,20 +88,29 @@ pub fn write_mem(n64: &mut N64, address: u64, value: u32, mask: u32) {
 }
 
 fn process_channel(n64: &mut N64, channel: usize) -> usize {
+    if !validate_command(n64, channel, 1, 0) {
+        return 0;
+    }
     let pif_channel = &mut n64.pif.channels[channel];
-    if pif_channel.tx.is_none() {
+    let Some(tx) = pif_channel.buffers.tx else {
         return 0;
-    }
+    };
 
-    n64.pif.ram[pif_channel.tx.unwrap()] &= 0x3f;
-    n64.pif.ram[pif_channel.rx.unwrap()] &= 0x3f;
+    let rx = pif_channel
+        .buffers
+        .rx
+        .expect("configured PIF receive length");
+    n64.pif.memory.ram[tx] &= CHANNEL_LENGTH_MASK;
+    n64.pif.memory.ram[rx] &= CHANNEL_LENGTH_MASK;
 
-    if pif_channel.process.is_none() {
-        n64.pif.ram[pif_channel.rx.unwrap()] |= 0x80;
+    let Some(process) = pif_channel.process else {
+        n64.pif.memory.ram[rx] |= CHANNEL_NO_DEVICE;
+
         return 0;
-    }
+    };
 
-    (pif_channel.process.unwrap())(n64, channel);
+    process(n64, channel);
+
     1
 }
 
@@ -116,36 +118,72 @@ pub fn update_pif_ram(n64: &mut N64) -> u64 {
     let active_channels = (0..PIF_CHANNELS_COUNT)
         .map(|k| process_channel(n64, k))
         .sum::<usize>();
-    (24000 + (active_channels * 28000)) as u64
+
+    (TRANSFER_SETUP_CYCLES + (active_channels * CHANNEL_TRANSFER_CYCLES)) as u64
 }
 
-fn disable_pif_channel(channel: &mut PifChannel) {
-    channel.tx = None;
-    channel.rx = None;
-    channel.tx_buf = None;
-    channel.rx_buf = None;
+pub(crate) fn command_error(n64: &mut N64, channel: usize) {
+    if let Some(rx) = n64
+        .pif
+        .channels
+        .get(channel)
+        .and_then(|channel| channel.buffers.rx)
+    {
+        if let Some(length) = n64.pif.memory.ram.get_mut(rx) {
+            *length |= CHANNEL_NO_DEVICE;
+        }
+    }
 }
 
-fn setup_pif_channel(n64: &mut N64, channel: usize, buf: usize) -> usize {
-    let tx = n64.pif.ram[buf] & 0x3f;
-    let rx = n64.pif.ram[buf + 1] & 0x3f;
+pub(crate) fn validate_command(
+    n64: &mut N64,
+    channel: usize,
+    minimum_tx: usize,
+    minimum_rx: usize,
+) -> bool {
+    let Some(buffers) = n64.pif.channels.get(channel).map(|channel| channel.buffers) else {
+        return false;
+    };
+    let valid = match (buffers.tx, buffers.rx, buffers.tx_buf, buffers.rx_buf) {
+        (Some(tx), Some(rx), Some(tx_buf), Some(rx_buf))
+            if rx < PIF_RAM_COMMAND_ADDR && tx < PIF_RAM_COMMAND_ADDR =>
+        {
+            let tx_length = (n64.pif.memory.ram[tx] & CHANNEL_LENGTH_MASK) as usize;
+            let rx_length = (n64.pif.memory.ram[rx] & CHANNEL_LENGTH_MASK) as usize;
+            tx_length >= minimum_tx
+                && rx_length >= minimum_rx
+                && tx_buf + tx_length == rx_buf
+                && rx_buf + rx_length <= PIF_RAM_COMMAND_ADDR
+        }
+        _ => false,
+    };
+    if !valid {
+        command_error(n64, channel);
+    }
+    valid
+}
 
-    n64.pif.channels[channel].tx = Some(buf);
-    n64.pif.channels[channel].rx = Some(buf + 1);
-    n64.pif.channels[channel].tx_buf = Some(buf + 2);
-    n64.pif.channels[channel].rx_buf = Some(buf + 2 + tx as usize);
-
-    (2 + tx + rx) as usize
+fn setup_pif_channel(n64: &mut N64, channel: usize, buf: usize) -> Option<usize> {
+    let tx = n64.pif.memory.ram[buf] & CHANNEL_LENGTH_MASK;
+    let rx = n64.pif.memory.ram[buf + 1] & CHANNEL_LENGTH_MASK;
+    let length = 2 + tx as usize + rx as usize;
+    if tx == 0 || buf + length > PIF_RAM_COMMAND_ADDR {
+        n64.pif.memory.ram[buf + 1] |= CHANNEL_NO_DEVICE;
+        return None;
+    }
+    n64.pif.channels[channel].configure(buf, tx);
+    Some(length)
 }
 
 fn setup_channels_format(n64: &mut N64) {
+    n64.pif.channels.iter_mut().for_each(PifChannel::disable);
     let mut ram_idx = 0;
     let mut channel_idx = 0;
 
     while ram_idx < PIF_RAM_SIZE && channel_idx < PIF_CHANNELS_COUNT {
-        match n64.pif.ram[ram_idx] {
-            RAM_EMPTY => {
-                disable_pif_channel(&mut n64.pif.channels[channel_idx]);
+        match n64.pif.memory.ram[ram_idx] {
+            RAM_EMPTY | RAM_DISABLE => {
+                n64.pif.channels[channel_idx].disable();
                 channel_idx += 1;
                 ram_idx += 1;
             }
@@ -153,27 +191,23 @@ fn setup_channels_format(n64: &mut N64) {
             RAM_TERMINATOR => {
                 n64.pif.channels[channel_idx..PIF_CHANNELS_COUNT]
                     .iter_mut()
-                    .for_each(disable_pif_channel);
+                    .for_each(PifChannel::disable);
                 break;
             }
-            RAM_DISABLE => {
-                disable_pif_channel(&mut n64.pif.channels[channel_idx]);
-                channel_idx += 1;
-                ram_idx += 1;
-            }
             _ => {
-                // Check for early termination sequence
-                if ram_idx + 1 < PIF_RAM_SIZE && n64.pif.ram[ram_idx + 1] == RAM_TERMINATOR {
+                if ram_idx + 1 < PIF_RAM_SIZE && n64.pif.memory.ram[ram_idx + 1] == RAM_TERMINATOR {
                     ram_idx += 1;
                     continue;
                 }
 
-                // Check for buffer overflow
                 if ram_idx + 2 >= PIF_RAM_SIZE {
                     break;
                 }
 
-                ram_idx += setup_pif_channel(n64, channel_idx, ram_idx);
+                let Some(length) = setup_pif_channel(n64, channel_idx, ram_idx) else {
+                    break;
+                };
+                ram_idx += length;
                 channel_idx += 1;
             }
         }
@@ -182,18 +216,11 @@ fn setup_channels_format(n64: &mut N64) {
 
 pub fn process_ram(n64: &mut N64) {
     let mut clrmask = 0;
-    let command = n64.pif.ram[PIF_RAM_COMMAND_ADDR];
+    let command = n64.pif.memory.ram[PIF_RAM_COMMAND_ADDR];
 
-    // Process commands using bit patterns
-    [
-        (PifCommand::SetupChannels, 0x01),
-        (PifCommand::ProcessChallenge, 0x02),
-        (PifCommand::Unknown, 0x08),
-        (PifCommand::ClearRom, 0x10),
-        (PifCommand::SetStatusBit, 0x20),
-    ]
-    .into_iter()
-    .for_each(|(cmd, mask)| {
+    for cmd in PifCommand::ALL {
+        let mask = cmd as u8;
+
         if command & mask != 0 {
             match cmd {
                 PifCommand::SetupChannels => {
@@ -203,7 +230,7 @@ pub fn process_ram(n64: &mut N64) {
                 PifCommand::ProcessChallenge => {
                     n64.pif.channels[..PIF_CHANNELS_COUNT]
                         .iter_mut()
-                        .for_each(disable_pif_channel);
+                        .for_each(PifChannel::disable);
                     process_cic_challenge(n64);
                     clrmask |= mask;
                 }
@@ -211,37 +238,36 @@ pub fn process_ram(n64: &mut N64) {
                     clrmask |= mask;
                 }
                 PifCommand::ClearRom => {
-                    n64.pif.rom.fill(0);
+                    n64.pif.memory.rom.fill(0);
                 }
                 PifCommand::SetStatusBit => {
-                    n64.pif.ram[PIF_RAM_COMMAND_ADDR] = 0x80;
+                    n64.pif.memory.ram[PIF_RAM_COMMAND_ADDR] = STATUS_READY;
                 }
             }
         }
-    });
+    }
 
-    n64.pif.ram[PIF_RAM_COMMAND_ADDR] &= !clrmask;
+    n64.pif.memory.ram[PIF_RAM_COMMAND_ADDR] &= !clrmask;
 }
 
 pub fn set_cartridge_region(n64: &mut N64) {
-    n64.pif.rom = match n64.cartridge.boot.pal {
+    n64.pif.memory.rom = match n64.cartridge.boot.pal {
         true => PAL_PIF_ROM,
         false => NTSC_PIF_ROM,
     };
 
     [PIF_CIC_SEED_ADDR1, PIF_CIC_SEED_ADDR2]
         .iter()
-        .for_each(|&addr| n64.pif.ram[addr] = n64.cartridge.boot.cic_seed);
+        .for_each(|&addr| n64.pif.memory.ram[addr] = n64.cartridge.boot.cic_seed);
 }
 
 fn process_cic_challenge(n64: &mut N64) {
-    let mut challenge = [0u8; 30];
-    let mut response = [0u8; 30];
+    let mut challenge = [0u8; CIC_NIBBLE_COUNT];
+    let mut response = [0u8; CIC_NIBBLE_COUNT];
 
-    // Pack bytes into nibbles
     challenge
         .chunks_mut(2)
-        .zip(n64.pif.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE].iter())
+        .zip(n64.pif.memory.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE].iter())
         .for_each(|(chunk, &byte)| {
             chunk[0] = (byte >> 4) & 0xf;
             chunk[1] = byte & 0xf;
@@ -249,31 +275,30 @@ fn process_cic_challenge(n64: &mut N64) {
 
     n64_cic_nus_6105(challenge, &mut response, CIC_RESPONSE_LENGTH);
 
-    // Clear status bytes
-    n64.pif.ram[0x2e..0x30].fill(0);
+    n64.pif.memory.ram[CIC_STATUS_OFFSET..CIC_RAM_OFFSET].fill(0);
 
-    // Unpack nibbles back into bytes
-    n64.pif.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE]
+    n64.pif.memory.ram[CIC_RAM_OFFSET..CIC_RAM_OFFSET + CIC_CHALLENGE_SIZE]
         .iter_mut()
         .zip(response.chunks(2))
         .for_each(|(byte, nibbles)| *byte = (nibbles[0] << 4) | nibbles[1]);
 }
 
-fn n64_cic_nus_6105(challenge: [u8; 30], response: &mut [u8; 30], len: usize) {
+fn n64_cic_nus_6105(
+    challenge: [u8; CIC_NIBBLE_COUNT],
+    response: &mut [u8; CIC_NIBBLE_COUNT],
+    len: usize,
+) {
     let mut key = 0xB;
     let mut current_lut = &LUT0;
 
     for i in 0..len {
-        // Calculate response value
         response[i] = (key + 5 * challenge[i]) & 0xF;
         key = current_lut[response[i] as usize];
 
-        // Calculate sign and magnitude
         let sign = (response[i] >> 3) & 0x1;
         let magnitude = if sign == 1 { !response[i] } else { response[i] } & 0x7;
         let mod_value = if magnitude % 3 == 1 { sign } else { 1 - sign };
 
-        // Determine which lookup table to use next
         current_lut = match (current_lut, response[i]) {
             (&LUT1, 0x1 | 0x9) => &LUT1,
             (&LUT1, 0xB | 0xE) => &LUT0,
@@ -282,10 +307,3 @@ fn n64_cic_nus_6105(challenge: [u8; 30], response: &mut [u8; 30], len: usize) {
         };
     }
 }
-
-mod rom;
-pub use rom::{NTSC_PIF_ROM, PAL_PIF_ROM};
-
-mod types;
-pub use types::{Pif, PifChannel};
-use types::{PifCommand};

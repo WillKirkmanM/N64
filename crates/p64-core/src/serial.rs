@@ -1,12 +1,5 @@
 use crate::{mips, pif};
-use super::{
-    builder::registers::Registers,
-    mmu::MmuRegister,
-    events::{create_event, EventType},
-    memory,
-    rdram::RDRAM_MASK,
-    N64,
-};
+use super::{builder::registers::Registers, mmu::MmuRegister, events::{create_event, EventType}, memory, rdram::RDRAM_MASK, N64};
 
 #[repr(u32)]
 pub enum SerialRegister {
@@ -116,11 +109,11 @@ fn copy_pif_rdram(n64: &mut N64) {
                     .try_into()
                     .unwrap(),
             ),
-            DmaDir::Read => u32::from_be_bytes(n64.pif.ram[i..i + 4].try_into().unwrap()),
+            DmaDir::Read => u32::from_be_bytes(n64.pif.memory.ram[i..i + 4].try_into().unwrap()),
             _ => panic!("si dma unknown"),
         };
         match n64.serial.dma_dir {
-            DmaDir::Write => n64.pif.ram[i..i + 4].copy_from_slice(&data.to_be_bytes()),
+            DmaDir::Write => n64.pif.memory.ram[i..i + 4].copy_from_slice(&data.to_be_bytes()),
             DmaDir::Read => {
                 n64.rdram.mem[dram_addr + i..dram_addr + i + 4].copy_from_slice(&data.to_ne_bytes())
             }
