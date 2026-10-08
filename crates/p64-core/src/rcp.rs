@@ -669,3 +669,6 @@ pub fn cvt_s_l(n64: &mut N64, opcode: u32) {
 pub fn cvt_d_l(n64: &mut N64, opcode: u32) {
     execute_float(n64, opcode, Cop1Opcode::Long, FpuFunction::CvtD);
 }
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod backend_tests;
