@@ -123,6 +123,54 @@ fn reserved_pi_registers_read_zero_and_ignore_writes_through_guest_bus() {
     assert!(crate::events::get_event(&mut n64, EventType::PI).is_none());
 }
 
+#[test]
+fn no_device_pi_dma_completes_with_timing_interrupts_and_zero_bus_data() {
+    let mut n64 = N64::default();
+    memory::initialise_memory_map(&mut n64);
+    for length_register in [PiRegister::RdLen as u32, PiRegister::WrLen as u32] {
+        n64.peripheral.regs[PiRegister::DramAddr as usize] = 0x80;
+        n64.peripheral.regs[PiRegister::CartAddr as usize] = 0;
+        n64.rdram.mem.write_u32(0x80, 0x12345678, u32::MAX);
+        let count = n64.cp0_register(MmuRegister::Count);
+        let cycles = 34;
+        memory::write_data(
+            &mut n64,
+            0x04600000 + length_register as u64 * 4,
+            3,
+            u32::MAX,
+            false,
+        );
+        assert_eq!(
+            crate::events::get_event(&mut n64, EventType::PI)
+                .unwrap()
+                .count,
+            count + cycles
+        );
+        assert_eq!(n64.peripheral.regs[PiRegister::DramAddr as usize], 0x88);
+        assert_eq!(n64.peripheral.regs[PiRegister::CartAddr as usize], 4);
+        assert_eq!(
+            n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::DMA_BUSY,
+            PiStatus::DMA_BUSY
+        );
+        let expected = if length_register == PiRegister::RdLen as u32 {
+            0x12345678
+        } else {
+            0
+        };
+        assert_eq!(n64.rdram.mem.read_u32(0x80), expected);
+        dma_event(&mut n64);
+        assert_eq!(
+            n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::DMA_BUSY,
+            0
+        );
+        assert_eq!(
+            n64.peripheral.regs[PiRegister::Status as usize] & PiStatus::INTERRUPT,
+            PiStatus::INTERRUPT
+        );
+        memory::write_data(&mut n64, 0x04600010, PiStatus::CLR_INTR, u32::MAX, false);
+    }
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
