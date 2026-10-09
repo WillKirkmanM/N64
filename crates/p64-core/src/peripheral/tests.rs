@@ -274,3 +274,35 @@ fn reset_does_not_acknowledge_an_interrupt_or_cancel_an_io_latch_completion() {
     assert!(n64.cpu.scheduler.events[EventType::PI as usize].enabled);
     assert_eq!(n64.cpu.scheduler.events[EventType::PI as usize].count, 100);
 }
+
+#[test]
+fn pi_dma_timing_uses_cart_page_boundaries_and_fifo_buffer_costs() {
+    let mut n64 = N64::default();
+    for domain in [1, 2] {
+        let base = if domain == 1 { 5 } else { 9 };
+        for (offset, value) in [(0, 0x40), (1, 0x12), (2, 7), (3, 3)] {
+            write_regs(&mut n64, (base + offset) * 4, value, u32::MAX);
+        }
+        for (address, bytes, expected) in [
+            (0x10001000, 0x100000, 18_674_436),
+            (0, 0, 0),
+            (0, 1, 156),
+            (0, 127, 2368),
+            (0, 128, 2368),
+            (0, 129, 2556),
+            (0, 512, 9718),
+            (0, 514, 9148),
+            (510, 4, 312),
+            (508, 8, 387),
+            (0xffff_fffe, 4, 312),
+            (0xffff_fffc, 8, 387),
+        ] {
+            assert_eq!(
+                calculate_cycles_for_transfer(&n64, domain, address, bytes),
+                expected,
+                "domain={domain} address={address:08x} bytes={bytes}"
+            );
+        }
+        assert_eq!(calculate_cycles(&n64, domain, 4), 195);
+    }
+}
