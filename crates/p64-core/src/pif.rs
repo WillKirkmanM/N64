@@ -313,3 +313,6 @@ fn n64_cic_nus_6105(
         };
     }
 }
+
+#[cfg(test)]
+mod tests;
