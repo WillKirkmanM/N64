@@ -219,3 +219,6 @@ fn dma_write_flash(n64: &mut N64, cart_addr: u32, dram_addr: u32, length: u32) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
