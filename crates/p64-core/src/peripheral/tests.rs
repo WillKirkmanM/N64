@@ -171,6 +171,50 @@ fn no_device_pi_dma_completes_with_timing_interrupts_and_zero_bus_data() {
     }
 }
 
+#[test]
+fn busy_pi_rejects_every_nonstatus_register_without_replacing_active_dma() {
+    let mut n64 = N64::default();
+    memory::initialise_memory_map(&mut n64);
+    memory::write_data(&mut n64, 0x04600000, 0x80, u32::MAX, false);
+    n64.rdram.mem.write_u32(0x80, 0x12345678, u32::MAX);
+    n64.rdram.mem.write_u32(0x100, 0xabcdef01, u32::MAX);
+    memory::write_data(&mut n64, 0x0460000c, 3, u32::MAX, false);
+    assert_eq!(n64.rdram.mem.read_u32(0x80), 0);
+    let deadline = n64.cpu.scheduler.events[EventType::PI as usize].count;
+    let active_registers = n64.peripheral.regs.as_ref().to_vec();
+    let active_ram = n64.rdram.mem[0x80..0x104].to_vec();
+    for register in 0..13usize {
+        if register == 4 {
+            continue;
+        }
+        memory::write_data(
+            &mut n64,
+            0x04600000 + register as u64 * 4,
+            0x100,
+            u32::MAX,
+            false,
+        );
+        for (index, expected) in active_registers.iter().enumerate() {
+            if index != 4 {
+                assert_eq!(
+                    n64.peripheral.regs[index], *expected,
+                    "register={register} changed={index}"
+                );
+            }
+        }
+        assert_eq!(n64.peripheral.regs[4], 1 | 4);
+        assert_eq!(&n64.rdram.mem[0x80..0x104], active_ram.as_slice());
+        assert!(n64.cpu.scheduler.events[EventType::PI as usize].enabled);
+        assert_eq!(
+            n64.cpu.scheduler.events[EventType::PI as usize].count,
+            deadline
+        );
+    }
+    crate::events::trigger_event(&mut n64);
+    assert_eq!(n64.peripheral.regs[4], 4 | 8);
+    assert_eq!(n64.mips.regs[2] & (1 << 4), 1 << 4);
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
