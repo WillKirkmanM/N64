@@ -236,3 +236,28 @@ fn io_busy_pi_rejects_nonstatus_writes_but_accepts_interrupt_acknowledgement() {
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
+
+#[test]
+fn resetting_dma_cancels_completion_and_cannot_reassert_acknowledged_pi_interrupt() {
+    let mut n64 = N64::default();
+    memory::initialise_memory_map(&mut n64);
+    memory::write_data(&mut n64, 0x04600000, 0x80, u32::MAX, false);
+    n64.rdram.mem.write_u32(0x80, 0x12345678, u32::MAX);
+    memory::write_data(&mut n64, 0x0460000c, 3, u32::MAX, false);
+    let dma_deadline = n64.cpu.scheduler.events[EventType::PI as usize].count;
+    n64.peripheral.regs[4] |= 4 | 8;
+    mips::set_rcp_interrupt(&mut n64, mips::MI_INTR_PI);
+    crate::events::create_event(&mut n64, EventType::VI, dma_deadline + 100, no_pi_interrupt);
+    memory::write_data(&mut n64, 0x04600010, 3, 2, false);
+    assert!(n64.cpu.scheduler.events[EventType::PI as usize].enabled);
+    assert_eq!(n64.peripheral.regs[4], 1 | 4);
+    assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
+    memory::write_data(&mut n64, 0x04600010, 1, 1, false);
+    assert!(!n64.cpu.scheduler.events[EventType::PI as usize].enabled);
+    assert_eq!(n64.peripheral.regs[4], 0);
+    assert_eq!(n64.cpu.scheduler.next_event, EventType::VI as usize);
+    assert_eq!(n64.cpu.scheduler.next_event_count, dma_deadline + 100);
+    assert_eq!(n64.rdram.mem.read_u32(0x80), 0);
+    crate::events::trigger_event(&mut n64);
+    assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
+}
