@@ -103,6 +103,26 @@ fn pak_write_uses_transmit_payload_and_returns_augmented_crc() {
     assert_eq!(n64.pif.memory.ram[37], 0xd1);
 }
 
+#[test]
+fn reserved_pi_registers_read_zero_and_ignore_writes_through_guest_bus() {
+    let mut n64 = N64::default();
+    memory::initialise_memory_map(&mut n64);
+    for address in [0x04600034, 0x0460fffc] {
+        memory::write_data(&mut n64, address, u32::MAX, u32::MAX, false);
+        assert_eq!(
+            memory::read_data(&mut n64, address, memory::AccessSize::Word, false),
+            0
+        );
+    }
+    assert!(n64
+        .peripheral
+        .regs
+        .as_ref()
+        .iter()
+        .all(|register| *register == 0));
+    assert!(crate::events::get_event(&mut n64, EventType::PI).is_none());
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
