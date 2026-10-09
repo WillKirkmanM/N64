@@ -215,6 +215,24 @@ fn busy_pi_rejects_every_nonstatus_register_without_replacing_active_dma() {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 1 << 4);
 }
 
+#[test]
+fn io_busy_pi_rejects_nonstatus_writes_but_accepts_interrupt_acknowledgement() {
+    let mut n64 = N64::default();
+    n64.peripheral.regs[4] = 2 | 8;
+    mips::set_rcp_interrupt(&mut n64, mips::MI_INTR_PI);
+    for register in 0..13usize {
+        if register == 4 {
+            continue;
+        }
+        write_regs(&mut n64, register as u64 * 4, u32::MAX, u32::MAX);
+        assert_eq!(n64.peripheral.regs[register], 0);
+        assert_eq!(n64.peripheral.regs[4], 2 | 4 | 8);
+    }
+    write_regs(&mut n64, 16, 2, u32::MAX);
+    assert_eq!(n64.peripheral.regs[4], 2 | 4);
+    assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
+}
+
 fn no_pi_interrupt(n64: &mut N64) {
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
