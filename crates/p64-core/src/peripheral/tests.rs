@@ -261,3 +261,16 @@ fn resetting_dma_cancels_completion_and_cannot_reassert_acknowledged_pi_interrup
     crate::events::trigger_event(&mut n64);
     assert_eq!(n64.mips.regs[2] & (1 << 4), 0);
 }
+
+#[test]
+fn reset_does_not_acknowledge_an_interrupt_or_cancel_an_io_latch_completion() {
+    let mut n64 = N64::default();
+    n64.peripheral.regs[4] = 2 | 4 | 8;
+    mips::set_rcp_interrupt(&mut n64, mips::MI_INTR_PI);
+    crate::events::create_event(&mut n64, EventType::PI, 100, dma_event);
+    write_regs(&mut n64, 16, 1, u32::MAX);
+    assert_eq!(n64.peripheral.regs[4], 2 | 8);
+    assert_eq!(n64.mips.regs[2] & (1 << 4), 1 << 4);
+    assert!(n64.cpu.scheduler.events[EventType::PI as usize].enabled);
+    assert_eq!(n64.cpu.scheduler.events[EventType::PI as usize].count, 100);
+}
