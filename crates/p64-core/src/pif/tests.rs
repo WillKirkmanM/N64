@@ -29,3 +29,18 @@ fn short_controller_and_cart_commands_report_protocol_errors() {
         assert_ne!(n64.pif.memory.ram[1] & CHANNEL_NO_DEVICE, 0);
     }
 }
+
+#[test]
+fn pif_window_mirrors_the_two_kibibyte_device_aperture() {
+    let mut n64 = N64::default();
+    n64.pif.memory.rom[..4].copy_from_slice(&[0x12, 0x34, 0x56, 0x78]);
+    assert_eq!(
+        read_mem(&mut n64, 0x1fc00800, memory::AccessSize::Word),
+        0x12345678
+    );
+    write_mem(&mut n64, 0x1fc00fc0, 0xaabbccdd, u32::MAX);
+    assert_eq!(
+        read_mem(&mut n64, 0x1fc007c0, memory::AccessSize::Word),
+        0xaabbccdd
+    );
+}
