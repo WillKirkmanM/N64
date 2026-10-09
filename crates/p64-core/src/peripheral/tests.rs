@@ -306,3 +306,24 @@ fn pi_dma_timing_uses_cart_page_boundaries_and_fifo_buffer_costs() {
         assert_eq!(calculate_cycles(&n64, domain, 4), 195);
     }
 }
+
+#[test]
+fn pi_dma_timing_uses_each_programmed_domain_and_its_register_fields() {
+    let mut n64 = N64::default();
+    for (latency, pulse, page, release, expected) in [
+        (0, 0, 0, 0, 34),
+        (1, 0, 0, 0, 36),
+        (0, 1, 0, 0, 37),
+        (0, 0, 0, 1, 37),
+        (0xff, 0xff, 0, 3, 1191),
+    ] {
+        for (offset, value) in [(0, latency), (1, pulse), (2, page), (3, release)] {
+            write_regs(&mut n64, (5 + offset) * 4, value, u32::MAX);
+        }
+        assert_eq!(
+            calculate_cycles_for_transfer(&n64, 1, 0x10000000, 4),
+            expected
+        );
+        assert_eq!(calculate_cycles_for_transfer(&n64, 2, 0x08000000, 4), 34);
+    }
+}
