@@ -1,4 +1,7 @@
-use crate::{opcode::{Cp0Function, Cp0Opcode}, N64};
+use crate::{
+    opcode::{Cp0Function, Cp0Opcode},
+    N64,
+};
 
 type Handler = fn(&mut N64, u32);
 const TABLE_LEN: usize = 32;

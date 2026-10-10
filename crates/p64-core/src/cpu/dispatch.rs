@@ -1,4 +1,7 @@
-use super::{alu, cache_ops, control_flow, hilo, instruction::Instruction, memory_ops, traps, types::Cpu, InstrFn};
+use super::{
+    alu, cache_ops, control_flow, hilo, instruction::Instruction, memory_ops, traps, types::Cpu,
+    InstrFn,
+};
 use crate::opcode::{PrimaryOpcode, RegImmOpcode, SpecialOpcode};
 use crate::{fpu, mmu, rcp, N64};
 use tracing::info;

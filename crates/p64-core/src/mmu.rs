@@ -11,7 +11,9 @@ use crate::{cpu, events, opcode::Cp0Opcode, N64};
 
 use super::cpu::State;
 use super::events::{create_event, EventType};
-use super::exceptions::{break_exception, check_pending_interrupts, reserved_exception, syscall_exception};
+use super::exceptions::{
+    break_exception, check_pending_interrupts, reserved_exception, syscall_exception,
+};
 use super::fpu;
 use super::tlb;
 

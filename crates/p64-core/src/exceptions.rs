@@ -1,6 +1,14 @@
 use crate::cpu;
 
-use super::{cpu::{in_delay_slot, State}, memory::{self, masked_write_64, AccessType}, mmu::{add_cycles, MmuCause, MmuRegister, MmuStatus, MmuXContext::{BadVPN2Mask, RegionMask}}, N64};
+use super::{
+    cpu::{in_delay_slot, State},
+    memory::{self, masked_write_64, AccessType},
+    mmu::{
+        add_cycles, MmuCause, MmuRegister, MmuStatus,
+        MmuXContext::{BadVPN2Mask, RegionMask},
+    },
+    N64,
+};
 
 const GENERAL_VECTOR_OFFSET: u32 = 0x180;
 const EXTENDED_REFILL_VECTOR_OFFSET: u32 = 0x80;

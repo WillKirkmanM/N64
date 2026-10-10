@@ -1,5 +1,13 @@
-use crate::{cache::ICache, mmu::{MmuCause, MmuRegister}, rsp::SpReg2, N64};
-use std::sync::{atomic::{AtomicUsize, Ordering}, OnceLock};
+use crate::{
+    cache::ICache,
+    mmu::{MmuCause, MmuRegister},
+    rsp::SpReg2,
+    N64,
+};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    OnceLock,
+};
 
 const TRACE_LIMIT: usize = 1024;
 

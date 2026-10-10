@@ -149,6 +149,72 @@ fn retired_random(random: u64, wired: u64, length: u64) -> u64 {
     31u64.wrapping_sub(remaining % period) & 63
 }
 
+/// Retires cached kernel loads/stores, leaving misses and unsupported accesses to scalar execution.
+pub fn execute_native_memory_block(
+    n64: &mut N64,
+    block: crate::recompiler::NativeMemoryBlock,
+) -> usize {
+    let status = n64.cp0().status();
+
+    if status.mode() != 0 || status.reverse_endian() {
+        return reject_native(n64, NativeReject::MemoryPrivilege, 0);
+    }
+
+    let Some(mut budget) = native_retirement_budget(
+        n64,
+        block.len(),
+        block.first_opcode(),
+        block.requires_wide(),
+    ) else {
+        return 0;
+    };
+
+    let start_pc = n64.cpu.execution.pc;
+    let start_count = n64.cp0_register(MmuRegister::Count);
+    // Budget one encoded-source load interlock per instruction before any side effect.
+    let Some(worst_count) = start_count.checked_add(block.len() as u64 * 2) else {
+        return 0;
+    };
+
+    if worst_count > n64.cpu.scheduler.next_event_count {
+        return reject_native(n64, NativeReject::EventBudget, 0);
+    }
+
+    let original_fpu_pending = n64.fpu().timing.pending_write;
+    let (retired, extra_cycles, pending_load, data_address) = {
+        let mut context = crate::recompiler::NativeMemoryContext::new(
+            &mut n64.cpu.registers.gpr,
+            &mut n64.memory.caches.dcache,
+            start_pc,
+            n64.cpu.execution.pending_gpr_load,
+            n64.cpu.execution.data_address,
+        );
+        let Some(retired) = n64
+            .execution_engine
+            .execute_prepared_memory_block(block, &mut context)
+        else {
+            return 0;
+        };
+
+        (
+            retired,
+            context.extra_cycles,
+            context.pending_load,
+            context.last_data_address,
+        )
+    };
+    budget.end_pc = start_pc + retired as u64 * 4;
+    budget.end_count = start_count + retired as u64 + extra_cycles;
+    retire_native_integer_instructions(n64, retired, budget);
+    n64.cpu.execution.pending_gpr_load = pending_load;
+    n64.cpu.execution.data_address = data_address;
+    if retired == 1 {
+        n64.fpu_mut().timing.previous_write = original_fpu_pending;
+    }
+
+    retired
+}
+
 pub(crate) fn native_branch_target(start_pc: u64, length: usize, opcode: u32) -> u64 {
     let branch_pc = start_pc.wrapping_add((length as u64 - 1) * 4);
 

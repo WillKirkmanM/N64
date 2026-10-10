@@ -6,7 +6,10 @@ const DOUBLEWORD_SHIFT_MASK: u32 = 63;
 const UPPER_WORD_SHIFT: u32 = 32;
 
 mod operands;
-use operands::{checked_immediate, checked_registers, immediate, immediate_shift, register_shift, registers, unsigned_immediate};
+use operands::{
+    checked_immediate, checked_registers, immediate, immediate_shift, register_shift, registers,
+    unsigned_immediate,
+};
 
 fn word_shift_left(value: u64, amount: u32) -> u64 {
     se32(((value as u32) << amount) as i32)

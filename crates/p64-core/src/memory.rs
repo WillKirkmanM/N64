@@ -1,6 +1,12 @@
-use crate::{audio::{handle_ai_register_read, handle_ai_register_write}, cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, sram, video};
+use crate::{
+    audio::{handle_ai_register_read, handle_ai_register_write},
+    cache, cartridge, mips, peripheral, pif, rdp, rdram, rsp, serial, sram, video,
+};
 
-use super::{cache::{dcache_read, dcache_write}, exceptions, tlb, N64};
+use super::{
+    cache::{dcache_read, dcache_write},
+    exceptions, tlb, N64,
+};
 
 const MASK_64K: usize = 0xFFFF;
 const UNMAPPED_BUS_VALUE: u32 = 3;

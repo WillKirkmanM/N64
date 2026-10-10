@@ -1,5 +1,11 @@
-use super::{State, decode_opcode, execute_decoded_instruction, memory_ops::check_alignment, types::FetchOutcome};
-use crate::{N64, cache, events, memory, mmu::{MmuRegister, add_cycles}};
+use super::{
+    State, decode_opcode, execute_decoded_instruction, memory_ops::check_alignment,
+    types::FetchOutcome,
+};
+use crate::{
+    N64, cache, events, memory,
+    mmu::{MmuRegister, add_cycles},
+};
 
 #[cfg(feature = "accuracy-diagnostics")]
 #[path = "diagnostics.rs"]

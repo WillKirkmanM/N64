@@ -1,4 +1,7 @@
-use super::{is_scalar_idle_branch, native_branch_target, native_retirement_budget, retire_native_integer_instructions};
+use super::{
+    is_scalar_idle_branch, native_branch_target, native_retirement_budget,
+    retire_native_integer_instructions,
+};
 use crate::{recompiler::NativeBranchBlock, N64};
 
 pub(super) struct ExecutedBranch {

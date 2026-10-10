@@ -1,4 +1,20 @@
-use crate::{audio::Audio, cartridge::Cartridge, cpu::Cpu, is_viewer, memory::Memory, mips::Mips, peripheral::Peripheral, pif::Pif, rdp::Rdp, rdram::{Rdram, RdramInterface}, recompiler, rsp::Rsp, serial::Serial, sram::Flashram, video::Video};
+use crate::{
+    audio::Audio,
+    cartridge::Cartridge,
+    cpu::Cpu,
+    is_viewer,
+    memory::Memory,
+    mips::Mips,
+    peripheral::Peripheral,
+    pif::Pif,
+    rdp::Rdp,
+    rdram::{Rdram, RdramInterface},
+    recompiler,
+    rsp::Rsp,
+    serial::Serial,
+    sram::Flashram,
+    video::Video,
+};
 use p64_gui::ui::Ui;
 
 const RDRAM_BYTE_LANE_XOR: usize = std::mem::size_of::<u32>() - 1;

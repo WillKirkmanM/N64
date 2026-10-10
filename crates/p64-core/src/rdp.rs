@@ -1,4 +1,10 @@
-use crate::{builder::registers::{register_index, FlagCommand}, events::{create_event, EventType}, memory, mips, mmu::MmuRegister, N64};
+use crate::{
+    builder::registers::{register_index, FlagCommand},
+    events::{create_event, EventType},
+    memory, mips,
+    mmu::MmuRegister,
+    N64,
+};
 use p64_gui::video;
 
 const ADDRESS_MASK: u32 = 0x00ff_fff8;

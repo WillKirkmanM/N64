@@ -1,5 +1,8 @@
 use super::types::NativeEntryPlan;
-use super::{icache_hit, speculative_cached_address, FetchLatch, ICache, ADDR_MASK, ICACHE_LINE_BYTES, TAG_PAGE_BYTES};
+use super::{
+    icache_hit, speculative_cached_address, FetchLatch, ICache, ADDR_MASK, ICACHE_LINE_BYTES,
+    TAG_PAGE_BYTES,
+};
 use crate::{cpu, N64};
 
 fn native_entry_plan(words: &[u32; 8], start: usize, minimum: usize) -> NativeEntryPlan {
@@ -259,7 +262,22 @@ pub fn try_execute_native_block(n64: &mut N64, physical: u64) -> bool {
     }
 
     prepare_icache_entry(n64, index, word_index);
+    let memory_block = n64.memory.prepared_code.native_memory_blocks[index][word_index]
+        .filter(|block| block_lookahead_is_cached(n64, physical, block.len()))
+        .or_else(|| {
+            n64.memory.prepared_code.native_memory_prefix_blocks[index][word_index]
+                .filter(|block| block_lookahead_is_cached(n64, physical, block.len()))
+        });
 
+    if let Some(block) = memory_block {
+        let retired = cpu::execute_native_memory_block(n64, block);
+
+        if retired != 0 {
+            finish_native_fetch(n64, physical, retired);
+
+            return true;
+        }
+    }
     // Cold or faulting targets need scalar miss and exception timing, even when untaken.
     if let Some(branch) = n64.memory.prepared_code.native_branch_blocks[index][word_index] {
         let target =

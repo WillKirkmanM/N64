@@ -1,4 +1,10 @@
-use super::{entry_hi::{EntryHi, COMPATIBLE_VPN_MASK, EXTENDED_VPN_MASK, VPN_SHIFT}, entry_lo::EntryLo, page::PAGE_BYTES, registers::RegisterSnapshot, TlbPage};
+use super::{
+    entry_hi::{EntryHi, COMPATIBLE_VPN_MASK, EXTENDED_VPN_MASK, VPN_SHIFT},
+    entry_lo::EntryLo,
+    page::PAGE_BYTES,
+    registers::RegisterSnapshot,
+    TlbPage,
+};
 
 const PAGE_MASK_PAIRS: u64 = 0b1010_1010_1010;
 

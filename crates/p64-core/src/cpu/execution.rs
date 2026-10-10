@@ -1,5 +1,9 @@
 use super::{backend, instruction::Instruction, types::PreparedInstruction, InstrFn, State};
-use crate::{fpu, mmu::{self, add_cycles}, N64};
+use crate::{
+    fpu,
+    mmu::{self, add_cycles},
+    N64,
+};
 
 const LOAD_INTERLOCK_CYCLES: u64 = 1;
 const CACHE_TAG_LOAD_CYCLES: u64 = 5;
