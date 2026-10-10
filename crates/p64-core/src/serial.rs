@@ -13,19 +13,29 @@ use crate::{mips, pif};
 const WRITE_DMA_CYCLES: u64 = 5200;
 
 pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
-    n64.serial.regs[((address & 0xFFFF) >> 2) as usize]
+    n64.serial
+        .regs
+        .as_ref()
+        .get(register_index(address))
+        .copied()
+        .unwrap_or(0)
 }
 
 pub fn write_regs(n64: &mut N64, address: u64, value: u32, mask: u32) {
-    let reg = (address & 0xFFFF) >> 2;
+    let reg = register_index(address);
+    if reg >= SerialRegister::RegsCount as usize {
+        return;
+    }
+
     match reg as u32 {
         x if x == SerialRegister::Status as u32 => {
-            n64.serial.regs[reg as usize] &= !SerialStatus::INTERRUPT.bits();
+            n64.serial.regs[reg] &= !SerialStatus::INTERRUPT.bits();
+
             mips::clear_rcp_interrupt(n64, mips::MI_INTR_SI)
         }
         x if x == SerialRegister::PifAddrRd64b as u32 => dma_read(n64),
         x if x == SerialRegister::PifAddrWr64b as u32 => dma_write(n64),
-        _ => memory::masked_write_32(&mut n64.serial.regs[reg as usize], value, mask),
+        _ => memory::masked_write_32(&mut n64.serial.regs[reg], value, mask),
     }
 }
 
