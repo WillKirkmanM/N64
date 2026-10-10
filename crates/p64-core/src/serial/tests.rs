@@ -38,3 +38,23 @@ mod accuracy_tests {
         assert_eq!(n64.byte_swap, 3);
     }
 }
+
+#[test]
+fn si_dma_crossing_installed_ram_reads_zero_and_discards_writes() {
+    let mut n64 = N64::default();
+    n64.serial.regs[SerialRegister::DramAddr as usize] = 0x7ffff8;
+    n64.rdram.mem.write_u32(0x7ffff8, 0x11223344, u32::MAX);
+    n64.rdram.mem.write_u32(0x7ffffc, 0x55667788, u32::MAX);
+    n64.serial.dma_dir = DmaDir::Write;
+    copy_pif_rdram(&mut n64);
+    assert_eq!(
+        &n64.pif.memory.ram[..8],
+        &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
+    );
+    assert!(n64.pif.memory.ram[8..].iter().all(|byte| *byte == 0));
+    n64.pif.memory.ram.fill(0xaa);
+    n64.serial.dma_dir = DmaDir::Read;
+    copy_pif_rdram(&mut n64);
+    assert_eq!(n64.rdram.mem.read_u32(0x7ffffc), 0xaaaaaaaa);
+    assert_eq!(n64.rdram.mem.read_u32(0), 0);
+}
