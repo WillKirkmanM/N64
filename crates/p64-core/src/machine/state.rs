@@ -1,23 +1,7 @@
-use crate::{
-    audio::Audio,
-    cartridge::Cartridge,
-    cpu::Cpu,
-    is_viewer,
-    memory::Memory,
-    mips::Mips,
-    peripheral::Peripheral,
-    pif::Pif,
-    rdp::Rdp,
-    rdram::{Rdram, RdramInterface},
-    recompiler,
-    rsp::Rsp,
-    serial::Serial,
-    sram::Flashram,
-    video::Video,
-};
+use crate::{audio::Audio, cartridge::Cartridge, cpu::Cpu, is_viewer, memory::Memory, mips::Mips, peripheral::Peripheral, pif::Pif, rdp::Rdp, rdram::{Rdram, RdramInterface}, recompiler, rsp::Rsp, serial::Serial, sram::Flashram, video::Video};
 use p64_gui::ui::Ui;
 
-const RDRAM_BYTE_LANE_XOR: usize = if cfg!(target_endian = "little") { 3 } else { 0 };
+const RDRAM_BYTE_LANE_XOR: usize = std::mem::size_of::<u32>() - 1;
 
 pub struct N64 {
     pub ui: Ui,

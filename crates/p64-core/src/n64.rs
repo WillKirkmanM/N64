@@ -1,43 +1,43 @@
-use audio::Audio;
-use cartridge::{load_rom_save, write_cartridge_to_memory, Cartridge};
-use cpu::{start_cpu, Cpu};
-use memory::{initialise_memory_map, Memory};
-use mips::Mips;
-use p64_gui::ui::{load_saves, Ui};
+use cartridge::{load_rom_save, write_cartridge_to_memory};
+use cpu::start_cpu;
+use memory::initialise_memory_map;
+use p64_gui::ui::load_saves;
 use p64_gui::video::start_window;
-use peripheral::Peripheral;
-use pif::{set_cartridge_region, Pif};
-use rdp::Rdp;
-use rdram::{get_rdram_shared_pointer, Rdram, RdramInterface};
-use rom::read_rom;
-use rsp::{start_rsp, Rsp};
-use serial::Serial;
-use sram::Flashram;
-use video::{set_cpu_clock_speed, Video};
+use pif::set_cartridge_region;
+use rdram::get_rdram_shared_pointer;
+use rom::try_read_rom;
+use rsp::start_rsp;
+use video::set_cpu_clock_speed;
 
+pub mod aot;
 pub mod audio;
+mod bits;
+pub mod builder;
 pub mod cache;
 pub mod cartridge;
-pub mod mmu;
-pub mod fpu;
 pub mod cpu;
 pub mod events;
 pub mod exceptions;
-pub mod rcp;
+pub mod fpu;
+pub mod is_viewer;
 pub mod memory;
 pub mod mempak;
 pub mod mips;
+pub mod mmu;
+mod opcode;
 pub mod peripheral;
 pub mod pif;
+pub mod rcp;
 pub mod rdp;
 pub mod rdram;
+pub mod recompiler;
+pub mod rom;
 pub mod rsp;
+mod rsp_vector;
 pub mod serial;
 pub mod sram;
 pub mod tlb;
 pub mod video;
-pub mod builder;
-pub mod rom;
 
 use std::time::Instant;
 
@@ -50,7 +50,7 @@ pub fn run_game(
     height: u32,
     fullscreen: bool,
 ) -> Result<(), String> {
-    let rom = rom::try_read_rom(file_path)
+    let rom = try_read_rom(file_path)
         .map_err(|error| format!("Read ROM {}: {error}", file_path.display()))?;
     write_cartridge_to_memory(device, rom);
 
@@ -100,16 +100,5 @@ pub fn run_game(
         .map_err(|error| format!("Flush saves/configuration: {error}"))
 }
 
-mod bits;
-
-mod opcode;
-
-mod rsp_vector;
-
-pub mod recompiler;
-
-pub mod aot;
-
 mod machine;
 pub use machine::N64;
-pub mod is_viewer;

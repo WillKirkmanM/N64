@@ -5,6 +5,11 @@ use p64_gui::storage::{SaveData, SaveTypes};
 use super::buffers::SavePacketBuffers;
 
 impl N64 {
+    pub(crate) fn restore_rom_save(&mut self) {
+        self.cartridge
+            .restore_rom(&self.ui.save_data.data.romsave.data);
+    }
+
     pub fn has_save_type(&self, save_type: SaveTypes) -> bool {
         self.ui.save_data.save_type.contains(&save_type)
     }
@@ -36,13 +41,13 @@ impl N64 {
     /// Read internal CP0 state without applying guest read hazards.
     #[inline]
     pub fn cp0_register(&self, register: mmu::MmuRegister) -> u64 {
-        self.cp0().regs[register as usize]
+        self.cp0().register(register)
     }
 
     /// Update internal CP0 state; guest writes use MMU instruction handlers.
     #[inline]
     pub fn set_cp0_register(&mut self, register: mmu::MmuRegister, value: u64) {
-        self.cp0_mut().regs[register as usize] = value;
+        self.cp0_mut().set_register(register, value);
     }
 
     #[inline]
@@ -51,8 +56,7 @@ impl N64 {
         register: mmu::MmuRegister,
         update: impl FnOnce(u64) -> u64,
     ) {
-        let value = update(self.cp0_register(register));
-        self.set_cp0_register(register, value);
+        self.cp0_mut().update_register(register, update);
     }
 
     #[inline]
@@ -85,6 +89,17 @@ impl N64 {
         &mut self.rdp
     }
 
+    pub(crate) fn rdp_buffers(&mut self) -> (&mut [u32; 8], &mut [u8]) {
+        let registers = self
+            .rdp
+            .registers
+            .regs_dpc
+            .try_as_array_mut()
+            .expect("RDP register bank has eight words");
+
+        (registers, self.rsp.memory.mem.data_mut())
+    }
+
     #[inline]
     pub fn rsp(&self) -> &Rsp {
         &self.rsp
@@ -104,25 +119,7 @@ impl N64 {
     pub fn save_data_mut(&mut self) -> &mut SaveData {
         &mut self.ui.save_data.data
     }
-}
 
-impl N64 {
-    pub(crate) fn rdp_buffers(&mut self) -> (&mut [u32; 8], &mut [u8]) {
-        let registers = self
-            .rdp
-            .registers
-            .regs_dpc
-            .try_as_array_mut()
-            .expect("RDP register bank has eight words");
-        (registers, &mut self.rsp.memory.mem.data[..])
-    }
-}
-
-impl N64 {
-    pub(crate) fn restore_rom_save(&mut self) {
-        self.cartridge
-            .restore_rom(&self.ui.save_data.data.romsave.data);
-    }
     pub(crate) fn pak_buffers(&mut self) -> SavePacketBuffers<'_> {
         let saved = &mut self.ui.save_data.data.mempak;
         let (save, dirty) = (&mut saved.data, &mut saved.dirty);
@@ -133,6 +130,7 @@ impl N64 {
             packet: &mut self.pif.memory.ram,
         }
     }
+
     pub(crate) fn eeprom_buffers(&mut self) -> SavePacketBuffers<'_> {
         let saved = &mut self.ui.save_data.data.eeprom;
         let (save, dirty) = (&mut saved.data, &mut saved.dirty);

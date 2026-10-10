@@ -1,487 +1,247 @@
-use super::*;
+use super::{se16, se32};
+use crate::{memory, mmu::MmuRegister, N64};
+use address::{MemoryOperand, PhysicalAccess};
+use merge::{MergeLane, MergeSide};
 
-pub(super) fn ldl(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 7;
-    let shift = 8 * n;
+const RDRAM_END: u64 = 0x0080_0000;
+const SP_MEMORY_START: u64 = 0x0400_0000;
+const SP_MEMORY_END: u64 = 0x0404_0000;
+const LL_ADDRESS_SHIFT: u64 = 4;
 
-    let mask = bits_below_mask(8 * n);
+mod address;
+mod merge;
 
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Read);
-    if err {
-        return;
-    }
-    phys_address &= !7;
+pub(super) use address::check_alignment;
 
-    let mut w = [0; 2];
-    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
-    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
-    n64.cpu.registers.gpr[rt(opcode) as usize] = (n64.cpu.registers.gpr[rt(opcode) as usize] & mask)
-        | (((((w[0]) as u64) << 32) | (w[1]) as u64) << shift)
+#[inline]
+pub(crate) fn effective_address(n64: &N64, opcode: u32) -> u64 {
+    MemoryOperand::decode(n64, opcode).address
 }
 
-pub(super) fn ldr(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 7;
-    let shift = 8 * (7 - n);
-
-    let mask = if n == 7 {
-        0
-    } else {
-        bits_above_mask(8 * (n + 1))
+pub(super) fn translate_aligned_address(
+    n64: &mut N64,
+    address: u64,
+    access: memory::AccessType,
+    alignment: u64,
+) -> (u64, bool, bool) {
+    let operand = MemoryOperand {
+        register: 0,
+        address,
     };
 
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Read);
-    if err {
-        return;
+    match operand.aligned(n64, access, alignment) {
+        Some(physical) => (physical.address, physical.cached, false),
+        None => (0, false, true),
     }
-    phys_address &= !7;
+}
 
-    let mut w = [0; 2];
-    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
-    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
-    n64.cpu.registers.gpr[rt(opcode) as usize] = (n64.cpu.registers.gpr[rt(opcode) as usize] & mask)
-        | (((((w[0]) as u64) << 32) | (w[1]) as u64) >> shift)
+#[inline(always)]
+fn load<const WIDTH: u64>(
+    n64: &mut N64,
+    opcode: u32,
+    extend: impl FnOnce(u64) -> u64,
+    linked: bool,
+) {
+    let operand = MemoryOperand::decode(n64, opcode);
+    let Some(physical) = operand.aligned(n64, memory::AccessType::Read, WIDTH) else {
+        return;
+    };
+
+    let value = extend(physical.read::<WIDTH>(n64));
+    n64.cpu_mut().set_gpr(operand.register, value);
+
+    if linked {
+        n64.cpu_mut().registers.llbit = true;
+        n64.set_cp0_register(MmuRegister::LLAddr, physical.address >> LL_ADDRESS_SHIFT);
+    }
+}
+
+#[inline(always)]
+fn store<const WIDTH: u64>(n64: &mut N64, opcode: u32) {
+    let operand = MemoryOperand::decode(n64, opcode);
+    let Some(physical) = operand.aligned(n64, memory::AccessType::Write, WIDTH) else {
+        return;
+    };
+
+    physical.write::<WIDTH>(n64, n64.cpu().gpr(operand.register));
+}
+
+fn load_merge<const WIDTH: u64>(n64: &mut N64, opcode: u32, side: MergeSide) {
+    let operand = MemoryOperand::decode(n64, opcode);
+    let Some((physical, offset)) = operand.merged(n64, memory::AccessType::Read, WIDTH) else {
+        return;
+    };
+
+    let lane = MergeLane::new::<WIDTH>(offset, side);
+    let previous = n64.cpu().gpr(operand.register);
+    let value = physical.read::<WIDTH>(n64);
+    let previous = if WIDTH == 8 {
+        n64.cpu().gpr(operand.register)
+    } else {
+        previous
+    };
+    let merged = match (WIDTH, side) {
+        (4, MergeSide::Left) => se32(lane.load(previous as u32 as u64, value) as i32),
+        (4, MergeSide::Right) if offset == 3 => se32(value as i32),
+        _ => lane.load(previous, value),
+    };
+
+    n64.cpu_mut().set_gpr(operand.register, merged);
+}
+
+fn store_merge<const WIDTH: u64>(n64: &mut N64, opcode: u32, side: MergeSide) {
+    let operand = MemoryOperand::decode(n64, opcode);
+    let Some((physical, offset)) = operand.merged(n64, memory::AccessType::Write, WIDTH) else {
+        return;
+    };
+
+    let lane = MergeLane::new::<WIDTH>(offset, side);
+    let value = lane.store(n64.cpu().gpr(operand.register));
+
+    if WIDTH == 8 {
+        physical.write_doubleword(n64, value, lane.store_mask);
+    } else {
+        physical.write_word(n64, value as u32, lane.store_mask as u32);
+    }
+}
+
+fn store_conditional<const WIDTH: u64>(n64: &mut N64, opcode: u32) {
+    let operand = MemoryOperand::decode(n64, opcode);
+    // Translation still raises faults when the reservation is absent.
+    let Some(physical) = operand.aligned(n64, memory::AccessType::Write, WIDTH) else {
+        return;
+    };
+
+    let success = n64.cpu().registers.llbit;
+
+    if success {
+        let value = n64.cpu().gpr(operand.register);
+
+        if WIDTH == 8 {
+            physical.write_word(n64, (value >> 32) as u32, u32::MAX);
+            PhysicalAccess {
+                address: physical.address + 4,
+                ..physical
+            }
+            .write_word(n64, n64.cpu().gpr(operand.register) as u32, u32::MAX);
+        } else {
+            physical.write::<WIDTH>(n64, value);
+        }
+    }
+    // VR4300 SC does not clear LLBit or compare LLAddr.
+    n64.cpu_mut().set_gpr(operand.register, u64::from(success));
 }
 
 pub(super) fn lb(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    let shift = bshift(phys_address);
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        se8(
-            (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
-                as u8 as i8,
-        )
+    load::<1>(n64, opcode, |v| v as u8 as i8 as i64 as u64, false);
 }
 
 pub(super) fn lh(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    let shift = hshift(phys_address);
-    n64.cpu.registers.gpr[rt(opcode) as usize] = se16(
-        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
-            as u16 as i16,
-    )
-}
-
-pub(super) fn lwl(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 3;
-    let shift = 8 * n;
-
-    let mask = bits_below_mask(8 * n) as u32;
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Read);
-    if err {
-        return;
-    }
-    phys_address &= !3;
-
-    n64.cpu.registers.gpr[rt(opcode) as usize] = se32(
-        ((n64.cpu.registers.gpr[rt(opcode) as usize] as u32) & mask
-            | memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) << shift)
-            as i32,
-    )
+    load::<2>(n64, opcode, |v| se16(v as i16), false);
 }
 
 pub(super) fn lw(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        se32(memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as i32)
+    load::<4>(n64, opcode, |v| se32(v as i32), false);
 }
 
 pub(super) fn lbu(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    let shift = bshift(phys_address);
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
-            as u8 as u64
+    load::<1>(n64, opcode, |v| v as u8 as u64, false);
 }
 
 pub(super) fn lhu(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    let shift = hshift(phys_address);
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        (memory::read_data(n64, phys_address & !0x3, memory::AccessSize::Word, cached) >> shift)
-            as u16 as u64
-}
-
-pub(super) fn lwr(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 3;
-    let shift = 8 * (3 - n);
-
-    let mask = if n == 3 {
-        0
-    } else {
-        bits_above_mask(8 * (n + 1))
-    };
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Read);
-    if err {
-        return;
-    }
-    phys_address &= !3;
-
-    n64.cpu.registers.gpr[rt(opcode) as usize] = se32(
-        ((n64.cpu.registers.gpr[rt(opcode) as usize] as u32) & (mask as u32)
-            | memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) >> shift)
-            as i32,
-    )
+    load::<2>(n64, opcode, |v| v as u16 as u64, false);
 }
 
 pub(super) fn lwu(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as u64
-}
-
-pub(super) fn sb(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Write,
-    );
-    if err {
-        return;
-    }
-
-    let shift = bshift(phys_address);
-
-    memory::write_data(
-        n64,
-        phys_address & !0x3,
-        (n64.cpu.registers.gpr[rt(opcode) as usize] as u32) << shift,
-        0xFF << shift,
-        cached,
-    )
-}
-
-pub(super) fn sh(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Write,
-    );
-    if err {
-        return;
-    }
-
-    let shift = hshift(phys_address);
-
-    memory::write_data(
-        n64,
-        phys_address & !0x3,
-        (n64.cpu.registers.gpr[rt(opcode) as usize] as u32) << shift,
-        0xFFFF << shift,
-        cached,
-    )
-}
-
-pub(super) fn swl(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 3;
-    let shift = 8 * n;
-
-    let mask = if n == 0 {
-        u32::MAX
-    } else {
-        bits_below_mask(8 * (4 - n)) as u32
-    };
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Write);
-    if err {
-        return;
-    }
-    phys_address &= !3;
-
-    memory::write_data(
-        n64,
-        phys_address,
-        (n64.cpu.registers.gpr[rt(opcode) as usize] >> shift) as u32,
-        mask,
-        cached,
-    )
-}
-
-pub(super) fn sw(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Write,
-    );
-    if err {
-        return;
-    }
-
-    memory::write_data(
-        n64,
-        phys_address,
-        n64.cpu.registers.gpr[rt(opcode) as usize] as u32,
-        0xFFFFFFFF,
-        cached,
-    )
-}
-
-pub(super) fn sdl(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 7;
-    let shift = 8 * n;
-
-    let mask = if n == 0 {
-        u64::MAX
-    } else {
-        bits_below_mask(8 * (8 - n))
-    };
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Write);
-    if err {
-        return;
-    }
-    phys_address &= !7;
-
-    let value = n64.cpu.registers.gpr[rt(opcode) as usize] >> shift;
-    memory::write_data(
-        n64,
-        phys_address,
-        (value >> 32) as u32,
-        (mask >> 32) as u32,
-        cached,
-    );
-    memory::write_data(n64, phys_address + 4, value as u32, mask as u32, cached)
-}
-
-pub(super) fn sdr(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 7;
-    let shift = 8 * (7 - n);
-
-    let mask = bits_above_mask(8 * (7 - n));
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Write);
-    if err {
-        return;
-    }
-    phys_address &= !7;
-
-    let value = n64.cpu.registers.gpr[rt(opcode) as usize] << shift;
-    memory::write_data(
-        n64,
-        phys_address,
-        (value >> 32) as u32,
-        (mask >> 32) as u32,
-        cached,
-    );
-    memory::write_data(n64, phys_address + 4, value as u32, mask as u32, cached)
-}
-
-pub(super) fn swr(n64: &mut N64, opcode: u32) {
-    let addr = n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16));
-    let n = addr & 3;
-    let shift = 8 * (3 - n);
-
-    let mask = bits_above_mask(8 * (3 - n)) as u32;
-
-    let (mut phys_address, cached, err) =
-        memory::translate_address(n64, addr, memory::AccessType::Write);
-    if err {
-        return;
-    }
-    phys_address &= !3;
-
-    memory::write_data(
-        n64,
-        phys_address,
-        (n64.cpu.registers.gpr[rt(opcode) as usize] << shift) as u32,
-        mask,
-        cached,
-    )
-}
-
-pub(super) fn ll(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    n64.cpu.registers.gpr[rt(opcode) as usize] =
-        se32(memory::read_data(n64, phys_address, memory::AccessSize::Word, cached) as i32);
-    n64.cpu.registers.llbit = true;
-    n64.cpu.mmu.regs[MmuRegister::LLAddr as usize] = phys_address >> 4
-}
-
-pub(super) fn lld(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
-
-    let mut w = [0; 2];
-    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
-    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
-    n64.cpu.registers.gpr[rt(opcode) as usize] = ((w[0] as u64) << 32) | (w[1]) as u64;
-
-    n64.cpu.registers.llbit = true;
-    n64.cpu.mmu.regs[MmuRegister::LLAddr as usize] = phys_address >> 4
+    load::<4>(n64, opcode, |v| v, false);
 }
 
 pub(super) fn ld(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Read,
-    );
-    if err {
-        return;
-    }
+    load::<8>(n64, opcode, |v| v, false);
+}
 
-    let mut w = [0; 2];
-    w[0] = memory::read_data(n64, phys_address, memory::AccessSize::Dword, cached);
-    w[1] = memory::read_data(n64, phys_address + 4, memory::AccessSize::Dword, cached);
-    n64.cpu.registers.gpr[rt(opcode) as usize] = ((w[0] as u64) << 32) | (w[1]) as u64
+pub(super) fn ll(n64: &mut N64, opcode: u32) {
+    load::<4>(n64, opcode, |v| se32(v as i32), true);
+}
+
+pub(super) fn lld(n64: &mut N64, opcode: u32) {
+    load::<8>(n64, opcode, |v| v, true);
+}
+
+pub(super) fn lwl(n64: &mut N64, opcode: u32) {
+    load_merge::<4>(n64, opcode, MergeSide::Left);
+}
+
+pub(super) fn lwr(n64: &mut N64, opcode: u32) {
+    load_merge::<4>(n64, opcode, MergeSide::Right);
+}
+
+pub(super) fn ldl(n64: &mut N64, opcode: u32) {
+    load_merge::<8>(n64, opcode, MergeSide::Left);
+}
+
+pub(super) fn ldr(n64: &mut N64, opcode: u32) {
+    load_merge::<8>(n64, opcode, MergeSide::Right);
+}
+
+pub(super) fn sb(n64: &mut N64, opcode: u32) {
+    store::<1>(n64, opcode);
+}
+
+pub(super) fn sh(n64: &mut N64, opcode: u32) {
+    store::<2>(n64, opcode);
+}
+
+pub(super) fn sw(n64: &mut N64, opcode: u32) {
+    store::<4>(n64, opcode);
 }
 
 pub(super) fn sc(n64: &mut N64, opcode: u32) {
-    if n64.cpu.registers.llbit {
-        let (phys_address, cached, err) = memory::translate_address(
-            n64,
-            n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-            memory::AccessType::Write,
-        );
-        if err {
-            return;
-        }
-
-        n64.cpu.registers.llbit = false;
-        memory::write_data(
-            n64,
-            phys_address,
-            n64.cpu.registers.gpr[rt(opcode) as usize] as u32,
-            0xFFFFFFFF,
-            cached,
-        );
-        n64.cpu.registers.gpr[rt(opcode) as usize] = 1
-    } else {
-        n64.cpu.registers.gpr[rt(opcode) as usize] = 0
-    }
+    store_conditional::<4>(n64, opcode);
 }
 
 pub(super) fn scd(n64: &mut N64, opcode: u32) {
-    if n64.cpu.registers.llbit {
-        let (phys_address, cached, err) = memory::translate_address(
-            n64,
-            n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-            memory::AccessType::Write,
-        );
-        if err {
-            return;
-        }
+    store_conditional::<8>(n64, opcode);
+}
 
-        n64.cpu.registers.llbit = false;
-        memory::write_data(
-            n64,
-            phys_address,
-            (n64.cpu.registers.gpr[rt(opcode) as usize] >> 32) as u32,
-            0xFFFFFFFF,
-            cached,
-        );
-        memory::write_data(
-            n64,
-            phys_address + 4,
-            n64.cpu.registers.gpr[rt(opcode) as usize] as u32,
-            0xFFFFFFFF,
-            cached,
-        );
-        n64.cpu.registers.gpr[rt(opcode) as usize] = 1
-    } else {
-        n64.cpu.registers.gpr[rt(opcode) as usize] = 0
-    }
+pub(super) fn swl(n64: &mut N64, opcode: u32) {
+    store_merge::<4>(n64, opcode, MergeSide::Left);
+}
+
+pub(super) fn swr(n64: &mut N64, opcode: u32) {
+    store_merge::<4>(n64, opcode, MergeSide::Right);
+}
+
+pub(super) fn sdl(n64: &mut N64, opcode: u32) {
+    store_merge::<8>(n64, opcode, MergeSide::Left);
+}
+
+pub(super) fn sdr(n64: &mut N64, opcode: u32) {
+    store_merge::<8>(n64, opcode, MergeSide::Right);
 }
 
 pub(super) fn sd(n64: &mut N64, opcode: u32) {
-    let (phys_address, cached, err) = memory::translate_address(
-        n64,
-        n64.cpu.registers.gpr[rs(opcode) as usize].wrapping_add(se16(imm(opcode) as i16)),
-        memory::AccessType::Write,
-    );
-    if err {
+    let operand = MemoryOperand::decode(n64, opcode);
+    let Some(physical) = operand.aligned(n64, memory::AccessType::Write, 8) else {
+        return;
+    };
+
+    let value = n64.cpu().gpr(operand.register);
+
+    if !physical.cached && physical.address < RDRAM_END && crate::mips::repeat_enabled(n64) {
+        crate::rdram::write_mem_double_repeat(n64, physical.address, value);
         return;
     }
 
-    memory::write_data(
-        n64,
-        phys_address,
-        (n64.cpu.registers.gpr[rt(opcode) as usize] >> 32) as u32,
-        0xFFFFFFFF,
-        cached,
-    );
-    memory::write_data(
-        n64,
-        phys_address + 4,
-        n64.cpu.registers.gpr[rt(opcode) as usize] as u32,
-        0xFFFFFFFF,
-        cached,
-    )
+    physical.write_word(n64, (value >> 32) as u32, u32::MAX);
+    // The SP memory bus accepts only the first word of a doubleword store.
+    if !physical.cached && (SP_MEMORY_START..SP_MEMORY_END).contains(&physical.address) {
+        return;
+    }
+
+    PhysicalAccess {
+        address: physical.address + 4,
+        ..physical
+    }
+    .write_word(n64, n64.cpu().gpr(operand.register) as u32, u32::MAX);
 }

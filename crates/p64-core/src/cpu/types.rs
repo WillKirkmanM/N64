@@ -44,7 +44,7 @@ impl Default for Cpu {
     fn default() -> Self {
         info!("Initialising CPU...");
         let cpu = Self {
-            mmu: Mmu::default(),
+            mmu: Mmu::initialized(),
             fpu: Fpu::default(),
             rcp: Rcp::default(),
             branch_state: BranchState::default(),

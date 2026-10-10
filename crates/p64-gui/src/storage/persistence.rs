@@ -3,6 +3,9 @@ use std::{fs::read, io, path::Path};
 
 const SAVE_EXTENSIONS: [&str; 5] = ["eep", "sra", "fla", "mpk", "romsave"];
 
+#[cfg(test)]
+mod tests;
+
 impl SaveData {
     pub fn set_paths(&mut self, directory: &Path, id: &str, hash: &str) {
         let paths = [
@@ -121,6 +124,3 @@ fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
         Err(error) => Err(error),
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,4 +1,6 @@
-use super::*;
+use crate::builder::registers::Registers;
+
+mod metadata;
 
 #[repr(u32)]
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -20,10 +22,28 @@ pub enum MmuRegister {
     PrevID = 15,
     Config = 16,
     LLAddr = 17,
+    WatchLo = 18,
+    WatchHi = 19,
     XContext = 20,
+    ParityErr = 26,
+    CacheErr = 27,
     TagLo = 28,
+    TagHi = 29,
     ErrorEPC = 30,
     RegsCount = 32,
+}
+
+impl<T> std::ops::Index<MmuRegister> for Registers<T> {
+    type Output = T;
+    fn index(&self, reg: MmuRegister) -> &Self::Output {
+        &self.regs[reg as usize]
+    }
+}
+
+impl<T> std::ops::IndexMut<MmuRegister> for Registers<T> {
+    fn index_mut(&mut self, reg: MmuRegister) -> &mut Self::Output {
+        &mut self.regs[reg as usize]
+    }
 }
 
 #[repr(u64)]
@@ -39,16 +59,16 @@ pub enum MmuStatus {
 
 #[repr(u64)]
 pub enum MmuCause {
-    ExccodeAdEL = 4 << 2,
-    ExccodeAdES = 5 << 2,
-    ExccodeOv = 12 << 2,
     ExccodeMod = 1 << 2,
     ExccodeTLBL = 2 << 2,
     ExccodeTLBS = 3 << 2,
+    ExccodeAdEL = 4 << 2,
+    ExccodeAdES = 5 << 2,
     ExccodeSys = 8 << 2,
     ExccodeBP = 9 << 2,
     ExccodeRI = 10 << 2,
     ExccodeCPU = 11 << 2,
+    ExccodeOv = 12 << 2,
     ExccodeTR = 13 << 2,
     ExccodeFPE = 15 << 2,
     IP2 = 1 << 10,
@@ -56,31 +76,30 @@ pub enum MmuCause {
     BD = 1 << 31,
     CE1 = 1 << 28,
     CE2 = 1 << 29,
-    IPMask = 0b00000000000000001111111100000000,
-    ExccodeMask = 0x1F << 2,
+    IPMask = 0xff00,
+    ExccodeMask = 0x1f << 2,
 }
 
 #[repr(u64)]
 pub enum MmuXContext {
-    BadVPN2Mask = 0b01111111111111111111111111110000,
-    RegionMask = 0b110000000000000000000000000000000,
+    BadVPN2Mask = 0x7fff_fff0,
+    RegionMask = 0x0000_0001_8000_0000,
 }
 
 #[repr(u64)]
 pub enum MmuMask {
-    Index = 0b10000000000000000000000000111111,
-    EntryLo = 0b0000000000000000000000000000000000111111111111111111111111111111,
-    Context = 0b1111111111111111111111111111111111111111100000000000000000000000,
-    PageMask = 0b00000001111111111110000000000000,
-    Wired = 0b00000000000000000000000000111111,
-    EntryHi = 0b1100000000000000000000001111111111111111111111111110000011111111,
-    Status = 0b11111111010101111111111111111111,
-    Cause = 0b00000000000000000000001100000000,
-    Config = 0b00001111000000001000000000001111,
-    LLAddr = 0b11111111111111111111111111111111,
-    WatchLo = 0b11111111111111111111111111111011,
-    WatchHi = 0b00000000000000000000000000001111,
-    XContext = 0b1111111111111111111111111111111000000000000000000000000000000000,
-    ParityErr = 0b00000000000000000000000011111111,
-    TagLo = 0b00001111111111111111111111000000,
+    Index = 0x8000_003f,
+    EntryLo = 0x3fff_ffff,
+    Context = 0xffff_ffff_ff80_0000,
+    PageMask = 0x01ff_e000,
+    Wired = 0x3f,
+    EntryHi = 0xc000_00ff_ffff_e0ff,
+    Status = 0xff57_ffff,
+    Cause = 0x300,
+    Config = 0x0f00_800f,
+    LLAddr = 0xffff_ffff,
+    WatchLo = 0xffff_fffb,
+    WatchHi = 0xf,
+    XContext = 0xffff_fffe_0000_0000,
+    ParityErr = 0xff,
 }

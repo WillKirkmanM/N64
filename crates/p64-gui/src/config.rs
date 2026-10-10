@@ -24,6 +24,9 @@ impl Config {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 impl Config {
     pub fn load(directory: &std::path::Path) -> std::io::Result<Self> {
         let current = directory.join("input.json");
@@ -53,6 +56,3 @@ impl Config {
         crate::storage::atomic_write(path, &serde_json::to_vec_pretty(self)?)
     }
 }
-
-#[cfg(test)]
-mod tests;

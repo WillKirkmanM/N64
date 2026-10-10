@@ -1,41 +1,53 @@
-use crate::{cpu, events, N64};
-use crate::tlb::TlbEntry;
+mod instruction;
+mod registers;
+mod state;
+mod status;
+
+pub use registers::{MmuCause, MmuMask, MmuRegister, MmuStatus, MmuXContext};
+pub use state::{Mmu, MmuClock, MmuInstructionTables, MmuRegisters, MmuTranslations};
+pub use status::Status;
+
+use crate::{cpu, events, opcode::Cp0Opcode, N64};
 
 use super::cpu::State;
 use super::events::{create_event, EventType};
-use super::exceptions::{
-    break_exception, check_pending_interrupts, reserved_exception, syscall_exception,
-};
-use super::{memory, tlb};
-use super::{fpu, tlb::TlbLookupTable};
-use super::builder::registers::Registers;
-use crate::mmu;
+use super::exceptions::{break_exception, check_pending_interrupts, reserved_exception, syscall_exception};
+use super::fpu;
+use super::tlb;
 
-impl<T> std::ops::Index<MmuRegister> for Registers<T> {
-    type Output = T;
-    fn index(&self, reg: MmuRegister) -> &Self::Output {
-        &self.regs[reg as usize]
-    }
-}
+pub use instruction::{MMU_INSTRUCTIONS, MMU_SECONDARY_INSTRUCTIONS};
 
-impl<T> std::ops::IndexMut<MmuRegister> for Registers<T> {
-    fn index_mut(&mut self, reg: MmuRegister) -> &mut Self::Output {
-        &mut self.regs[reg as usize]
-    }
-}
+const COUNT_CYCLE_SHIFT: u32 = 1;
+const COMPARE_PERIOD_CYCLES: u64 = (1_u64 << u32::BITS) << COUNT_CYCLE_SHIFT;
 
 pub fn add_cycles(n64: &mut N64, cycles: u64) {
-    n64.cpu.mmu.regs[MmuRegister::Count as usize] += cycles
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] += cycles
+}
+
+pub fn begin_instruction(n64: &mut N64) {
+    n64.cp0_mut().begin_instruction()
+}
+
+fn count_cycles(n64: &N64) -> u64 {
+    n64.cp0().count_cycles()
 }
 
 pub fn syscall(n64: &mut N64, _opcode: u32) {
     syscall_exception(n64)
 }
+
 pub fn break_(n64: &mut N64, _opcode: u32) {
     break_exception(n64)
 }
+
 pub fn reserved(n64: &mut N64, _opcode: u32) {
     reserved_exception(n64, 0)
+}
+
+fn move_from_cp0(n64: &mut N64, opcode: u32, extend: impl FnOnce(u64) -> u64) {
+    let instruction = cpu::Instruction::decode(opcode);
+    let value = extend(get_control_registers(n64, instruction.rd as u32));
+    n64.cpu_mut().set_gpr(instruction.rt, value);
 }
 
 fn mfc0(n64: &mut N64, opcode: u32) {
@@ -48,29 +60,28 @@ fn dmfc0(n64: &mut N64, opcode: u32) {
 }
 
 fn mtc0(n64: &mut N64, opcode: u32) {
-    mmu::set_control_registers(
-        n64,
-        cpu::rd(opcode),
-        cpu::se32(n64.cpu.registers.gpr[cpu::rt(opcode) as usize] as u32 as i32),
-    )
+    add_cycles(n64, 1);
+    // VR4300 transfers the full GPR even for MTC0; each CP0 register applies its own mask.
+    let data = n64.cpu().gpr(cpu::rt(opcode) as usize);
+
+    set_control_registers(n64, cpu::rd(opcode), data)
 }
 
 fn dmtc0(n64: &mut N64, opcode: u32) {
-    mmu::set_control_registers(
-        n64,
-        cpu::rd(opcode),
-        n64.cpu.registers.gpr[cpu::rt(opcode) as usize],
-    )
+    mtc0(n64, opcode)
 }
 
 fn tlbr(n64: &mut N64, _opcode: u32) {
-    tlb::read(n64, n64.cpu.mmu.regs[MmuRegister::Index as usize])
+    tlb::read(n64, n64.cpu.mmu.registers.regs[MmuRegister::Index as usize])
 }
+
 fn tlbwi(n64: &mut N64, _opcode: u32) {
-    tlb::write(n64, n64.cpu.mmu.regs[MmuRegister::Index as usize])
+    tlb::write(n64, n64.cpu.mmu.registers.regs[MmuRegister::Index as usize])
 }
+
 fn tlbwr(n64: &mut N64, _opcode: u32) {
-    let random = set_random_register(n64);
+    let random = n64.cp0_register(MmuRegister::Random);
+
     tlb::write(n64, random)
 }
 
@@ -79,12 +90,12 @@ fn tlbp(n64: &mut N64, _opcode: u32) {
 }
 
 fn eret(n64: &mut N64, _opcode: u32) {
-    if n64.cpu.mmu.regs[MmuRegister::Status as usize] & MmuStatus::ERL as u64 != 0 {
-        n64.cpu.execution.pc = n64.cpu.mmu.regs[MmuRegister::ErrorEPC as usize];
-        n64.cpu.mmu.regs[MmuRegister::Status as usize] &= !(MmuStatus::ERL as u64)
+    if n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] & MmuStatus::ERL as u64 != 0 {
+        n64.cpu.execution.pc = n64.cpu.mmu.registers.regs[MmuRegister::ErrorEPC as usize];
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] &= !(MmuStatus::ERL as u64)
     } else {
-        n64.cpu.execution.pc = n64.cpu.mmu.regs[MmuRegister::EPC as usize];
-        n64.cpu.mmu.regs[MmuRegister::Status as usize] &= !(MmuStatus::EXL as u64)
+        n64.cpu.execution.pc = n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize];
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] &= !(MmuStatus::EXL as u64)
     }
     n64.cpu.branch_state.state = State::Exception;
     n64.cpu.registers.llbit = false;
@@ -92,66 +103,105 @@ fn eret(n64: &mut N64, _opcode: u32) {
 }
 
 fn execute_cp0(n64: &mut N64, opcode: u32) {
-    n64.cpu.mmu.instrs2[(opcode & 0x3F) as usize](n64, opcode)
+    n64.cpu.mmu.instructions.instrs2[(opcode & 0x3F) as usize](n64, opcode)
 }
+
+pub fn execute_checked_cp0(n64: &mut N64, opcode: u32) {
+    if !n64.cp0().status().cp0_usable() {
+        crate::exceptions::cop_unusable_exception(n64, 0);
+        return;
+    }
+
+    let selector = cpu::rs(opcode) as usize;
+    if matches!(
+        Cp0Opcode::from_encoding(selector),
+        Some(Cp0Opcode::Dmfc0 | Cp0Opcode::Dmtc0)
+    ) && !n64.cp0().status().wide_instructions_allowed()
+    {
+        reserved(n64, opcode);
+        return;
+    }
+
+    let instruction = n64.cp0().instructions.instrs[selector];
+
+    instruction(n64, opcode)
+}
+
+fn cp0_noop(_n64: &mut N64, _opcode: u32) {}
 
 fn get_control_registers(n64: &N64, index: u32) -> u64 {
     match index {
-        x if x == MmuRegister::Count as u32 => n64.cpu.mmu.regs[index as usize] >> 1,
-        x if x == MmuRegister::Random as u32 => set_random_register(n64),
-        7 | 21 | 22 | 23 | 24 | 25 | 31 => n64.cpu.mmu.reg_latch,
-        _ => n64.cpu.mmu.regs[index as usize],
+        x if x == MmuRegister::Count as u32 => {
+            (count_cycles(n64) >> COUNT_CYCLE_SHIFT) & u64::from(u32::MAX)
+        }
+        x if x == MmuRegister::Random as u32 => n64.cp0_register(MmuRegister::Random),
+        7 | 21 | 22 | 23 | 24 | 25 | 31 => n64.cp0().registers.reg_latch,
+        _ => n64.cp0().control_register(index),
     }
 }
 
 fn set_control_registers(n64: &mut N64, index: u32, mut data: u64) {
-    n64.cpu.mmu.reg_latch = data;
+    n64.cp0_mut().registers.reg_latch = data;
     match index {
         x if x == MmuRegister::Count as u32 => {
-            data &= 0xFFFFFFFF;
-            data <<= 1;
-            events::translate_events(n64, n64.cpu.mmu.regs[MmuRegister::Count as usize], data);
-            n64.cpu.mmu.regs[MmuRegister::Count as usize] = data;
+            write_count(n64, (data & u64::from(u32::MAX)) << COUNT_CYCLE_SHIFT);
             return;
         }
-        x if x == MmuRegister::Wired as u32 => n64.cpu.mmu.regs[MmuRegister::Random as usize] = 31,
+        x if x == MmuRegister::Wired as u32 => n64.cp0_mut().defer_wired_reset(),
         x if x == MmuRegister::Compare as u32 => {
-            data &= 0xFFFFFFFF;
-            let current_count = (n64.cpu.mmu.regs[MmuRegister::Count as usize] >> 1) & 0xFFFFFFFF;
-            let mut compare_event_diff = (data as u32).wrapping_sub(current_count as u32);
-
-            if compare_event_diff == 0 {
-                compare_event_diff += u32::MAX
-            }
-
-            create_event(
-                n64,
-                EventType::Compare,
-                n64.cpu.mmu.regs[MmuRegister::Count as usize] + ((compare_event_diff as u64) << 1),
-                compare_event,
-            );
-            n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::IP7 as u64);
+            data &= u64::from(u32::MAX);
+            schedule_compare(n64, data);
+            n64.cp0_mut()
+                .update_register(MmuRegister::Cause, |value| value & !(MmuCause::IP7 as u64));
         }
-        x if x == MmuRegister::Status as u32 => {
-            if data & MmuStatus::FR as u64
-                != n64.cpu.mmu.regs[index as usize] & MmuStatus::FR as u64
-            {
-                fpu::set_fgr_registers(n64, data)
-            }
+        x if x == MmuRegister::Status as u32
+            && data & MmuStatus::FR as u64
+                != n64.cp0_register(MmuRegister::Status) & MmuStatus::FR as u64 =>
+        {
+            fpu::set_fgr_registers(n64, data)
         }
         _ => {}
     }
-    memory::masked_write_64(
-        &mut n64.cpu.mmu.regs[index as usize],
-        data,
-        n64.cpu.mmu.reg_write_masks[index as usize],
+
+    n64.cp0_mut().write_masked(index as usize, data);
+    crate::exceptions::schedule_pending_interrupts(n64);
+}
+
+fn write_count(n64: &mut N64, count: u64) {
+    // Other devices retain their remaining time; Compare matches the newly
+    // written Count while preserving its two-cycle pause.
+    let previous = n64.cp0_register(MmuRegister::Count);
+    events::remove_event(n64, EventType::Compare);
+    events::translate_events(n64, previous, count);
+    crate::rdp::count_changed(n64, previous, count);
+    crate::rdram::count_changed(n64, previous, count);
+    let cp0 = n64.cp0_mut();
+    cp0.set_register(MmuRegister::Count, count);
+    cp0.clock.count_write_origin = Some(count);
+    schedule_compare(n64, n64.cp0_register(MmuRegister::Compare));
+}
+
+fn schedule_compare(n64: &mut N64, compare: u64) {
+    let count = n64.cp0_register(MmuRegister::Count);
+    let counter = count_cycles(n64);
+    let mut ticks = (compare as u32).wrapping_sub((counter >> COUNT_CYCLE_SHIFT) as u32) as u64;
+
+    if ticks == 0 {
+        ticks = COMPARE_PERIOD_CYCLES >> COUNT_CYCLE_SHIFT;
+    }
+
+    let pause_remaining = n64.cp0().count_pause_remaining();
+    create_event(
+        n64,
+        EventType::Compare,
+        count - (counter & 1) + (ticks << COUNT_CYCLE_SHIFT) + pause_remaining,
+        compare_event,
     );
-    check_pending_interrupts(n64);
 }
 
 fn compare_event(n64: &mut N64) {
-    n64.cpu.mmu.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
-    n64.cpu.mmu.regs[MmuRegister::Cause as usize] |= MmuCause::IP7 as u64;
+    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
+    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] |= MmuCause::IP7 as u64;
 
     create_event(
         n64,
@@ -162,98 +212,13 @@ fn compare_event(n64: &mut N64) {
     check_pending_interrupts(n64);
 }
 
-fn set_random_register(n64: &N64) -> u64 {
-    if n64.cpu.mmu.regs[MmuRegister::Wired as usize] > 31 {
-        (u64::MAX - n64.cpu.mmu.regs[MmuRegister::Count as usize]) & 0x3F
-    } else {
-        (u64::MAX - n64.cpu.mmu.regs[MmuRegister::Count as usize])
-            % (32 - n64.cpu.mmu.regs[MmuRegister::Wired as usize])
-            + n64.cpu.mmu.regs[MmuRegister::Wired as usize]
-    }
-}
-
-#[derive(Copy, Clone)]
-enum MmuInstruction {
-    MFC0 = 0,
-    DMFC0 = 1,
-    MTC0 = 4,
-    DMTC0 = 5,
-    EXECUTECP0 = 16,
-}
-
-type MmuInstrFn = fn(&mut N64, u32);
-
-#[derive(Copy, Clone)]
-enum MmuSecondaryInstruction {
-    TLBR = 1,
-    TLBWI = 2,
-    TLBWR = 6,
-    TLBP = 8,
-    ERET = 24,
-}
-
-const MMU_INIT_VALUES: [(MmuRegister, u64); 8] = [
-    (MmuRegister::Random, 0b00000000000000000000000000011111),
-    (MmuRegister::Config, 0b01110000000001101110010001100000),
-    (MmuRegister::Status, 0b00000000010000000000000000000100),
-    (MmuRegister::PrevID, 0b00000000000000000000101100100010),
-    (MmuRegister::EPC, 0xFFFFFFFF_FFFFFFFF),
-    (MmuRegister::ErrorEPC, 0xFFFFFFFF_FFFFFFFF),
-    (MmuRegister::BadVAddr, 0xFFFFFFFF),
-    (MmuRegister::Context, 0x7FFFF0),
-];
-
 pub fn write_mmu_registers(n64: &mut N64) {
-    n64.cpu.mmu.reg_write_masks = [
-        MmuMask::Index as u64,
-        0, // Random, read only
-        MmuMask::EntryLo as u64,
-        MmuMask::EntryLo as u64,
-        MmuMask::Context as u64,
-        MmuMask::PageMask as u64,
-        MmuMask::Wired as u64,
-        0,               // 7
-        0,               // BadVAddr, read only
-        u32::MAX as u64, // count
-        MmuMask::EntryHi as u64,
-        u32::MAX as u64, // compare
-        MmuMask::Status as u64,
-        MmuMask::Cause as u64,
-        u64::MAX, // EPC
-        0,        // previd, read only
-        MmuMask::Config as u64,
-        MmuMask::LLAddr as u64,
-        MmuMask::WatchLo as u64,
-        MmuMask::WatchHi as u64,
-        MmuMask::XContext as u64,
-        0, // 21
-        0, // 22
-        0, // 23
-        0, // 24
-        0, // 25
-        MmuMask::ParityErr as u64,
-        0, // cache error
-        MmuMask::TagLo as u64,
-        0,        // taghi
-        u64::MAX, // ErrorPC
-        0,        // 31
-    ];
+    n64.cp0_mut().registers.initialize();
 
-    for &(reg, value) in MMU_INIT_VALUES.iter() {
-        n64.cpu.mmu.regs[reg as usize] = value
-    }
-
-    create_event(n64, EventType::Compare, u32::MAX as u64, compare_event)
+    create_event(
+        n64,
+        EventType::Compare,
+        COMPARE_PERIOD_CYCLES,
+        compare_event,
+    )
 }
-
-mod instruction;
-pub use instruction::{MMU_INSTRUCTIONS, MMU_SECONDARY_INSTRUCTIONS};
-
-mod registers;
-pub use registers::{MmuRegister, MmuStatus, MmuCause, MmuXContext, MmuMask};
-
-mod state;
-pub use state::{Mmu};
-
-mod status;
-pub use status::Status;

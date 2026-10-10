@@ -1,8 +1,5 @@
 //! AOT machine code is validated against the local emitter before execution.
-use crate::recompiler::{
-    compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS,
-    MAX_SCALAR_RECORDS,
-};
+use crate::recompiler::{compile_block, Engine, NativeCodeRecord, MAX_BLOCK_INSTRUCTIONS, MAX_BLOCK_RECORDS, MAX_SCALAR_RECORDS};
 use sha2::{Digest, Sha256};
 mod header;
 mod reader;
@@ -11,6 +8,9 @@ mod scanner;
 
 use header::ArtifactHeader;
 use reader::ArtifactReader;
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests;
 
 const ARTIFACT_MAGIC: &[u8; 8] = b"P64AOT\0\0";
 const ARTIFACT_VERSION: u32 = 5;
@@ -180,6 +180,3 @@ fn decode_records(bytes: &[u8], rom: &[u8]) -> Result<Vec<NativeCodeRecord>, Str
 
     Ok(result)
 }
-
-#[cfg(all(test, target_arch = "x86_64"))]
-mod tests;

@@ -1,10 +1,4 @@
-use crate::{
-    builder::registers::{register_index, FlagCommand},
-    events::{create_event, EventType},
-    memory, mips,
-    mmu::MmuRegister,
-    N64,
-};
+use crate::{builder::registers::{register_index, FlagCommand}, events::{create_event, EventType}, memory, mips, mmu::MmuRegister, N64};
 use p64_gui::video;
 
 const ADDRESS_MASK: u32 = 0x00ff_fff8;
@@ -33,6 +27,8 @@ const STATUS_COMMANDS: [FlagCommand; 3] = [
 mod types;
 use types::{CommandAction, DpcStatus, DpcStatusWrite};
 pub use types::{DpcReg, DpsReg, Rdp};
+#[cfg(test)]
+mod tests;
 
 pub fn clock(n64: &N64) -> u32 {
     clock_at(n64, n64.cp0_register(MmuRegister::Count))
@@ -107,6 +103,3 @@ fn rdp_interrupt_event(n64: &mut N64) {
     n64.rdp_mut().finish_commands();
     mips::set_rcp_interrupt(n64, mips::MI_INTR_DP);
 }
-
-#[cfg(test)]
-mod tests;
