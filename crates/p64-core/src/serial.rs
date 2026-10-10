@@ -1,52 +1,16 @@
-use crate::{mips, pif};
+use crate::builder::registers::register_index;
+mod types;
+pub use types::*;
+
 use super::{
-    builder::registers::Registers,
-    mmu::MmuRegister,
     events::{create_event, EventType},
     memory,
-    rdram::RDRAM_MASK,
+    mmu::MmuRegister,
     N64,
 };
+use crate::{mips, pif};
 
-#[repr(u32)]
-pub enum SerialRegister {
-    DramAddr = 0,
-    PifAddrRd64b = 1,
-    PifAddrWr64b = 4,
-    Status = 6,
-    RegsCount = 7,
-}
-
-bitflags::bitflags! {
-    pub struct SerialStatus: u32 {
-        const DMA_BUSY = 1 << 0;
-        const IO_BUSY = 1 << 1;
-        const INTERRUPT = 1 << 12;
-    }
-}
-
-#[derive(PartialEq)]
-pub enum DmaDir {
-    None,
-    Write,
-    Read,
-}
-
-pub struct Serial {
-    pub regs: Registers,
-    pub dma_dir: DmaDir,
-}
-
-impl Default for Serial {
-    fn default() -> Self {
-        Self {
-            regs: Registers::new()
-                .with_size(SerialRegister::RegsCount as usize)
-                .build(),
-            dma_dir: DmaDir::None,
-        }
-    }
-}
+const WRITE_DMA_CYCLES: u64 = 5200;
 
 pub fn read_regs(n64: &mut N64, address: u64, _access_size: memory::AccessSize) -> u32 {
     n64.serial.regs[((address & 0xFFFF) >> 2) as usize]
@@ -85,10 +49,11 @@ fn dma_read(n64: &mut N64) {
     n64.serial.dma_dir = DmaDir::Read;
     let duration = pif::update_pif_ram(n64);
     n64.serial.regs[SerialRegister::Status as usize] |= SerialStatus::DMA_BUSY.bits();
+
     create_event(
         n64,
         EventType::SI,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + duration,
+        n64.cp0_register(MmuRegister::Count) + duration,
         dma_event,
     )
 }
@@ -97,35 +62,25 @@ fn dma_write(n64: &mut N64) {
     n64.serial.dma_dir = DmaDir::Write;
     copy_pif_rdram(n64);
     n64.serial.regs[SerialRegister::Status as usize] |= SerialStatus::DMA_BUSY.bits();
+
     create_event(
         n64,
         EventType::SI,
-        n64.cpu.mmu.regs[MmuRegister::Count as usize] + 5200,
+        n64.cp0_register(MmuRegister::Count) + WRITE_DMA_CYCLES,
         dma_event,
     )
 }
 
 fn copy_pif_rdram(n64: &mut N64) {
-    let dram_addr = n64.serial.regs[SerialRegister::DramAddr as usize] as usize & RDRAM_MASK;
-    let pif_ram_size = pif::PIF_RAM_SIZE;
-    let mut i = 0;
-    while i < pif_ram_size {
-        let data = match n64.serial.dma_dir {
-            DmaDir::Write => u32::from_ne_bytes(
-                n64.rdram.mem[dram_addr + i..dram_addr + i + 4]
-                    .try_into()
-                    .unwrap(),
-            ),
-            DmaDir::Read => u32::from_be_bytes(n64.pif.memory.ram[i..i + 4].try_into().unwrap()),
-            _ => panic!("si dma unknown"),
-        };
+    let address = n64.serial.regs[SerialRegister::DramAddr as usize];
+    for offset in 0..pif::PIF_RAM_SIZE {
+        let dram_address = address.wrapping_add(offset as u32);
         match n64.serial.dma_dir {
-            DmaDir::Write => n64.pif.memory.ram[i..i + 4].copy_from_slice(&data.to_be_bytes()),
-            DmaDir::Read => {
-                n64.rdram.mem[dram_addr + i..dram_addr + i + 4].copy_from_slice(&data.to_ne_bytes())
+            DmaDir::Write => {
+                n64.pif.memory.ram[offset] = memory::read_rdram_byte(n64, dram_address)
             }
-            _ => (),
+            DmaDir::Read => memory::write_rdram_byte(n64, dram_address, n64.pif.memory.ram[offset]),
+            DmaDir::None => return,
         }
-        i += 4;
     }
 }
