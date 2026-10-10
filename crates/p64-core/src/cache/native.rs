@@ -194,6 +194,99 @@ fn reject_cached_native(n64: &mut N64, reason: crate::recompiler::NativeReject) 
     false
 }
 
+/// Batches cached RAM instructions; misses and stale pipeline words retain scalar timing.
+#[inline]
+pub fn try_execute_native_block(n64: &mut N64, physical: u64) -> bool {
+    if n64.execution_engine.backend == crate::recompiler::Backend::Interpreter {
+        return false;
+    }
+
+    let index = ICache::line_index(n64.cpu.execution.pc);
+    let word_index = ICache::word_index(physical);
+    let line = &n64.memory.caches.icache[index];
+
+    if line.native.generation == n64.execution_engine.generation()
+        && !line.native.is_candidate(word_index)
+    {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::MissingCandidate);
+    }
+
+    if n64.cpu.branch_state.state != cpu::State::Step {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::BranchState);
+    }
+
+    if physical >= crate::rdram::RDRAM_SIZE as u64 || !icache_hit(n64, index, physical) {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::InvalidFetch);
+    }
+
+    if n64.memory.caches.icache[index].native.generation != n64.execution_engine.generation() {
+        prepare_icache_line(n64, index);
+    }
+    // Reversed endian fetch reorders words; scalar fetch retains their ordering.
+    if crate::bits::alignment_offset(n64.cpu.execution.pc, ICACHE_LINE_BYTES)
+        != crate::bits::alignment_offset(physical, ICACHE_LINE_BYTES)
+    {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::ReversedFetch);
+    }
+
+    let pipelined = n64.memory.fetch_pipeline.enabled;
+
+    if pipelined {
+        let pipeline = &n64.memory.fetch_pipeline;
+
+        if pipeline.active {
+            return reject_cached_native(n64, crate::recompiler::NativeReject::PipelineActive);
+        }
+
+        if pipeline.pending_refill.is_some() {
+            return reject_cached_native(n64, crate::recompiler::NativeReject::PipelineRefill);
+        }
+
+        if pipeline.next.is_some_and(|latch| {
+            latch.virtual_address != n64.cpu.execution.pc
+                || latch.physical_address != physical
+                || latch.word != n64.memory.caches.icache[index].words[word_index]
+        }) {
+            return reject_cached_native(n64, crate::recompiler::NativeReject::PipelineStale);
+        }
+    }
+
+    if !n64.memory.caches.icache[index]
+        .native
+        .is_candidate(word_index)
+    {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::MissingCandidate);
+    }
+
+    prepare_icache_entry(n64, index, word_index);
+
+    // Cold or faulting targets need scalar miss and exception timing, even when untaken.
+
+    let Some(mut block) = n64.memory.prepared_code.native_blocks[index][word_index] else {
+        return reject_cached_native(n64, crate::recompiler::NativeReject::MissingCandidate);
+    };
+
+    if !block_lookahead_is_cached(n64, physical, block.len()) {
+        let Some(prefix) = n64.memory.prepared_code.native_prefix_blocks[index][word_index] else {
+            return reject_cached_native(n64, crate::recompiler::NativeReject::Lookahead);
+        };
+
+        block = prefix;
+
+        if !block_lookahead_is_cached(n64, physical, block.len()) {
+            return reject_cached_native(n64, crate::recompiler::NativeReject::Lookahead);
+        }
+    }
+
+    if !cpu::execute_native_block(n64, block) {
+        return false;
+    }
+
+    finish_native_fetch(n64, physical, block.len());
+
+    true
+}
+
 fn finish_native_fetch(n64: &mut N64, physical: u64, length: usize) {
     if n64.memory.fetch_pipeline.enabled {
         n64.memory.fetch_pipeline.next =

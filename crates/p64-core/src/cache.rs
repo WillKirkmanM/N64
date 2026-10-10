@@ -154,6 +154,18 @@ pub fn icache_writeback(n64: &mut N64, line_index: usize) {
 pub fn icache_fetch(n64: &mut N64, phys_address: u64) -> bool {
     let line_index = ICache::line_index(n64.cpu.execution.pc);
 
+    if n64.execution_engine.backend != crate::recompiler::Backend::Interpreter {
+        let word_index = ICache::word_index(phys_address);
+        let line = &n64.memory.caches.icache[line_index];
+
+        if (line.native.is_candidate(word_index)
+            || line.native.generation != n64.execution_engine.generation())
+            && try_execute_native_block(n64, phys_address)
+        {
+            return true;
+        }
+    }
+
     let pipelined = n64.memory.fetch_pipeline.enabled;
     let fetched = if pipelined {
         n64.memory.fetch_pipeline.next.take().filter(|latch| {
@@ -193,6 +205,7 @@ pub fn icache_fetch(n64: &mut N64, phys_address: u64) -> bool {
 
 mod native;
 use native::prepare_icache_line;
+pub use native::try_execute_native_block;
 
 pub fn icache_hit(n64: &mut N64, line_index: usize, phys_address: u64) -> bool {
     let cache_line = &n64.memory.caches.icache[line_index];
