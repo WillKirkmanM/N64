@@ -94,3 +94,6 @@ fn copy_pif_rdram(n64: &mut N64) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
