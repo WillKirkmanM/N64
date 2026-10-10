@@ -58,3 +58,24 @@ fn si_dma_crossing_installed_ram_reads_zero_and_discards_writes() {
     assert_eq!(n64.rdram.mem.read_u32(0x7ffffc), 0xaaaaaaaa);
     assert_eq!(n64.rdram.mem.read_u32(0), 0);
 }
+
+#[test]
+fn reserved_si_registers_read_zero_and_ignore_writes_through_guest_bus() {
+    let mut n64 = N64::default();
+    memory::initialise_memory_map(&mut n64);
+    for address in [0x0480001c, 0x0480fffc] {
+        memory::write_data(&mut n64, address, u32::MAX, u32::MAX, false);
+        assert_eq!(
+            memory::read_data(&mut n64, address, memory::AccessSize::Word, false),
+            0
+        );
+    }
+    assert!(n64
+        .serial
+        .regs
+        .as_ref()
+        .iter()
+        .all(|register| *register == 0));
+    assert!(n64.serial.dma_dir == DmaDir::None);
+    assert!(crate::events::get_event(&mut n64, EventType::SI).is_none());
+}
