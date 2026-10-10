@@ -100,3 +100,23 @@ pub fn read(n64: &mut N64, channel: usize, address: u16, data: usize, size: usiz
 pub fn write(n64: &mut N64, channel: usize, address: u16, data: usize, size: usize) {
     handle_read_write(n64, channel, address, data, size, true);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loaded_banks_and_partial_bank_bytes_survive_initialization() {
+        for size in [MEMPAK_SIZE, MEMPAK_SIZE + 37] {
+            let mut bytes = vec![0x55; size];
+            format_mempak(&mut bytes);
+            assert!(bytes[..size].iter().all(|byte| *byte == 0x55));
+            assert_eq!(bytes.len(), MEMPAK_SIZE * CONTROLLER_COUNT);
+            let new_bank = size.div_ceil(MEMPAK_SIZE) * MEMPAK_SIZE;
+            assert_eq!(
+                &bytes[new_bank..new_bank + MPK_PAGE_SIZE],
+                &initialize_page_0()
+            );
+        }
+    }
+}
