@@ -269,6 +269,37 @@ pub fn try_execute_native_block(n64: &mut N64, physical: u64) -> bool {
                 == crate::bits::align_down(n64.cpu.execution.pc, ICACHE_LINE_BYTES))
             || speculative_cached_address(n64, target)
                 .is_some_and(|physical| cached_pipeline_latch(n64, target, physical).is_some());
+        let slot_pc = n64.cpu.execution.pc.checked_add(branch.len() as u64 * 4);
+        let slot = slot_pc
+            .and_then(|pc| cached_pipeline_word(n64, pc, physical + branch.len() as u64 * 4));
+        let target_pair_cached = slot.is_some_and(|latch| latch.word == 0)
+            && speculative_cached_address(n64, target)
+                .and_then(|p| cached_pipeline_latch(n64, target, p))
+                .is_some()
+            && target
+                .checked_add(4)
+                .and_then(|pc| {
+                    speculative_cached_address(n64, pc)
+                        .and_then(|p| cached_pipeline_latch(n64, pc, p))
+                })
+                .is_some();
+
+        if branch.len() < crate::recompiler::MAX_BLOCK_INSTRUCTIONS
+            && branch.len() + 1 >= n64.memory.fetch_pipeline.native_min_block_length
+            && slot.is_some_and(|latch| latch.word == 0)
+            && target_pair_cached
+            && block_lookahead_is_cached(n64, physical, branch.len() + 1)
+            && cpu::execute_native_branch_nop_block(n64, branch)
+        {
+            n64.cpu.execution.pc_phys = slot.unwrap().physical_address;
+            if pipelined {
+                n64.memory.fetch_pipeline.next =
+                    speculative_cached_address(n64, n64.cpu.execution.pc)
+                        .and_then(|p| cached_pipeline_latch(n64, n64.cpu.execution.pc, p));
+            }
+
+            return true;
+        }
 
         if branch.len() >= n64.memory.fetch_pipeline.native_min_block_length
             && target_cached

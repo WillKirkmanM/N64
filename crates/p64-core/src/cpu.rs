@@ -30,4 +30,4 @@ pub use types::{BranchState, Cpu, CpuExecutionState, CpuInstructionTables, CpuSc
 
 pub(crate) use execution::execute_decoded_instruction;
 pub(crate) use memory_ops::effective_address;
-pub(crate) use native::{native_branch_target};
+pub(crate) use native::{execute_native_branch_nop_block, native_branch_target};

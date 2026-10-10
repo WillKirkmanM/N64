@@ -203,3 +203,30 @@ pub fn execute_native_branch_block(
 
     true
 }
+
+/// Retires a cached NOP delay slot; the caller must validate both fetch paths.
+pub(crate) fn execute_native_branch_nop_block(
+    n64: &mut N64,
+    block: crate::recompiler::NativeBranchBlock,
+) -> bool {
+    if block.len() >= crate::recompiler::MAX_BLOCK_INSTRUCTIONS {
+        return false;
+    }
+
+    let length = block.len() + 1;
+    let Some(branch) = branch::execute_prefix(n64, block, length) else {
+        return false;
+    };
+
+    let branch::ExecutedBranch { taken, target } = branch;
+    n64.execution_engine
+        .stats
+        .record_branch_delay_slot(block.len());
+    if taken {
+        n64.cpu.branch_state.pc = target;
+        n64.cpu.execution.pc = target;
+    }
+    n64.cpu.branch_state.state = State::Step;
+
+    true
+}
