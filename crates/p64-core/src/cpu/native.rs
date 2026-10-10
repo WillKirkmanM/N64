@@ -149,3 +149,57 @@ fn retired_random(random: u64, wired: u64, length: u64) -> u64 {
     31u64.wrapping_sub(remaining % period) & 63
 }
 
+pub(crate) fn native_branch_target(start_pc: u64, length: usize, opcode: u32) -> u64 {
+    let branch_pc = start_pc.wrapping_add((length as u64 - 1) * 4);
+
+    if opcode >> 26 == 2 {
+        (branch_pc.wrapping_add(4) & 0xFFFF_FFFF_F000_0000) | (((opcode & 0x03FF_FFFF) as u64) << 2)
+    } else {
+        branch_pc
+            .wrapping_add(se16(imm(opcode) as i16) << 2)
+            .wrapping_add(4)
+    }
+}
+
+/// Scalar self-branch shortcuts inspect the delay slot and fast-forward Count.
+/// They must never be bypassed by either native branch retirement strategy.
+#[inline]
+fn is_scalar_idle_branch(n64: &N64, block: crate::recompiler::NativeBranchBlock) -> bool {
+    let opcode = block.branch_opcode();
+
+    if opcode >> 26 != 2 {
+        imm(opcode) as i16 == -1
+    } else {
+        let branch_physical = n64
+            .cpu
+            .execution
+            .pc_phys
+            .wrapping_add((block.len() as u64 - 1) * 4);
+
+        (opcode & 0x03FF_FFFF) as u64 == (branch_physical & 0x0FFF_FFFF) >> 2
+    }
+}
+
+/// Executes an ALU prefix and branch, leaving delay-slot fetch to the caller.
+/// The caller must validate cache and pipeline lookahead first.
+pub fn execute_native_branch_block(
+    n64: &mut N64,
+    block: crate::recompiler::NativeBranchBlock,
+) -> bool {
+    let Some(branch) = branch::execute_prefix(n64, block, block.len()) else {
+        return false;
+    };
+
+    let branch::ExecutedBranch { taken, target } = branch;
+
+    if taken {
+        n64.cpu.branch_state.pc = target;
+    }
+    n64.cpu.branch_state.state = if taken {
+        State::DelaySlotTaken
+    } else {
+        State::DelaySlotNotTaken
+    };
+
+    true
+}

@@ -261,6 +261,25 @@ pub fn try_execute_native_block(n64: &mut N64, physical: u64) -> bool {
     prepare_icache_entry(n64, index, word_index);
 
     // Cold or faulting targets need scalar miss and exception timing, even when untaken.
+    if let Some(branch) = n64.memory.prepared_code.native_branch_blocks[index][word_index] {
+        let target =
+            cpu::native_branch_target(n64.cpu.execution.pc, branch.len(), branch.branch_opcode());
+        let target_cached = !pipelined
+            || (crate::bits::align_down(target, ICACHE_LINE_BYTES)
+                == crate::bits::align_down(n64.cpu.execution.pc, ICACHE_LINE_BYTES))
+            || speculative_cached_address(n64, target)
+                .is_some_and(|physical| cached_pipeline_latch(n64, target, physical).is_some());
+
+        if branch.len() >= n64.memory.fetch_pipeline.native_min_block_length
+            && target_cached
+            && block_lookahead_is_cached(n64, physical, branch.len())
+            && cpu::execute_native_branch_block(n64, branch)
+        {
+            finish_native_fetch(n64, physical, branch.len());
+
+            return true;
+        }
+    }
 
     let Some(mut block) = n64.memory.prepared_code.native_blocks[index][word_index] else {
         return reject_cached_native(n64, crate::recompiler::NativeReject::MissingCandidate);
