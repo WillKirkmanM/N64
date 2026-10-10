@@ -40,3 +40,17 @@ fn flashram_program_erase_and_silicon_id_are_reachable_through_guest_bus() {
     memory::write_data(&mut n64, base + 0x10000, 0x78000000, u32::MAX, false);
     assert!(n64.save_data().flash.data.iter().all(|byte| *byte == 0xff));
 }
+
+#[test]
+fn dma_crossing_installed_rdram_and_sram_boundaries_does_not_mirror_ram() {
+    let mut n64 = N64::default();
+    n64.ui.save_data.save_type.push(SaveTypes::Sram);
+    memory::write_rdram_byte(&mut n64, RDRAM_SIZE as u32 - 2, 0x12);
+    memory::write_rdram_byte(&mut n64, RDRAM_SIZE as u32 - 1, 0x34);
+    dma_read(&mut n64, 0, RDRAM_SIZE as u32 - 2, 4);
+    assert_eq!(&n64.save_data().sram.data[..4], &[0x12, 0x34, 0, 0]);
+    dma_write(&mut n64, SRAM_SIZE as u32, 0, 4);
+    assert_eq!(n64.rdram.mem.read_u32(0), 0);
+    dma_read(&mut n64, SRAM_SIZE as u32, 0, 4);
+    assert_eq!(n64.save_data().sram.data.len(), SRAM_SIZE);
+}
