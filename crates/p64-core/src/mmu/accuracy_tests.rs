@@ -319,3 +319,24 @@ fn doubleword_cp0_transfers_obey_mode_and_coprocessor_exception_priority() {
         }
     }
 }
+
+#[test]
+fn exception_and_error_handlers_keep_doubleword_cp0_access_in_kernel_mode() {
+    for override_bit in [1_u64 << 1, 1 << 2] {
+        for selector in [1_u32, 5] {
+            let mut n64 = N64::new();
+            cpu::start_cpu(&mut n64);
+            n64.set_cp0_register(MmuRegister::Status, (2 << 3) | override_bit);
+            n64.set_cp0_register(MmuRegister::EntryHi, 0x5678_00cd);
+            n64.cpu_mut().set_gpr(2, 0x1234_00ab);
+            let opcode = (0x10 << 26) | (selector << 21) | (2 << 16) | (10 << 11);
+            cpu::decode_opcode(&n64, opcode)(&mut n64, opcode);
+            assert_eq!(n64.cp0_register(MmuRegister::Cause), 0);
+            if selector == 1 {
+                assert_eq!(n64.cpu().gpr(2), 0x5678_00cd);
+            } else {
+                assert_eq!(n64.cp0_register(MmuRegister::EntryHi), 0x1234_00ab);
+            }
+        }
+    }
+}
