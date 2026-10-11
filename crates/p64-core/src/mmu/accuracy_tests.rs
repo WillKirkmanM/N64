@@ -167,3 +167,15 @@ fn writing_count_recomputes_compare_without_acknowledging_interrupt() {
         204 + ((u32::MAX as u64) << 1)
     );
 }
+
+#[test]
+fn compare_match_uses_the_next_count_tick_from_an_odd_cpu_cycle() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Count, 101);
+    schedule_compare(&mut n64, 51);
+
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        102
+    );
+}
