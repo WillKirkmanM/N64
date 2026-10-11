@@ -143,3 +143,27 @@ fn mtc0_transfers_all_source_bits_and_tag_registers_follow_hardware_masks() {
     assert_eq!(get_control_registers(&n64, 29), 0);
     assert_eq!(get_control_registers(&n64, 28), 0x89AB_CDEF);
 }
+
+#[test]
+fn writing_count_recomputes_compare_without_acknowledging_interrupt() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Count, 20);
+    n64.set_cp0_register(MmuRegister::Compare, 100);
+    schedule_compare(&mut n64, 100);
+    create_event(&mut n64, EventType::PI, 60, events::dummy_event);
+    n64.set_cp0_register(MmuRegister::Cause, MmuCause::IP7 as u64);
+    set_control_registers(&mut n64, MmuRegister::Count as u32, 90);
+
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        202
+    );
+    assert_eq!(n64.cpu.scheduler.events[EventType::PI as usize].count, 220);
+    assert_eq!(n64.cp0_register(MmuRegister::Cause), MmuCause::IP7 as u64);
+    set_control_registers(&mut n64, MmuRegister::Count as u32, 101);
+
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        204 + ((u32::MAX as u64) << 1)
+    );
+}
