@@ -226,3 +226,20 @@ fn cp0_rfe_raises_reserved_instruction_for_every_co_encoding() {
         assert!(matches!(n64.cpu.branch_state.state, State::Exception));
     }
 }
+
+#[test]
+fn compare_assertion_preserves_previous_exception_code() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Cause, MmuCause::ExccodeTR as u64);
+    n64.cpu.scheduler.next_event_count = 100;
+    compare_event(&mut n64);
+
+    assert_eq!(
+        n64.cp0_register(MmuRegister::Cause),
+        MmuCause::ExccodeTR as u64 | MmuCause::IP7 as u64
+    );
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        100 + (1u64 << 33)
+    );
+}
