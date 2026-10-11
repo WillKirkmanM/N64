@@ -50,3 +50,33 @@ fn count_write_hazard_and_half_cycle_calibration_match_hardware() {
         );
     }
 }
+
+#[test]
+fn wired_reset_has_two_instruction_hazard_and_random_ignores_stall_cycles() {
+    let mut n64 = N64::default();
+    cpu::start_cpu(&mut n64);
+
+    for wired in 0..64 {
+        n64.cpu.registers.gpr[1] = wired;
+        step(&mut n64, (16 << 26) | (4 << 21) | (1 << 16) | (6 << 11));
+        step(&mut n64, 0);
+        step(&mut n64, 0);
+
+        assert_eq!(n64.cp0_register(MmuRegister::Random), 31);
+        add_cycles(&mut n64, 1000);
+
+        assert_eq!(n64.cp0_register(MmuRegister::Random), 31);
+        let mut expected = 31u64;
+
+        for _ in 0..100 {
+            step(&mut n64, 0);
+            expected = if expected == wired {
+                31
+            } else {
+                expected.wrapping_sub(1) & 63
+            };
+
+            assert_eq!(n64.cp0_register(MmuRegister::Random), expected);
+        }
+    }
+}
