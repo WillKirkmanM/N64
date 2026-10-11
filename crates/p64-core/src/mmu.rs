@@ -116,7 +116,15 @@ fn eret(n64: &mut N64, _opcode: u32) {
 }
 
 fn execute_cp0(n64: &mut N64, opcode: u32) {
-    n64.cpu.mmu.instructions.instrs2[(opcode & 0x3F) as usize](n64, opcode)
+    let instruction = n64
+        .cp0()
+        .instructions
+        .instrs2
+        .get(cpu::Instruction::decode(opcode).function())
+        .copied()
+        .unwrap_or(cp0_noop);
+
+    instruction(n64, opcode)
 }
 
 pub fn execute_checked_cp0(n64: &mut N64, opcode: u32) {
@@ -213,13 +221,13 @@ fn schedule_compare(n64: &mut N64, compare: u64) {
 }
 
 fn compare_event(n64: &mut N64) {
-    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] &= !(MmuCause::ExccodeMask as u64);
-    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] |= MmuCause::IP7 as u64;
+    n64.cp0_mut()
+        .update_register(MmuRegister::Cause, |value| value | MmuCause::IP7 as u64);
 
     create_event(
         n64,
         EventType::Compare,
-        n64.cpu.scheduler.next_event_count + (u32::MAX as u64),
+        n64.cpu.scheduler.next_event_count + COMPARE_PERIOD_CYCLES,
         compare_event,
     );
     check_pending_interrupts(n64);
