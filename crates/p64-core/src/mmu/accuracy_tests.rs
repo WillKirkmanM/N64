@@ -1,0 +1,52 @@
+use super::*;
+
+fn step(n64: &mut N64, opcode: u32) {
+    cpu::execute_instruction(n64, opcode, cpu::decode_opcode(n64, opcode));
+    add_cycles(n64, 1);
+}
+
+#[test]
+fn count_write_hazard_and_half_cycle_calibration_match_hardware() {
+    let mut n64 = N64::default();
+    cpu::start_cpu(&mut n64);
+
+    for value in [0, 100, 0xFFFF_FFFF] {
+        n64.cpu.registers.gpr[1] = value;
+        step(&mut n64, (16 << 26) | (4 << 21) | (1 << 16) | (9 << 11));
+        for register in 2..6 {
+            step(&mut n64, (16 << 26) | (register << 16) | (9 << 11));
+        }
+
+        for register in 2..5 {
+            assert_eq!(
+                n64.cpu.registers.gpr[register],
+                cpu::se32(value as u32 as i32)
+            );
+        }
+
+        assert_eq!(
+            n64.cpu.registers.gpr[5],
+            cpu::se32((value as u32).wrapping_add(1) as i32)
+        );
+
+        step(&mut n64, (16 << 26) | (4 << 21) | (1 << 16) | (9 << 11));
+        step(&mut n64, 0);
+        step(&mut n64, 0);
+        for register in 2..6 {
+            step(&mut n64, (16 << 26) | (register << 16) | (9 << 11));
+        }
+
+        assert_eq!(
+            (n64.cpu.registers.gpr[3] as u32).wrapping_sub(n64.cpu.registers.gpr[2] as u32),
+            1
+        );
+        assert_eq!(
+            (n64.cpu.registers.gpr[4] as u32).wrapping_sub(n64.cpu.registers.gpr[3] as u32),
+            0
+        );
+        assert_eq!(
+            (n64.cpu.registers.gpr[5] as u32).wrapping_sub(n64.cpu.registers.gpr[4] as u32),
+            1
+        );
+    }
+}

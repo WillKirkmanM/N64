@@ -243,3 +243,6 @@ pub fn write_mmu_registers(n64: &mut N64) {
         compare_event,
     )
 }
+
+#[cfg(test)]
+mod accuracy_tests;
