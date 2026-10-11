@@ -255,3 +255,21 @@ fn count_readback_wraps_at_32_bits() {
 
     assert_eq!(n64.cpu.registers.gpr[2], 5);
 }
+
+#[test]
+fn compare_equal_to_count_waits_for_a_full_counter_wrap() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Count, 100);
+    set_control_registers(&mut n64, MmuRegister::Compare as u32, 50);
+
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        100 + (1u64 << 33)
+    );
+    set_control_registers(&mut n64, MmuRegister::Compare as u32, 49);
+
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::Compare as usize].count,
+        100 + ((u32::MAX as u64) << 1)
+    );
+}
