@@ -273,3 +273,49 @@ fn compare_equal_to_count_waits_for_a_full_counter_wrap() {
         100 + ((u32::MAX as u64) << 1)
     );
 }
+
+#[test]
+fn doubleword_cp0_transfers_obey_mode_and_coprocessor_exception_priority() {
+    const PC: u64 = 0x1000;
+    const INITIAL_REGISTER: u64 = 0x5678_00cd;
+    const SOURCE: u64 = 0x1234_00ab;
+    for mode in [0_u64, 1, 2] {
+        for extended in [false, true] {
+            for usable in [false, true] {
+                for selector in [1_u32, 5] {
+                    let mut n64 = N64::new();
+                    cpu::start_cpu(&mut n64);
+                    let status = (mode << 3)
+                        | (u64::from(extended) << (7 - mode))
+                        | (u64::from(usable) << 28);
+                    n64.set_cp0_register(MmuRegister::Status, status);
+                    n64.set_cp0_register(MmuRegister::EntryHi, INITIAL_REGISTER);
+                    n64.cpu.execution.pc = PC;
+                    n64.cpu_mut().set_gpr(2, SOURCE);
+                    let opcode = (0x10 << 26) | (selector << 21) | (2 << 16) | (10 << 11);
+                    cpu::decode_opcode(&n64, opcode)(&mut n64, opcode);
+
+                    let expected_exception = if mode != 0 && !usable {
+                        Some(11_u64 << 2)
+                    } else if mode != 0 && !extended {
+                        Some(10_u64 << 2)
+                    } else {
+                        None
+                    };
+                    if let Some(cause) = expected_exception {
+                        assert_eq!(n64.cp0_register(MmuRegister::Cause) & 0x3000_007c, cause);
+                        assert_eq!(n64.cp0_register(MmuRegister::EPC), PC);
+                        assert_eq!(n64.cpu().gpr(2), SOURCE);
+                        assert_eq!(n64.cp0_register(MmuRegister::EntryHi), INITIAL_REGISTER);
+                    } else if selector == 1 {
+                        assert_eq!(n64.cpu().gpr(2), INITIAL_REGISTER);
+                        assert_eq!(n64.cp0_register(MmuRegister::EntryHi), INITIAL_REGISTER);
+                    } else {
+                        assert_eq!(n64.cpu().gpr(2), SOURCE);
+                        assert_eq!(n64.cp0_register(MmuRegister::EntryHi), SOURCE);
+                    }
+                }
+            }
+        }
+    }
+}
