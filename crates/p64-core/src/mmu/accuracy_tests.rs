@@ -206,3 +206,23 @@ fn reserved_cp0_co_functions_are_noops_for_every_rs_encoding() {
         }
     }
 }
+
+#[test]
+fn cp0_rfe_raises_reserved_instruction_for_every_co_encoding() {
+    let mut n64 = N64::default();
+
+    for rs in 16..32 {
+        n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1000;
+        n64.cpu.branch_state.state = State::Step;
+        n64.set_cp0_register(MmuRegister::Status, 0);
+        let opcode = (16 << 26) | (rs << 21) | 0x10;
+        cpu::decode_opcode(&n64, opcode)(&mut n64, opcode);
+
+        assert_eq!(
+            n64.cp0_register(MmuRegister::Cause),
+            MmuCause::ExccodeRI as u64
+        );
+        assert_eq!(n64.cp0_register(MmuRegister::EPC), 0xFFFF_FFFF_8000_1000);
+        assert!(matches!(n64.cpu.branch_state.state, State::Exception));
+    }
+}
