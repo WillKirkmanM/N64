@@ -98,3 +98,17 @@ fn mtc0_entry_hi_keeps_upper_vpn_and_region_bits() {
         0xC000_00FF_FFFF_E0FF
     );
 }
+
+#[test]
+fn cop0_usability_guard_precedes_register_access() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Status, 0x10);
+    n64.cpu.registers.gpr[1] = 0xBADDECAF;
+    execute_checked_cp0(&mut n64, (16 << 26) | (1 << 16) | (12 << 11));
+
+    assert_eq!(n64.cpu.registers.gpr[1], 0xBADDECAF);
+    assert_eq!(
+        n64.cp0_register(MmuRegister::Cause),
+        MmuCause::ExccodeCPU as u64
+    );
+}
