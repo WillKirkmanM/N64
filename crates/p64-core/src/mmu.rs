@@ -99,15 +99,19 @@ fn tlbp(n64: &mut N64, _opcode: u32) {
 }
 
 fn eret(n64: &mut N64, _opcode: u32) {
-    if n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] & MmuStatus::ERL as u64 != 0 {
-        n64.cpu.execution.pc = n64.cpu.mmu.registers.regs[MmuRegister::ErrorEPC as usize];
-        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] &= !(MmuStatus::ERL as u64)
+    add_cycles(n64, 1);
+    let (target, flag) = if n64.cp0().status().error_level() {
+        (MmuRegister::ErrorEPC, MmuStatus::ERL)
     } else {
-        n64.cpu.execution.pc = n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize];
-        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] &= !(MmuStatus::EXL as u64)
-    }
+        (MmuRegister::EPC, MmuStatus::EXL)
+    };
+
+    n64.cpu.execution.pc = n64.cp0_register(target);
+    n64.cp0_mut()
+        .update_register(MmuRegister::Status, |status| status & !(flag as u64));
     n64.cpu.branch_state.state = State::Exception;
     n64.cpu.registers.llbit = false;
+
     check_pending_interrupts(n64)
 }
 
