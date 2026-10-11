@@ -243,3 +243,15 @@ fn compare_assertion_preserves_previous_exception_code() {
         100 + (1u64 << 33)
     );
 }
+
+#[test]
+fn count_readback_wraps_at_32_bits() {
+    let mut n64 = N64::default();
+    n64.set_cp0_register(MmuRegister::Count, (1u64 << 33) + 10);
+    dmfc0(&mut n64, (2 << 16) | ((MmuRegister::Count as u32) << 11));
+
+    assert_eq!(n64.cpu.registers.gpr[2], 5);
+    mfc0(&mut n64, (2 << 16) | ((MmuRegister::Count as u32) << 11));
+
+    assert_eq!(n64.cpu.registers.gpr[2], 5);
+}
