@@ -23,7 +23,7 @@ const COUNT_CYCLE_SHIFT: u32 = 1;
 const COMPARE_PERIOD_CYCLES: u64 = (1_u64 << u32::BITS) << COUNT_CYCLE_SHIFT;
 
 pub fn add_cycles(n64: &mut N64, cycles: u64) {
-    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] += cycles
+    n64.cp0_mut().add_cycles(cycles)
 }
 
 pub fn begin_instruction(n64: &mut N64) {
@@ -35,14 +35,22 @@ fn count_cycles(n64: &N64) -> u64 {
 }
 
 pub fn syscall(n64: &mut N64, _opcode: u32) {
+    add_cycles(n64, 1);
+
     syscall_exception(n64)
 }
 
 pub fn break_(n64: &mut N64, _opcode: u32) {
+    add_cycles(n64, 1);
+
     break_exception(n64)
 }
 
 pub fn reserved(n64: &mut N64, _opcode: u32) {
+    #[cfg(feature = "accuracy-diagnostics")]
+    crate::exceptions::trace_reserved(n64, _opcode);
+    add_cycles(n64, 1);
+
     reserved_exception(n64, 0)
 }
 
@@ -53,12 +61,11 @@ fn move_from_cp0(n64: &mut N64, opcode: u32, extend: impl FnOnce(u64) -> u64) {
 }
 
 fn mfc0(n64: &mut N64, opcode: u32) {
-    n64.cpu.registers.gpr[cpu::rt(opcode) as usize] =
-        cpu::se32((get_control_registers(n64, cpu::rd(opcode))) as u32 as i32)
+    move_from_cp0(n64, opcode, |value| cpu::se32(value as u32 as i32));
 }
 
 fn dmfc0(n64: &mut N64, opcode: u32) {
-    n64.cpu.registers.gpr[cpu::rt(opcode) as usize] = get_control_registers(n64, cpu::rd(opcode))
+    move_from_cp0(n64, opcode, std::convert::identity);
 }
 
 fn mtc0(n64: &mut N64, opcode: u32) {
@@ -74,11 +81,11 @@ fn dmtc0(n64: &mut N64, opcode: u32) {
 }
 
 fn tlbr(n64: &mut N64, _opcode: u32) {
-    tlb::read(n64, n64.cpu.mmu.registers.regs[MmuRegister::Index as usize])
+    tlb::read(n64, n64.cp0_register(MmuRegister::Index))
 }
 
 fn tlbwi(n64: &mut N64, _opcode: u32) {
-    tlb::write(n64, n64.cpu.mmu.registers.regs[MmuRegister::Index as usize])
+    tlb::write(n64, n64.cp0_register(MmuRegister::Index))
 }
 
 fn tlbwr(n64: &mut N64, _opcode: u32) {
