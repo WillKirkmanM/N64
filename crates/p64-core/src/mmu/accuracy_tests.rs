@@ -80,3 +80,21 @@ fn wired_reset_has_two_instruction_hazard_and_random_ignores_stall_cycles() {
         }
     }
 }
+
+#[test]
+fn mtc0_entry_hi_keeps_upper_vpn_and_region_bits() {
+    let mut n64 = N64::default();
+    write_mmu_registers(&mut n64);
+    n64.set_cp0_register(MmuRegister::Status, 0);
+    n64.cpu.registers.gpr[1] = 0x1234_5678_FFFF_FFFF;
+    mtc0(&mut n64, (1 << 16) | (10 << 11));
+
+    assert_eq!(n64.cp0_register(MmuRegister::EntryHi), 0x78_FFFF_E0FF);
+    n64.cpu.registers.gpr[1] = u64::MAX;
+    mtc0(&mut n64, (1 << 16) | (10 << 11));
+
+    assert_eq!(
+        n64.cp0_register(MmuRegister::EntryHi),
+        0xC000_00FF_FFFF_E0FF
+    );
+}
