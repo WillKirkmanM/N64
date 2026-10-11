@@ -179,3 +179,30 @@ fn compare_match_uses_the_next_count_tick_from_an_odd_cpu_cycle() {
         102
     );
 }
+
+#[test]
+fn reserved_cp0_co_functions_are_noops_for_every_rs_encoding() {
+    let mut n64 = N64::default();
+    n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1000;
+    n64.cpu.registers.gpr[8] = 0x1234;
+    n64.set_cp0_register(MmuRegister::EntryHi, 0x1234_00AB);
+
+    for rs in 16..32 {
+        for function in 0..64 {
+            if [1, 2, 6, 8, 16, 24].contains(&function) {
+                continue;
+            }
+
+            let opcode = (16 << 26) | (rs << 21) | function;
+            let instruction = cpu::decode_opcode(&n64, opcode);
+            instruction(&mut n64, opcode);
+
+            assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_1000);
+            assert_eq!(n64.cpu.registers.gpr[8], 0x1234);
+            assert_eq!(n64.cp0_register(MmuRegister::EntryHi), 0x1234_00AB);
+            assert_eq!(n64.cp0_register(MmuRegister::Cause), 0);
+            assert_eq!(n64.cp0_register(MmuRegister::Count), 0);
+            assert!(matches!(n64.cpu.branch_state.state, State::Step));
+        }
+    }
+}
