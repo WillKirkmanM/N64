@@ -112,3 +112,34 @@ fn cop0_usability_guard_precedes_register_access() {
         MmuCause::ExccodeCPU as u64
     );
 }
+
+#[test]
+fn mtc0_transfers_all_source_bits_and_tag_registers_follow_hardware_masks() {
+    let mut n64 = N64::default();
+    write_mmu_registers(&mut n64);
+    n64.cpu.registers.gpr[1] = 0xF123_4567_89AB_CDEF;
+    for register in [
+        MmuRegister::Context,
+        MmuRegister::XContext,
+        MmuRegister::EPC,
+    ] {
+        n64.set_cp0_register(register, 0);
+        mtc0(&mut n64, (1 << 16) | ((register as u32) << 11));
+
+        assert_eq!(
+            n64.cp0_register(register),
+            n64.cpu.registers.gpr[1] & n64.cp0().registers.reg_write_masks[register as usize]
+        );
+    }
+
+    mtc0(&mut n64, (1 << 16) | (7 << 11));
+
+    assert_eq!(get_control_registers(&n64, 7), n64.cpu.registers.gpr[1]);
+    dmtc0(&mut n64, (1 << 16) | (28 << 11));
+
+    assert_eq!(get_control_registers(&n64, 28), 0x89AB_CDEF);
+    dmtc0(&mut n64, (1 << 16) | (29 << 11));
+
+    assert_eq!(get_control_registers(&n64, 29), 0);
+    assert_eq!(get_control_registers(&n64, 28), 0x89AB_CDEF);
+}
