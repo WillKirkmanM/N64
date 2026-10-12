@@ -24,7 +24,7 @@ use segment::AddressSegment;
 pub use types::{AccessSize, AccessType, Memory, MemoryBus, MemoryCaches, MemoryMap, PreparedCode};
 
 pub fn unmapped_read_mem(_device: &mut N64, _address: u64, _access_size: AccessSize) -> u32 {
-    3
+    UNMAPPED_BUS_VALUE
 }
 
 pub fn unmapped_write_mem(_device: &mut N64, _address: u64, _value: u32, _mask: u32) {}
@@ -45,11 +45,11 @@ pub(crate) fn write_rdram_byte(n64: &mut N64, address: u32, value: u8) {
 }
 
 pub fn masked_write_32(dst: &mut u32, value: u32, mask: u32) {
-    *dst = (*dst & !mask) | (value & mask)
+    *dst = crate::bits::replace_bits(*dst, value, mask)
 }
 
 pub fn masked_write_64(dst: &mut u64, value: u64, mask: u64) {
-    *dst = (*dst & !mask) | (value & mask)
+    *dst = crate::bits::replace_bits(*dst, value, mask)
 }
 
 pub fn reverse_endian(n64: &N64) -> bool {
@@ -105,13 +105,23 @@ pub fn peek_translation(n64: &N64, address: u64) -> Option<(u64, bool)> {
 
 #[inline]
 fn get_handler_index(phys_address: u64) -> usize {
-    (phys_address >> 16) as usize
+    MemoryBus::region_index(phys_address)
 }
 
 pub fn read_data(n64: &mut N64, addr: u64, size: AccessSize, cached: bool) -> u32 {
     match cached {
         true => dcache_read(n64, addr),
-        false => n64.memory.bus.memory_map_read[get_handler_index(addr)](n64, addr, size),
+        false => {
+            let read = n64
+                .memory
+                .bus
+                .memory_map_read
+                .get(get_handler_index(addr))
+                .copied()
+                .unwrap_or(unmapped_read_mem);
+
+            read(n64, addr, size)
+        }
     }
 }
 
