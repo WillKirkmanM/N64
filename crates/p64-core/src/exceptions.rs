@@ -155,49 +155,48 @@ fn set_cause_and_exception(n64: &mut N64, cause: u64) {
 
 fn update_context_registers(n64: &mut N64, address: u64) {
     masked_write_64(
-        &mut n64.cpu.mmu.registers.regs[MmuRegister::Context as usize],
-        address >> 9,
+        n64.cp0_mut().register_mut(MmuRegister::Context),
+        address >> CONTEXT_VPN_SHIFT,
+        CONTEXT_VPN_MASK,
+    );
+    masked_write_64(
+        n64.cp0_mut().register_mut(MmuRegister::XContext),
+        address >> CONTEXT_VPN_SHIFT,
         BadVPN2Mask as u64,
     );
     masked_write_64(
-        &mut n64.cpu.mmu.registers.regs[MmuRegister::XContext as usize],
-        address >> 9,
-        BadVPN2Mask as u64,
-    );
-    masked_write_64(
-        &mut n64.cpu.mmu.registers.regs[MmuRegister::XContext as usize],
-        address >> 31,
+        n64.cp0_mut().register_mut(MmuRegister::XContext),
+        address >> XCONTEXT_REGION_SHIFT,
         RegionMask as u64,
-    );
-    masked_write_64(
-        &mut n64.cpu.mmu.registers.regs[MmuRegister::EntryHi as usize],
-        address,
-        0xFFFFE000,
     );
 }
 
 fn exception_general(n64: &mut N64, vector_offset: u32) {
-    let status = n64.cpu.mmu.registers.regs[MmuRegister::Status as usize];
+    let status = n64.cp0().status();
 
-    if status & (MmuStatus::EXL as u64) == 0 {
-        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize] = n64.cpu.execution.pc;
+    if !status.exception_level() {
+        n64.set_cp0_register(MmuRegister::EPC, n64.cpu.execution.pc);
+
         if in_delay_slot(n64) {
-            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] |= MmuCause::BD as u64;
-            n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize] -= 4;
+            *n64.cp0_mut().register_mut(MmuRegister::Cause) |= MmuCause::BD as u64;
+            n64.set_cp0_register(
+                MmuRegister::EPC,
+                n64.cpu.execution.pc.wrapping_sub(INSTRUCTION_BYTES),
+            );
         } else {
-            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] &= !(MmuCause::BD as u64);
+            *n64.cp0_mut().register_mut(MmuRegister::Cause) &= !(MmuCause::BD as u64);
         }
     }
 
-    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] |= MmuStatus::EXL as u64;
+    *n64.cp0_mut().register_mut(MmuRegister::Status) |= MmuStatus::EXL as u64;
 
-    n64.cpu.execution.pc = if status & (MmuStatus::BEV as u64) == 0 {
-        cpu::se32((0x80000000 + vector_offset) as i32)
+    n64.cpu.execution.pc = if !status.boot_exception_vectors() {
+        cpu::se32((NORMAL_VECTOR_BASE + vector_offset) as i32)
     } else {
-        cpu::se32((0xBFC00200 + vector_offset) as i32)
+        cpu::se32((BOOT_VECTOR_BASE + vector_offset) as i32)
     };
 
     n64.cpu.branch_state.state = State::Exception;
 
-    add_cycles(n64, 2);
+    add_cycles(n64, EXCEPTION_STAGE_CYCLES);
 }
