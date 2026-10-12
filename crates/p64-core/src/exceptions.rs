@@ -32,20 +32,9 @@ fn interrupt_pending(n64: &N64) -> bool {
 }
 
 pub fn check_pending_interrupts(n64: &mut N64) {
-    let status = n64.cpu.mmu.registers.regs[MmuRegister::Status as usize];
-    let cause = n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize];
-
-    if (status & cause & MmuCause::IPMask as u64) == 0 {
-        return;
+    if interrupt_pending(n64) {
+        set_cause_and_exception(n64, 0);
     }
-
-    if (status & (MmuStatus::IE as u64 | MmuStatus::EXL as u64 | MmuStatus::ERL as u64))
-        != MmuStatus::IE as u64
-    {
-        return;
-    }
-
-    exception_general(n64, 0x180);
 }
 
 pub fn schedule_pending_interrupts(n64: &mut N64) {
@@ -160,8 +149,8 @@ fn set_cause(n64: &mut N64, cause: u64) {
 }
 
 fn set_cause_and_exception(n64: &mut N64, cause: u64) {
-    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] = cause;
-    exception_general(n64, 0x180);
+    set_cause(n64, cause);
+    exception_general(n64, GENERAL_VECTOR_OFFSET);
 }
 
 fn update_context_registers(n64: &mut N64, address: u64) {
