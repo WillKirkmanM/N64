@@ -90,3 +90,42 @@ fn context_update_preserves_pte_base() {
             | ((address >> 31) & RegionMask as u64)
     );
 }
+
+#[test]
+fn address_error_updates_fault_context_and_entry_hi() {
+    for (access, expected_cause) in [
+        (AccessType::Read, MmuCause::ExccodeAdEL),
+        (AccessType::Write, MmuCause::ExccodeAdES),
+    ] {
+        let mut n64 = N64::new();
+        let address = 0xFFFFFFFF81234562;
+        let context_base = 0xFFFFFFFFFF800000;
+        let xcontext_base = 0xFFFFFFFE00000000;
+        n64.set_cp0_register(MmuRegister::Context, context_base);
+        n64.set_cp0_register(MmuRegister::XContext, xcontext_base);
+        n64.set_cp0_register(MmuRegister::EntryHi, 0x1234405A);
+        n64.set_cp0_register(MmuRegister::Cause, MmuCause::IP7 as u64);
+        address_error_exception(&mut n64, address, access);
+
+        assert_eq!(n64.cp0_register(MmuRegister::BadVAddr), address);
+        assert_eq!(
+            n64.cp0_register(MmuRegister::Cause),
+            MmuCause::IP7 as u64 | expected_cause as u64
+        );
+        assert_eq!(
+            n64.cp0_register(MmuRegister::Context),
+            context_base | ((address >> 9) & 0x007FFFF0)
+        );
+        assert_eq!(
+            n64.cp0_register(MmuRegister::XContext),
+            xcontext_base
+                | ((address >> 9) & BadVPN2Mask as u64)
+                | ((address >> 31) & RegionMask as u64)
+        );
+        assert_eq!(
+            n64.cp0_register(MmuRegister::EntryHi),
+            (address & crate::mmu::MmuMask::EntryHi as u64 & !0xFF) | 0x5A
+        );
+        assert_eq!(n64.cpu.execution.pc, 0xFFFFFFFF80000180);
+    }
+}
