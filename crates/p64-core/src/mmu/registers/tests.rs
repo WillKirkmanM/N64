@@ -87,3 +87,24 @@ fn every_cp0_slot_matches_raw_reset_oracle() {
         assert_eq!(actual, expected, "CP0 slot {index}");
     }
 }
+
+#[test]
+fn initialization_installs_masks_and_preserves_nonreset_registers() {
+    let mut registers = crate::mmu::MmuRegisters::default();
+
+    for index in 0..32 {
+        registers.regs[index] = 0xfeed_0000 + index as u64;
+    }
+
+    registers.initialize();
+
+    assert_eq!(registers.reg_write_masks, RAW_WRITE_MASKS);
+
+    for (index, reset) in RAW_RESET_VALUES.into_iter().enumerate() {
+        assert_eq!(
+            registers.regs[index],
+            reset.unwrap_or(0xfeed_0000 + index as u64),
+            "CP0 slot {index}"
+        );
+    }
+}
