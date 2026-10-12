@@ -46,3 +46,23 @@ fn nested_exception_preserves_epc_and_branch_delay() {
     );
     assert_eq!(n64.cp0_register(MmuRegister::EPC), 0xFFFFFFFF80002000);
 }
+
+#[test]
+fn interrupt_entry_clears_old_exception_code() {
+    let mut n64 = N64::new();
+    n64.set_cp0_register(
+        MmuRegister::Status,
+        MmuStatus::IE as u64 | MmuCause::IP7 as u64,
+    );
+    n64.set_cp0_register(
+        MmuRegister::Cause,
+        MmuCause::IP7 as u64 | MmuCause::ExccodeSys as u64,
+    );
+    check_pending_interrupts(&mut n64);
+
+    assert_eq!(n64.cp0_register(MmuRegister::Cause), MmuCause::IP7 as u64);
+    assert_ne!(
+        n64.cp0_register(MmuRegister::Status) & MmuStatus::EXL as u64,
+        0
+    );
+}
