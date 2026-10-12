@@ -200,3 +200,6 @@ fn exception_general(n64: &mut N64, vector_offset: u32) {
 
     add_cycles(n64, EXCEPTION_STAGE_CYCLES);
 }
+#[cfg(test)]
+#[path = "exceptions/tests.rs"]
+mod tests;
