@@ -66,3 +66,27 @@ fn interrupt_entry_clears_old_exception_code() {
         0
     );
 }
+
+#[test]
+fn context_update_preserves_pte_base() {
+    // nemu64-test's Context::from_virtual_address uses only bits 4..22,
+    // whereas XContext's BadVPN2 field extends through bit 30.
+    let mut n64 = N64::new();
+    let context_base = 0xFEDCBA987F800000;
+    let xcontext_base = 0xFEDCBA9800000000;
+    let address = 0xC00000ABCDE12345;
+    n64.set_cp0_register(MmuRegister::Context, context_base);
+    n64.set_cp0_register(MmuRegister::XContext, xcontext_base);
+    update_context_registers(&mut n64, address);
+
+    assert_eq!(
+        n64.cp0_register(MmuRegister::Context),
+        context_base | ((address >> 9) & 0x007FFFF0)
+    );
+    assert_eq!(
+        n64.cp0_register(MmuRegister::XContext),
+        xcontext_base
+            | ((address >> 9) & BadVPN2Mask as u64)
+            | ((address >> 31) & RegionMask as u64)
+    );
+}
