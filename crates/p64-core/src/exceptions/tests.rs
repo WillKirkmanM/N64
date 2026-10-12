@@ -129,3 +129,16 @@ fn address_error_updates_fault_context_and_entry_hi() {
         assert_eq!(n64.cpu.execution.pc, 0xFFFFFFFF80000180);
     }
 }
+
+#[test]
+fn tlb_exception_preserves_pending_interrupts() {
+    let mut n64 = N64::new();
+    n64.set_cp0_register(MmuRegister::Cause, MmuCause::IP7 as u64);
+    tlb_miss_exception(&mut n64, 0x12345000, AccessType::Read);
+
+    assert_eq!(
+        n64.cp0_register(MmuRegister::Cause),
+        MmuCause::IP7 as u64 | MmuCause::ExccodeTLBL as u64
+    );
+    assert_eq!(n64.cpu.execution.pc, 0xFFFFFFFF80000000);
+}
