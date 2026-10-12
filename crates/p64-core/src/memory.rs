@@ -136,7 +136,24 @@ pub fn read_doubleword(n64: &mut N64, address: u64, cached: bool) -> u64 {
 pub fn write_data(n64: &mut N64, addr: u64, value: u32, mask: u32, cached: bool) {
     match cached {
         true => dcache_write(n64, addr, value, mask),
-        false => n64.memory.bus.memory_map_write[get_handler_index(addr)](n64, addr, value, mask),
+        false => {
+            // Uncached stores enter the external write buffer. An instruction
+            // refill already issued by IC/RF is serviced before this store is
+            // visible to that refill. DC cache writebacks retain higher priority.
+            if addr < rdram::RDRAM_SIZE as u64 {
+                cache::service_pending_fetch(n64);
+            }
+
+            let write = n64
+                .memory
+                .bus
+                .memory_map_write
+                .get(get_handler_index(addr))
+                .copied()
+                .unwrap_or(unmapped_write_mem);
+
+            write(n64, addr, value, mask)
+        }
     }
 }
 
