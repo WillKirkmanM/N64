@@ -14,3 +14,17 @@ fn synchronous_exception_preserves_pending_interrupts() {
     );
     assert_eq!(n64.cp0_register(MmuRegister::EPC), 0xFFFFFFFF80001234);
 }
+
+#[test]
+fn delay_slot_exception_wraps_branch_address() {
+    let mut n64 = N64::new();
+    n64.cpu.execution.pc = 0;
+    n64.cpu.branch_state.state = State::DelaySlotTaken;
+    syscall_exception(&mut n64);
+
+    assert_eq!(n64.cp0_register(MmuRegister::EPC), u64::MAX - 3);
+    assert_ne!(
+        n64.cp0_register(MmuRegister::Cause) & MmuCause::BD as u64,
+        0
+    );
+}
