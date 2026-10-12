@@ -246,3 +246,6 @@ pub fn write_mmu_registers(n64: &mut N64) {
 
 #[cfg(test)]
 mod accuracy_tests;
+
+#[cfg(test)]
+mod encoding_tests;
