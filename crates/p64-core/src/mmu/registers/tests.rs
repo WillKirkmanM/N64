@@ -78,3 +78,12 @@ fn every_cp0_slot_matches_raw_hardware_write_mask_oracle() {
         assert_eq!(actual, expected, "CP0 slot {index}");
     }
 }
+
+#[test]
+fn every_cp0_slot_matches_raw_reset_oracle() {
+    for (index, expected) in RAW_RESET_VALUES.into_iter().enumerate() {
+        let actual = MmuRegister::from_index(index).and_then(MmuRegister::reset_value);
+
+        assert_eq!(actual, expected, "CP0 slot {index}");
+    }
+}
