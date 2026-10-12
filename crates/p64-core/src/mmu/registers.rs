@@ -2,6 +2,9 @@ use crate::builder::registers::Registers;
 
 mod metadata;
 
+#[cfg(test)]
+mod tests;
+
 #[repr(u32)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum MmuRegister {
