@@ -157,6 +157,10 @@ pub fn write_data(n64: &mut N64, addr: u64, value: u32, mask: u32, cached: bool)
     }
 }
 
+#[cfg(test)]
+#[path = "memory/tests.rs"]
+mod translation_tests;
+
 pub fn initialise_memory_map(n64: &mut N64) {
     n64.memory.bus.map_range(
         MemoryMap::RdramDram as usize,
