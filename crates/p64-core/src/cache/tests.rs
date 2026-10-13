@@ -221,6 +221,33 @@ fn native_batch_preserves_last_two_words_refill_and_fetch_latch() {
     assert_eq!(run_block_refill_trace(true), run_block_refill_trace(false));
 }
 
+#[test]
+fn native_blocks_use_cached_words_after_store_and_engine_replacement() {
+    let mut n64 = pipeline_device();
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    for address in (0..32).step_by(4) {
+        crate::rdram::write_mem(&mut n64, address, 0x24210001, u32::MAX);
+    }
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    icache_fill(&mut n64, 0, 0);
+    for address in (0..32).step_by(4) {
+        crate::rdram::write_mem(&mut n64, address, 0x24210002, u32::MAX);
+    }
+    n64.execution_engine = crate::recompiler::Engine::jit();
+
+    assert!(try_execute_native_block(&mut n64, 0));
+    assert_eq!(
+        n64.cpu.registers.gpr[1], 6,
+        "compiled blocks must use cached +1 words"
+    );
+    assert_eq!(n64.execution_engine.stats.native_executions, 6);
+    assert_eq!(n64.cpu.execution.pc, 0xffff_ffff_8000_0018);
+    let next = n64.memory.fetch_pipeline.next.unwrap();
+
+    assert_eq!(next.word, 0x24210001);
+    assert_eq!(next.physical_address, 24);
+}
+
 fn run_cached_words(n64: &mut N64, words: usize) {
     for i in 0..words {
         n64.cpu.execution.pc = 0xFFFF_FFFF_8000_0000 + (i * 4) as u64;
