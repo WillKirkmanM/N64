@@ -329,6 +329,36 @@ fn streaming_stores_only_reach_instruction_line_before_refill_is_issued() {
     assert_eq!(n64.cpu.registers.gpr[10], 0x3F);
 }
 
+#[test]
+fn warm_data_cache_accesses_do_not_stall_and_miss_uses_one_line_transfer() {
+    let mut n64 = device();
+    let count = crate::mmu::MmuRegister::Count as usize;
+    n64.rdram_interface.regs[crate::rdram::RiReg::Refresh as usize] = 0;
+    n64.cpu.mmu.registers.regs[count] = 2;
+    n64.cpu.execution.data_address = 0;
+    dcache_read(&mut n64, 0);
+    // Forty stall cycles plus instruction retirement gives the hardware
+    // median of 41 cycles for a cached load miss with video disabled.
+    assert_eq!(n64.cpu.mmu.registers.regs[count], 42);
+    dcache_read(&mut n64, 0);
+    dcache_read(&mut n64, 4);
+    dcache_write(&mut n64, 0, 0x12345678, u32::MAX);
+    dcache_write(&mut n64, 4, 0xabcdef01, u32::MAX);
+
+    assert_eq!(n64.cpu.mmu.registers.regs[count], 42);
+    dcache_writeback(&mut n64, 0);
+
+    assert_eq!(n64.cpu.mmu.registers.regs[count], 78);
+    assert_eq!(
+        crate::rdram::read_mem_fast(&mut n64, 0, AccessSize::Word),
+        0x12345678
+    );
+    assert_eq!(
+        crate::rdram::read_mem_fast(&mut n64, 4, AccessSize::Word),
+        0xabcdef01
+    );
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
