@@ -216,6 +216,11 @@ fn run_block_refill_trace(native: bool) -> BlockRefillTrace {
     }
 }
 
+#[test]
+fn native_batch_preserves_last_two_words_refill_and_fetch_latch() {
+    assert_eq!(run_block_refill_trace(true), run_block_refill_trace(false));
+}
+
 fn run_cached_words(n64: &mut N64, words: usize) {
     for i in 0..words {
         n64.cpu.execution.pc = 0xFFFF_FFFF_8000_0000 + (i * 4) as u64;
