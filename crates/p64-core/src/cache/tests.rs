@@ -290,6 +290,26 @@ fn instruction_refill_precedes_late_uncached_store_but_follows_dc_writeback() {
     }
 }
 
+#[test]
+fn already_fetched_instruction_survives_cache_invalidation() {
+    for position in [5, 6] {
+        let mut n64 = pipeline_device();
+        n64.cpu.registers.gpr[1] = 0xFFFF_FFFF_A000_001C;
+        n64.cpu.registers.gpr[2] = 0x3403_2222;
+        n64.cpu.registers.gpr[4] = 0xFFFF_FFFF_8000_001C;
+        crate::rdram::write_mem(&mut n64, 8, 0xAC22_0000, u32::MAX);
+        crate::rdram::write_mem(&mut n64, (position * 4) as u64, 0xBC80_0000, u32::MAX);
+        crate::rdram::write_mem(&mut n64, 28, 0x3403_1111, u32::MAX);
+        run_cached_words(&mut n64, 8);
+
+        assert_eq!(
+            n64.cpu.registers.gpr[3],
+            if position < 6 { 0x2222 } else { 0x1111 },
+            "invalidate {position}"
+        );
+    }
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
