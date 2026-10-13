@@ -314,3 +314,7 @@ pub fn init(n64: &mut N64) {
         i.index = (pos << LINE_INDEX_SHIFT_DCACHE) as u16 & DCACHE_INDEX_MASK
     }
 }
+
+#[cfg(test)]
+#[path = "cache/tests.rs"]
+mod accuracy_tests;
