@@ -119,10 +119,11 @@ fn read_cache_line<const N: usize>(
 }
 
 fn write_cache_line(n64: &mut N64, cache_address: u64, words: &[u32]) {
-    let write_fn = n64.memory.bus.memory_map_write[(cache_address >> 16) as usize];
+    let write_fn = n64.memory.bus.memory_map_write[memory::MemoryBus::region_index(cache_address)];
+
     for (i, &word) in words.iter().enumerate() {
         let addr = cache_address | (i as u64 * WORD_SIZE);
-        write_fn(n64, addr, word, 0xFFFFFFFF);
+        write_fn(n64, addr, word, u32::MAX);
     }
 }
 
@@ -140,11 +141,13 @@ fn dcache_fill(n64: &mut N64, line_index: usize, phys_address: u64) {
 }
 
 pub fn icache_writeback(n64: &mut N64, line_index: usize) {
-    crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(32));
-
+    crate::mmu::add_cycles(
+        n64,
+        crate::rdram::rdram_calculate_cycles(AccessSize::Icache as u64),
+    );
     let tag = n64.memory.caches.icache[line_index].tag;
     let index = n64.memory.caches.icache[line_index].index;
-    let words = n64.memory.caches.icache[line_index].words.clone();
+    let words = n64.memory.caches.icache[line_index].words;
 
     let cache_address = calculate_cache_address(tag, index);
     write_cache_line(n64, cache_address, &words);
@@ -224,14 +227,15 @@ pub fn dcache_hit(n64: &N64, line_index: usize, phys_address: u64) -> bool {
 }
 
 pub fn dcache_writeback(n64: &mut N64, line_index: usize) {
-    crate::mmu::add_cycles(n64, crate::rdram::rdram_calculate_cycles(16));
-
+    crate::mmu::add_cycles(
+        n64,
+        crate::rdram::rdram_calculate_cycles(AccessSize::Dcache as u64),
+    );
     let cache_address = calculate_cache_address(
         n64.memory.caches.dcache[line_index].tag,
         n64.memory.caches.dcache[line_index].index,
     );
-    let cached_words = n64.memory.caches.dcache[line_index].words.to_vec();
-    n64.memory.caches.dcache[line_index].dirty = false;
+    let cached_words = n64.memory.caches.dcache[line_index].words;
     write_cache_line(n64, cache_address, &cached_words);
 }
 
@@ -303,9 +307,10 @@ pub fn dcache_write(n64: &mut N64, phys_address: u64, value: u32, mask: u32) {
 
 pub fn init(n64: &mut N64) {
     for (pos, i) in n64.memory.caches.icache.iter_mut().enumerate() {
-        i.index = (pos << LINE_INDEX_SHIFT_ICACHE) as u16 & 0xFE0
+        i.index = (pos << LINE_INDEX_SHIFT_ICACHE) as u16 & ICACHE_INDEX_MASK
     }
+
     for (pos, i) in n64.memory.caches.dcache.iter_mut().enumerate() {
-        i.index = (pos << LINE_INDEX_SHIFT_DCACHE) as u16 & 0xFF0
+        i.index = (pos << LINE_INDEX_SHIFT_DCACHE) as u16 & DCACHE_INDEX_MASK
     }
 }
