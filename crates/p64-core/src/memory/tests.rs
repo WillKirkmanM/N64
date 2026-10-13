@@ -116,3 +116,12 @@ fn extended_tlb_lookup_uses_region_asid_and_full_vpn() {
     );
     assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_0080);
 }
+
+#[test]
+fn extended_refill_vector_applies_to_low_virtual_addresses_too() {
+    let mut n64 = N64::default();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0x80;
+
+    assert!(translate_address(&mut n64, 0x1234_5000, AccessType::Read).2);
+    assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_0080);
+}
