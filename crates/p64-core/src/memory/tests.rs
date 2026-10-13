@@ -88,3 +88,31 @@ fn invalid_extended_and_noncanonical_32_bit_addresses_fault() {
         );
     }
 }
+
+#[test]
+fn extended_tlb_lookup_uses_region_asid_and_full_vpn() {
+    let mut n64 = N64::default();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0x80;
+    let address = 0x4000_0012_3456_0000;
+    n64.cpu.mmu.registers.regs[MmuRegister::EntryHi as usize] = address | 0xAB;
+    n64.cpu.mmu.registers.regs[MmuRegister::EntryLo0 as usize] = (0x200 << 6) | (2 << 3) | 6;
+    n64.cpu.mmu.registers.regs[MmuRegister::EntryLo1 as usize] = (0x300 << 6) | (3 << 3) | 6;
+    tlb::write(&mut n64, 1);
+
+    assert_eq!(
+        translate_address(&mut n64, address + 0x234, AccessType::Read),
+        (0x20_0234, false, false)
+    );
+    assert_eq!(
+        translate_address(&mut n64, address + 0x1234, AccessType::Write),
+        (0x30_0234, true, false)
+    );
+    n64.cpu.mmu.registers.regs[MmuRegister::EntryHi as usize] = 0xAA;
+
+    assert!(translate_address(&mut n64, address, AccessType::Read).2);
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+        address
+    );
+    assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_0080);
+}
