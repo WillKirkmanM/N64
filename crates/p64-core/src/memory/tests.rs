@@ -42,3 +42,24 @@ fn speculative_instruction_translation_never_raises_or_mutates_a_fault() {
         crate::cpu::State::Step
     ));
 }
+
+#[test]
+fn xkphys_decodes_all_coherency_attributes_and_preserves_physical_bits() {
+    let mut n64 = N64::default();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0x80;
+    for coherency in 0..8 {
+        let address = 0x8000_0000_1234_5678 | (coherency << 59);
+
+        assert_eq!(
+            translate_address(&mut n64, address, AccessType::Read),
+            (0x1234_5678, coherency != 2, false)
+        );
+        assert_eq!(n64.cpu.execution.data_address, address);
+    }
+
+    assert_eq!(
+        translate_address(&mut n64, 0x9000_0000_7FFF_FFF8, AccessType::Read),
+        (0x7FFF_FFF8, false, false)
+    );
+    assert_eq!(read_data(&mut n64, 0x7FFF_FFF8, AccessSize::Word, false), 3);
+}
