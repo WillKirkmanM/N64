@@ -63,3 +63,28 @@ fn xkphys_decodes_all_coherency_attributes_and_preserves_physical_bits() {
     );
     assert_eq!(read_data(&mut n64, 0x7FFF_FFF8, AccessSize::Word, false), 3);
 }
+
+#[test]
+fn invalid_extended_and_noncanonical_32_bit_addresses_fault() {
+    let mut n64 = N64::default();
+
+    for (status, address) in [
+        (0, 0x1234_5678_8000_1000),
+        (0x80, 0x9000_0001_0000_0000),
+        (0x80, 0x0000_0100_0000_0000),
+        (0x80, 0xC000_00FF_8000_0000),
+        (0x10, 0xFFFF_FFFF_8000_1000),
+    ] {
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = status;
+
+        assert!(translate_address(&mut n64, address, AccessType::Read).2);
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+            MmuCause::ExccodeAdEL as u64
+        );
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+            address
+        );
+    }
+}
