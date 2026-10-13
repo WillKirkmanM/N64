@@ -310,6 +310,25 @@ fn already_fetched_instruction_survives_cache_invalidation() {
     }
 }
 
+#[test]
+fn streaming_stores_only_reach_instruction_line_before_refill_is_issued() {
+    let mut n64 = pipeline_device();
+    n64.cpu.registers.gpr[1] = 0xFFFF_FFFF_A000_0020;
+    for i in 0..8 {
+        n64.cpu.registers.gpr[16 + i] = 0x354A_0000 | (1 << i);
+        crate::rdram::write_mem(
+            &mut n64,
+            (i * 4) as u64,
+            0xAC20_0000 | (((16 + i) as u32) << 16) | ((i * 4) as u32),
+            u32::MAX,
+        );
+    }
+
+    run_cached_words(&mut n64, 16);
+
+    assert_eq!(n64.cpu.registers.gpr[10], 0x3F);
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
