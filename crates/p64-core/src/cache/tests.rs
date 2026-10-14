@@ -466,6 +466,138 @@ fn unavailable_aot_cache_entry_is_classified_only_once() {
     assert_eq!(n64.memory.caches.icache[0].native.prepared, 1);
 }
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn branch_nop_fusion_matches_scalar_fetch_and_retirement() {
+    use crate::mmu::MmuRegister;
+    fn setup(native: bool, branch: u32, initial: u64, minimum: usize) -> N64 {
+        let mut n64 = device();
+        cpu::start_cpu(&mut n64);
+        n64.memory.fetch_pipeline.enabled = true;
+        n64.memory.fetch_pipeline.native_min_block_length = minimum;
+        if native {
+            n64.execution_engine = crate::recompiler::Engine::jit();
+        }
+        n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+        for (index, opcode) in [
+            0x24210001, branch, 0, 0x00000018, 0x00000018, 0x00000018, 0, 0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            crate::rdram::write_mem(&mut n64, index as u64 * 4, opcode, u32::MAX);
+        }
+
+        icache_fill(&mut n64, 0, 0);
+        n64.cpu.registers.gpr[1] = initial;
+        n64.cpu.execution.pending_gpr_load = 1;
+        n64.cpu.fpu.timing.pending_write = Some(3);
+        n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 0;
+        n64.cpu.mmu.clock.instruction_clock = 0;
+        n64.cpu.scheduler.next_event_count = 100;
+
+        n64
+    }
+    fn scalar_step(n64: &mut N64) {
+        let (physical, _, error) =
+            memory::translate_address(n64, n64.cpu.execution.pc, memory::AccessType::Read);
+        assert!(!error);
+        n64.cpu.execution.pc_phys = physical;
+        assert!(!icache_fetch(n64, physical));
+        n64.cpu.execution.pc = match n64.cpu.branch_state.state {
+            cpu::State::DelaySlotTaken => n64.cpu.branch_state.pc,
+            _ => n64.cpu.execution.pc + 4,
+        };
+        n64.cpu.branch_state.state = match n64.cpu.branch_state.state {
+            cpu::State::Take => cpu::State::DelaySlotTaken,
+            cpu::State::NotTaken => cpu::State::DelaySlotNotTaken,
+            _ => cpu::State::Step,
+        };
+        crate::mmu::add_cycles(n64, 1);
+    }
+    for branch in [0x10200004, 0x14200004, 0x08000006] {
+        for initial in [0, u64::MAX] {
+            for wired in [0, 1, 30, 31] {
+                let mut reference = setup(false, branch, initial, 3);
+                let mut native = setup(true, branch, initial, 3);
+                reference.cpu.mmu.registers.regs[MmuRegister::Wired as usize] = wired;
+                native.cpu.mmu.registers.regs[MmuRegister::Wired as usize] = wired;
+                for _ in 0..3 {
+                    scalar_step(&mut reference);
+                }
+
+                assert!(try_execute_native_block(&mut native, 0));
+                assert_eq!(native.execution_engine.stats.native_executions, 3);
+                assert_eq!(native.cpu.registers.gpr, reference.cpu.registers.gpr);
+                assert_eq!(
+                    native.cpu.mmu.registers.regs.regs,
+                    reference.cpu.mmu.registers.regs.regs
+                );
+                assert_eq!(
+                    (
+                        native.cpu.execution.pc,
+                        native.cpu.execution.pc_phys,
+                        native.cpu.execution.data_address,
+                        native.cpu.execution.pending_gpr_load,
+                        native.cpu.mmu.clock.instruction_clock
+                    ),
+                    (
+                        reference.cpu.execution.pc,
+                        reference.cpu.execution.pc_phys,
+                        reference.cpu.execution.data_address,
+                        reference.cpu.execution.pending_gpr_load,
+                        reference.cpu.mmu.clock.instruction_clock
+                    )
+                );
+                assert_eq!(native.cpu.branch_state.pc, reference.cpu.branch_state.pc);
+                assert!(matches!(native.cpu.branch_state.state, cpu::State::Step));
+                assert_eq!(
+                    native.cpu.fpu.timing.pending_write,
+                    reference.cpu.fpu.timing.pending_write
+                );
+                assert_eq!(
+                    native.cpu.fpu.timing.previous_write,
+                    reference.cpu.fpu.timing.previous_write
+                );
+                let latch = |n: &N64| {
+                    n.memory
+                        .fetch_pipeline
+                        .next
+                        .map(|l| (l.virtual_address, l.physical_address, l.word))
+                };
+
+                assert_eq!(latch(&native), latch(&reference));
+            }
+        }
+    }
+
+    let mut strict = setup(true, 0x10200004, 0, 4);
+
+    assert!(
+        !try_execute_native_block(&mut strict, 0),
+        "slot only raises length to three"
+    );
+    let mut event = setup(true, 0x10200004, 0, 3);
+    event.cpu.scheduler.next_event_count = 3; // pending load interlock needs a fourth cycle
+    assert!(!try_execute_native_block(&mut event, 0));
+    assert_eq!(event.execution_engine.stats.native_executions, 0);
+    let mut cold = setup(true, 0x1020000e, 0, 3);
+
+    assert!(
+        !try_execute_native_block(&mut cold, 0),
+        "target lookahead must be cached"
+    );
+    let mut stale = setup(true, 0x10200004, 0, 3);
+    stale.memory.fetch_pipeline.next = Some(FetchLatch {
+        virtual_address: stale.cpu.execution.pc,
+        physical_address: 0,
+        word: 1,
+        instruction: cpu::decode_opcode(&stale, 1),
+    });
+
+    assert!(!try_execute_native_block(&mut stale, 0));
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
