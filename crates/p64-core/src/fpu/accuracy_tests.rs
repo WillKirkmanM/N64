@@ -90,3 +90,28 @@ fn register_word_joins_preserve_raw_bits_in_both_fr_modes() {
         }
     }
 }
+
+#[test]
+fn fpe_lookahead_uses_virtual_cache_index_for_tlb_aliases() {
+    let mut n64 = N64::new();
+    n64.cpu.execution.pc = 0x1000;
+    n64.cpu.execution.pc_phys = 0;
+    n64.cpu.mmu.translations.tlb_entries[0].pages[1].valid = true;
+    n64.cpu.mmu.translations.tlb_entries[0].global = true;
+    n64.memory.caches.icache[0].valid = true;
+    n64.memory.caches.icache[0].tag = 0;
+    n64.memory.caches.icache[0].words[1] = 0;
+    n64.memory.caches.icache[128].valid = true;
+    n64.memory.caches.icache[128].tag = 0;
+    n64.memory.caches.icache[128].words[1] = 0x12 << 26;
+    handle_fcr31(&mut n64, (4 << 7) | (4 << 12));
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::CE2 as u64 | MmuCause::ExccodeFPE as u64
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+        0x1000
+    );
+}
