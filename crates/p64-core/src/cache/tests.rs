@@ -717,3 +717,24 @@ fn cached_scalar_fetch_does_not_compile_leaves_after_engine_replacement() {
         "the unprepared API must retain compilation on demand"
     );
 }
+
+#[test]
+fn virtual_cache_indices_can_hold_distinct_lines_for_one_physical_page() {
+    let mut n64 = device();
+    n64.cpu.execution.data_address = 0;
+    dcache_write(&mut n64, 0, 0xc0ffe000, u32::MAX);
+    n64.cpu.execution.data_address = 0x1000;
+    dcache_write(&mut n64, 0, 0xf00d0000, u32::MAX);
+    dcache_writeback(&mut n64, 0);
+
+    assert_eq!(
+        crate::rdram::read_mem_fast(&mut n64, 0, AccessSize::Word),
+        0xc0ffe000
+    );
+    dcache_writeback(&mut n64, 256);
+
+    assert_eq!(
+        crate::rdram::read_mem_fast(&mut n64, 0, AccessSize::Word),
+        0xf00d0000
+    );
+}
