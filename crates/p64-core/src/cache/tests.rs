@@ -738,3 +738,26 @@ fn virtual_cache_indices_can_hold_distinct_lines_for_one_physical_page() {
         0xf00d0000
     );
 }
+
+#[test]
+fn visible_dirty_tag_does_not_create_writeback_without_a_store() {
+    let mut n64 = device();
+    crate::rdram::write_mem(&mut n64, 0, 0x33334444, u32::MAX);
+    n64.memory.caches.dcache[0].valid = true;
+    n64.memory.caches.dcache[0].dirty = true;
+    n64.memory.caches.dcache[0].words[0] = 0xbbbbbbbb;
+    n64.cpu.execution.data_address = 0x2000;
+    dcache_read(&mut n64, 0x2000);
+
+    assert_eq!(
+        crate::rdram::read_mem_fast(&mut n64, 0, AccessSize::Word),
+        0x33334444
+    );
+    assert!(n64.memory.caches.dcache[0].dirty);
+    assert!(!n64.memory.caches.dcache[0].store_dirty);
+    dcache_write(&mut n64, 0x2000, 0x55556666, u32::MAX);
+    dcache_writeback(&mut n64, 0);
+
+    assert!(n64.memory.caches.dcache[0].dirty);
+    assert!(n64.memory.caches.dcache[0].store_dirty);
+}
