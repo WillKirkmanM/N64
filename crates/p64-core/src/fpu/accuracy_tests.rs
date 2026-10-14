@@ -115,3 +115,27 @@ fn fpe_lookahead_uses_virtual_cache_index_for_tlb_aliases() {
         0x1000
     );
 }
+
+#[test]
+fn fpe_lookahead_never_invokes_mmio_bus_handlers() {
+    fn side_effectful_read(n64: &mut N64, _address: u64, _size: AccessSize) -> u32 {
+        crate::mmu::add_cycles(n64, 20);
+        n64.mips.regs[0] = 0;
+
+        0x12 << 26
+    }
+    let mut n64 = N64::new();
+    n64.cpu.execution.pc = 0xFFFFFFFFA3EFFFFC;
+    n64.cpu.execution.pc_phys = 0x03EFFFFC;
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 200;
+    n64.mips.regs[0] = 0x12345678;
+    n64.memory.bus.fast_read[0x03F0] = side_effectful_read;
+    handle_fcr31(&mut n64, (4 << 7) | (4 << 12));
+
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 202);
+    assert_eq!(n64.mips.regs[0], 0x12345678);
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::ExccodeFPE as u64
+    );
+}
