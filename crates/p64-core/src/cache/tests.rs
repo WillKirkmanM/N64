@@ -359,6 +359,89 @@ fn warm_data_cache_accesses_do_not_stall_and_miss_uses_one_line_transfer() {
     );
 }
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn native_cache_compiles_only_entries_reached_by_execution() {
+    let mut n64 = device();
+    cpu::start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    n64.memory.fetch_pipeline.enabled = true;
+    n64.memory.fetch_pipeline.native_min_block_length = 2;
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    for word in 0..8 {
+        crate::rdram::write_mem(&mut n64, word * 4, 0x24210001 + word as u32, u32::MAX);
+    }
+
+    icache_fill(&mut n64, 0, 0);
+
+    assert_eq!(
+        n64.execution_engine.compiled_blocks(),
+        0,
+        "cache fill only classifies entries"
+    );
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 0);
+    n64.memory.fetch_pipeline.next = Some(FetchLatch {
+        virtual_address: n64.cpu.execution.pc,
+        physical_address: 0,
+        word: 1,
+        instruction: cpu::decode_opcode(&n64, 1),
+    });
+
+    assert!(!try_execute_native_block(&mut n64, 0));
+    assert_eq!(
+        n64.execution_engine.compiled_blocks(),
+        0,
+        "stale RF guard precedes compilation"
+    );
+    n64.memory.fetch_pipeline.next = None;
+
+    assert!(try_execute_native_block(&mut n64, 0));
+    assert_eq!(
+        n64.execution_engine.compiled_blocks(),
+        2,
+        "only the reached entry and its safe prefix"
+    );
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 1);
+    assert!(n64.memory.prepared_code.native_blocks[0][1..]
+        .iter()
+        .all(Option::is_none));
+    assert!(n64.memory.prepared_code.native_prefix_blocks[0][1..]
+        .iter()
+        .all(Option::is_none));
+
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    n64.memory.fetch_pipeline.next = None;
+    n64.execution_engine = crate::recompiler::Engine::jit();
+
+    assert!(try_execute_native_block(&mut n64, 0));
+    assert_eq!(
+        n64.execution_engine.compiled_blocks(),
+        2,
+        "new engine prepares only the reached entry"
+    );
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 1);
+    for word in 0..8 {
+        crate::rdram::write_mem(&mut n64, word * 4, 0x00000018, u32::MAX);
+    }
+
+    icache_fill(&mut n64, 0, 0);
+
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 0);
+    assert_eq!(n64.memory.caches.icache[0].native.candidates, 0);
+    assert!(n64.memory.prepared_code.native_blocks[0]
+        .iter()
+        .all(Option::is_none));
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    n64.memory.fetch_pipeline.next = None;
+
+    assert!(!try_execute_native_block(&mut n64, 0));
+    assert_eq!(
+        n64.execution_engine.compiled_blocks(),
+        2,
+        "refill invalidates old entry handles"
+    );
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
