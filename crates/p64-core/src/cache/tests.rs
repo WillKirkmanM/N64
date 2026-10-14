@@ -667,3 +667,53 @@ fn pipelined_scalar_latch_survives_engine_replacement_without_code_calls() {
     );
     assert_eq!(n64.execution_engine.compiled_instructions(), 1);
 }
+
+#[test]
+fn cached_scalar_fetch_does_not_compile_leaves_after_engine_replacement() {
+    let mut n64 = pipeline_device();
+    let increment = 0x24210001;
+    n64.execution_engine = crate::recompiler::Engine::aot([]);
+    crate::rdram::write_mem(&mut n64, 0, increment, u32::MAX);
+    crate::rdram::write_mem(&mut n64, 4, increment, u32::MAX);
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 1);
+    assert_eq!(n64.execution_engine.stats.native_executions, 0);
+    assert_eq!(n64.execution_engine.stats.fallback_executions, 1);
+    assert_eq!(n64.execution_engine.compiled_instructions(), 0);
+    let latch = n64.memory.fetch_pipeline.next.unwrap();
+
+    assert_eq!(latch.word, increment);
+
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    crate::rdram::write_mem(&mut n64, 4, 0x24210002, u32::MAX);
+    n64.memory.caches.icache[0].valid = false;
+    n64.cpu.execution.pc += 4;
+    icache_fetch(&mut n64, 4);
+
+    assert_eq!(
+        n64.cpu.registers.gpr[1], 2,
+        "stale miss latch retains its fetched +1 opcode"
+    );
+    assert_eq!(
+        n64.execution_engine.stats.native_executions, 0,
+        "an old scalar latch must retain its decoded handler in a new JIT"
+    );
+    assert_eq!(
+        n64.execution_engine.compiled_instructions(),
+        0,
+        "production scalar fetch does not compile leaves"
+    );
+
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    let fallback = cpu::decode_opcode(&n64, increment);
+    cpu::execute_instruction(&mut n64, increment, fallback);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 3);
+    assert_eq!(
+        n64.execution_engine.compiled_instructions(),
+        1,
+        "the unprepared API must retain compilation on demand"
+    );
+}
