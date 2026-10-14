@@ -30,3 +30,18 @@ fn undocumented_control_register_transfers_preserve_defined_registers() {
     cfc1(&mut n64, (2 << 16) | (31 << 11));
     assert_eq!(n64.cpu().gpr(2), u64::from(FCR31_CMP_BIT));
 }
+
+#[test]
+fn undocumented_control_register_transfers_still_check_coprocessor_access() {
+    for handler in [cfc1, ctc1] {
+        let mut n64 = N64::new();
+        n64.set_cp0_register(MmuRegister::Status, 0);
+        n64.cpu_mut().set_gpr(2, 0x1234);
+        handler(&mut n64, (2 << 16) | (1 << 11));
+        assert_eq!(n64.cpu().gpr(2), 0x1234);
+        assert_eq!(
+            n64.cp0_register(MmuRegister::Cause),
+            MmuCause::ExccodeCPU as u64 | MmuCause::CE1 as u64
+        );
+    }
+}
