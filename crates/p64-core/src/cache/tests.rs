@@ -638,3 +638,32 @@ fn scalar_fetch_retains_cached_words_after_engine_replacement() {
     assert_eq!(n64.execution_engine.stats.fallback_executions, 2);
     assert_eq!(n64.execution_engine.compiled_instructions(), 1);
 }
+
+#[test]
+fn pipelined_scalar_latch_survives_engine_replacement_without_code_calls() {
+    let mut n64 = pipeline_device();
+    let increment = 0x24210001;
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    crate::rdram::write_mem(&mut n64, 0, increment, u32::MAX);
+    crate::rdram::write_mem(&mut n64, 4, increment, u32::MAX);
+    n64.cpu.execution.pc = 0xFFFF_FFFF_8000_0000;
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 1);
+    // RF retains its fetched word across engine replacement and backing-memory writes.
+    n64.execution_engine = crate::recompiler::Engine::aot([increment]);
+    crate::rdram::write_mem(&mut n64, 4, 0x24210002, u32::MAX);
+    n64.memory.caches.icache[0].valid = false;
+    n64.cpu.execution.pc += 4;
+    icache_fetch(&mut n64, 4);
+
+    assert_eq!(
+        n64.cpu.registers.gpr[1], 2,
+        "RF latch retains the original instruction"
+    );
+    assert_eq!(
+        n64.execution_engine.stats.native_executions, 0,
+        "latched scalar fetch uses its decoded handler after engine replacement"
+    );
+    assert_eq!(n64.execution_engine.compiled_instructions(), 1);
+}
