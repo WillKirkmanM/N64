@@ -605,3 +605,36 @@ fn device() -> N64 {
 
     n64
 }
+
+#[test]
+fn scalar_fetch_retains_cached_words_after_engine_replacement() {
+    let mut n64 = device();
+    cpu::start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    let increment = 0x24210001;
+    let increment_two = 0x24210002;
+    crate::rdram::write_mem(&mut n64, 0, increment, u32::MAX);
+    n64.cpu.execution.pc = 0;
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 1);
+    // A backing-memory store cannot change the already fetched I-cache word.
+    crate::rdram::write_mem(&mut n64, 0, increment_two, u32::MAX);
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 2);
+    n64.execution_engine = crate::recompiler::Engine::aot([increment]);
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 3);
+    assert_eq!(
+        n64.execution_engine.stats.native_executions, 0,
+        "isolated fetch uses the decoded handler"
+    );
+    n64.memory.caches.icache[0].valid = false;
+    icache_fetch(&mut n64, 0);
+
+    assert_eq!(n64.cpu.registers.gpr[1], 5);
+    assert_eq!(n64.execution_engine.stats.fallback_executions, 2);
+    assert_eq!(n64.execution_engine.compiled_instructions(), 1);
+}
