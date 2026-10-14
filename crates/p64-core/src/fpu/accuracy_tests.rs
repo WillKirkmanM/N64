@@ -162,3 +162,24 @@ fn fpe_delay_slot_looks_at_branch_target_decode() {
         0xFFFFFFFF80000000
     );
 }
+
+#[test]
+fn reserved_fp_formats_charge_their_decode_and_flush_latency() {
+    for (format, function, expected) in [
+        (16, 16, 4),
+        (17, 33, 4),
+        (20, 0, 5),
+        (21, 36, 5),
+        (20, 16, 4),
+    ] {
+        let mut n64 = N64::new();
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU1 as u64;
+        reserved(&mut n64, (format << 21) | function);
+
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::Count as usize],
+            expected
+        );
+        assert_eq!(n64.cpu.fpu.control.fcr31, FCR31_CAUSE_UNIMP_BIT);
+    }
+}
