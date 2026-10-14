@@ -139,3 +139,26 @@ fn fpe_lookahead_never_invokes_mmio_bus_handlers() {
         MmuCause::ExccodeFPE as u64
     );
 }
+
+#[test]
+fn fpe_delay_slot_looks_at_branch_target_decode() {
+    let mut n64 = N64::new();
+    n64.cpu.execution.pc = 0xFFFFFFFF80000004;
+    n64.cpu.execution.pc_phys = 4;
+    n64.cpu.branch_state.state = cpu::State::DelaySlotTaken;
+    n64.cpu.branch_state.pc = 0xFFFFFFFF80000010;
+    n64.memory.caches.icache[0].valid = true;
+    n64.memory.caches.icache[0].tag = 0;
+    n64.memory.caches.icache[0].words[2] = 0x11 << 26; // skipped MFC1
+    n64.memory.caches.icache[0].words[4] = 0; // branch target NOP
+    handle_fcr31(&mut n64, (4 << 7) | (4 << 12));
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::BD as u64 | MmuCause::ExccodeFPE as u64
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+        0xFFFFFFFF80000000
+    );
+}
