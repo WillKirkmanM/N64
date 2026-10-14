@@ -442,6 +442,30 @@ fn native_cache_compiles_only_entries_reached_by_execution() {
     );
 }
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn unavailable_aot_cache_entry_is_classified_only_once() {
+    let mut n64 = device();
+    cpu::start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::aot([]);
+    n64.memory.fetch_pipeline.enabled = false;
+    n64.memory.fetch_pipeline.native_min_block_length = 2;
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    for word in 0..8 {
+        crate::rdram::write_mem(&mut n64, word * 4, 0x24210001, u32::MAX);
+    }
+
+    icache_fill(&mut n64, 0, 0);
+
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 0);
+    assert!(!try_execute_native_block(&mut n64, 0));
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 1);
+    assert_eq!(n64.memory.caches.icache[0].native.candidates & 1, 0);
+    assert!(!try_execute_native_block(&mut n64, 0));
+    assert_eq!(n64.execution_engine.compiled_blocks(), 0);
+    assert_eq!(n64.memory.caches.icache[0].native.prepared, 1);
+}
+
 fn device() -> N64 {
     let mut n64 = N64::new();
     n64.cartridge.rom = crate::builder::memory::Memory::new().with_size(4).build();
