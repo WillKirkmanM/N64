@@ -405,4 +405,7 @@ pub fn set_fgr_registers(n64: &mut N64, status_reg: u64) {
 }
 
 #[cfg(test)]
+mod accuracy_tests;
+
+#[cfg(test)]
 mod encoding_tests;
