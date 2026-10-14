@@ -211,3 +211,44 @@ fn fcsr_software_exception_reports_following_pipeline_coprocessor() {
         );
     }
 }
+
+#[test]
+fn reserved_cop1_decodes_to_unimplemented_with_usable_priority() {
+    let reserved_rs = [
+        3, 7, 9, 10, 11, 12, 13, 14, 15, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    ];
+
+    for rs in reserved_rs {
+        for usable in [false, true] {
+            let mut n64 = N64::new();
+
+            if usable {
+                n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU1 as u64;
+            }
+
+            n64.cpu.fpu.instructions.instrs[rs as usize](&mut n64, rs << 21);
+            let expected = if usable {
+                MmuCause::ExccodeFPE as u64
+            } else {
+                MmuCause::ExccodeCPU as u64 | MmuCause::CE1 as u64
+            };
+
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                expected
+            );
+            assert_eq!(
+                n64.cpu.fpu.control.fcr31,
+                if usable { FCR31_CAUSE_UNIMP_BIT } else { 0 }
+            );
+        }
+    }
+
+    for rt in 4..32 {
+        let mut n64 = N64::new();
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU1 as u64;
+        execute_fpu_b(&mut n64, (8 << 21) | (rt << 16));
+
+        assert_eq!(n64.cpu.fpu.control.fcr31, FCR31_CAUSE_UNIMP_BIT);
+    }
+}
