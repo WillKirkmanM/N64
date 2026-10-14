@@ -183,3 +183,31 @@ fn reserved_fp_formats_charge_their_decode_and_flush_latency() {
         assert_eq!(n64.cpu.fpu.control.fcr31, FCR31_CAUSE_UNIMP_BIT);
     }
 }
+
+#[test]
+fn fcsr_software_exception_reports_following_pipeline_coprocessor() {
+    for (coprocessor, pending) in [
+        (1u64, 0),
+        (2, 0),
+        (1, MmuCause::IP7 as u64),
+        (2, MmuCause::IP7 as u64),
+    ] {
+        let mut n64 = N64::new();
+        n64.cpu.execution.pc = 0xFFFFFFFF80000000;
+        n64.cpu.execution.pc_phys = 0;
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] = pending;
+        n64.memory.caches.icache[0].valid = true;
+        n64.memory.caches.icache[0].tag = 0;
+        n64.memory.caches.icache[0].words[1] = ((0x10 + coprocessor) << 26) as u32;
+        handle_fcr31(&mut n64, (4 << 7) | (4 << 12));
+
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+            MmuCause::ExccodeFPE as u64 | (coprocessor << 28) | pending
+        );
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+            0xFFFFFFFF80000000
+        );
+    }
+}
