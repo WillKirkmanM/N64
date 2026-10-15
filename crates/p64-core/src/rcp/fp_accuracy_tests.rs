@@ -209,3 +209,57 @@ fn comparisons_support_subnormals_and_distinguish_nan_encodings() {
         FCR31_CMP_BIT | (16 << 12) | (16 << 2)
     );
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+#[allow(deprecated)]
+fn comparisons_ignore_host_daz_ftz_and_preserve_mxcsr() {
+    use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
+    struct Restore(u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            unsafe {
+                _mm_setcsr(self.0);
+            }
+        }
+    }
+    let mut n64 = device(0.0, 0.0, 0);
+    let restore = Restore(unsafe { _mm_getcsr() });
+    let control = (restore.0 & !0x3f) | 0x8040; // DAZ + FTZ, clear status.
+    for double in [false, true] {
+        let sign = if double { 1u64 << 63 } else { 1u64 << 31 };
+
+        for (a, b, equal, less) in [
+            (1, 0, false, false),
+            (0, 1, false, true),
+            (sign | 1, 0, false, true),
+            (sign | 2, sign | 1, false, true),
+            (0, sign, true, false),
+            (sign, 0, true, false),
+        ] {
+            n64.cpu.fpu.registers.fgr64[0] = a.to_le_bytes();
+            n64.cpu.fpu.registers.fgr64[2] = b.to_le_bytes();
+
+            for (function, expected) in [(50, equal), (52, less)] {
+                n64.cpu.fpu.control.fcr31 = 0;
+                unsafe {
+                    _mm_setcsr(control);
+                }
+                let mut latency = 0;
+                execute_float_operation(
+                    &mut n64,
+                    OP,
+                    if double { 17 } else { 16 },
+                    function,
+                    &mut latency,
+                );
+
+                assert_eq!(unsafe { _mm_getcsr() }, control);
+                assert_eq!(
+                    n64.cpu.fpu.control.fcr31,
+                    if expected { FCR31_CMP_BIT } else { 0 }
+                );
+            }
+        }
+    }
+}
