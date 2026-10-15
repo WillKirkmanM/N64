@@ -322,3 +322,17 @@ fn coprocessor_unusable_takes_priority_over_unaligned_address() {
         0x1234
     );
 }
+
+#[test]
+fn unaligned_fpu_access_takes_priority_over_tlb_miss() {
+    let mut n64 = N64::new();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU1 as u64;
+    n64.cpu.registers.gpr[1] = 0x12345002;
+    lwc1(&mut n64, 1 << 21);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::ExccodeAdEL as u64
+    );
+    assert_eq!(n64.cpu.execution.pc, 0xFFFFFFFF80000180);
+}
