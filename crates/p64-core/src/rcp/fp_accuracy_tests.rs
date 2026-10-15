@@ -47,3 +47,27 @@ fn arithmetic_latency_shortcuts_and_exception_flush_follow_hardware() {
         6
     );
 }
+
+#[test]
+fn fp_dependency_is_one_cycle_and_expires_after_integer_instruction() {
+    let mut n64 = device(1.3, 0.66, 0);
+    fpu::begin_instruction_timing(&mut n64, OP);
+    add_s(&mut n64, OP);
+    let before = n64.cpu.mmu.registers.regs[MmuRegister::Count as usize];
+    fpu::begin_instruction_timing(&mut n64, OP);
+    add_s(&mut n64, (4 << 11) | (2 << 16) | (6 << 6));
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] - before,
+        3
+    );
+    fpu::begin_instruction_timing(&mut n64, 0); // an intervening integer NOP
+    fpu::begin_instruction_timing(&mut n64, OP);
+    let before = n64.cpu.mmu.registers.regs[MmuRegister::Count as usize];
+    add_s(&mut n64, (6 << 11) | (2 << 16) | (8 << 6));
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] - before,
+        2
+    );
+}
