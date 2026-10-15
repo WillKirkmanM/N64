@@ -155,3 +155,6 @@ pub fn schedule_rcp_interrupt(n64: &mut N64, interrupt: u32) {
         exceptions::check_pending_interrupts,
     )
 }
+
+#[cfg(test)]
+mod tests;
