@@ -84,3 +84,38 @@ fn unary_unused_ft_still_creates_dependency_and_conversion_threshold_is_exact() 
     assert_eq!(fp_latency(17, 8, 9007199254740992.0f64.to_bits(), 0), 2);
     assert_eq!(fp_latency(16, 33, 1.3f32.to_bits() as u64, 0), 1);
 }
+
+#[test]
+fn cop2_move_slots_and_reserved_slots_decode_correctly() {
+    let mut n64 = N64::new();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU2 as u64;
+    n64.cpu.registers.gpr[1] = 0x0123456789ABCDEF;
+    n64.cpu.rcp.instrs[6](&mut n64, 1 << 16);
+
+    assert_eq!(n64.cpu.rcp.reg_latch, 0x0123456789ABCDEF);
+    n64.cpu.rcp.instrs[0](&mut n64, 2 << 16);
+
+    assert_eq!(n64.cpu.registers.gpr[2], 0xFFFFFFFF89ABCDEF);
+
+    for slot in [3, 7] {
+        for usable in [false, true] {
+            let mut n64 = N64::new();
+
+            if usable {
+                n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU2 as u64;
+            }
+
+            n64.cpu.rcp.instrs[slot](&mut n64, 0);
+
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                MmuCause::CE2 as u64
+                    | if usable {
+                        MmuCause::ExccodeRI as u64
+                    } else {
+                        MmuCause::ExccodeCPU as u64
+                    }
+            );
+        }
+    }
+}
