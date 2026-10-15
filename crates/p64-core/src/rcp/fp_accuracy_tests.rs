@@ -145,3 +145,17 @@ fn directed_rounding_reports_inexact_and_restores_host_mxcsr() {
     #[cfg(target_arch = "x86_64")]
     assert_eq!(after, saved);
 }
+
+#[test]
+fn enabled_exception_preserves_destination_and_sets_cause_only() {
+    let mut n64 = device(1.0, 0.0, 8 << 7);
+    fpu::set_fpr_single(&mut n64, 4, 42.0, false);
+    div_s(&mut n64, OP);
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4), 42.0);
+    assert_eq!(n64.cpu.fpu.control.fcr31, (8 << 7) | (8 << 12));
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] & MmuCause::ExccodeMask as u64,
+        MmuCause::ExccodeFPE as u64
+    );
+}
