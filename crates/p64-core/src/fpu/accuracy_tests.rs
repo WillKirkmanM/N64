@@ -252,3 +252,31 @@ fn reserved_cop1_decodes_to_unimplemented_with_usable_priority() {
         assert_eq!(n64.cpu.fpu.control.fcr31, FCR31_CAUSE_UNIMP_BIT);
     }
 }
+
+#[test]
+fn unaligned_fpu_memory_operations_fault_before_memory_access() {
+    for (instruction, cause, offset) in [
+        (lwc1 as fn(&mut N64, u32), MmuCause::ExccodeAdEL as u64, 2),
+        (ldc1, MmuCause::ExccodeAdEL as u64, 4),
+        (swc1, MmuCause::ExccodeAdES as u64, 2),
+        (sdc1, MmuCause::ExccodeAdES as u64, 4),
+    ] {
+        let mut n64 = N64::new();
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::CU1 as u64;
+        n64.cpu.registers.gpr[1] = 0xFFFFFFFF80000000;
+        n64.cpu.fpu.registers.fgr32[2] = 0x12345678u32.to_le_bytes();
+        n64.rdram.mem.write_u32(0, 0x89ABCDEF, u32::MAX);
+        instruction(&mut n64, (1 << 21) | (2 << 16) | offset);
+
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] & MmuCause::ExccodeMask as u64,
+            cause
+        );
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+            0xFFFFFFFF80000000 + offset as u64
+        );
+        assert_eq!(n64.cpu.fpu.registers.fgr32[2], 0x12345678u32.to_le_bytes());
+        assert_eq!(n64.rdram.mem.read_u32(0), 0x89ABCDEF);
+    }
+}
