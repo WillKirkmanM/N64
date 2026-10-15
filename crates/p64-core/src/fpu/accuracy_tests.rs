@@ -305,3 +305,20 @@ fn aligned_fpu_memory_operations_still_transfer_register_bits() {
     assert_eq!(n64.rdram.mem.read_u32(28), 0x01234567);
     assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
 }
+
+#[test]
+fn coprocessor_unusable_takes_priority_over_unaligned_address() {
+    let mut n64 = N64::new();
+    n64.cpu.registers.gpr[1] = 0xFFFFFFFF80000002;
+    n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize] = 0x1234;
+    lwc1(&mut n64, 1 << 21);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::ExccodeCPU as u64 | MmuCause::CE1 as u64
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+        0x1234
+    );
+}
