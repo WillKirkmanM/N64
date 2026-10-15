@@ -128,3 +128,20 @@ fn exact_arithmetic_clears_causes_and_preserves_sticky_flags() {
     assert_eq!(fpu::get_fpr_single(&n64, 4), 6.0);
     assert_eq!(n64.cpu.fpu.control.fcr31, 16 << 2);
 }
+
+#[test]
+fn directed_rounding_reports_inexact_and_restores_host_mxcsr() {
+    let mut n64 = device(1.0, f32::from_bits(0x33000000), 2);
+    #[cfg(target_arch = "x86_64")]
+    #[allow(deprecated)]
+    let saved = unsafe { std::arch::x86_64::_mm_getcsr() };
+    add_s(&mut n64, OP);
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4).to_bits(), 1.0f32.to_bits() + 1);
+    assert_eq!(n64.cpu.fpu.control.fcr31, 2 | (1 << 12) | (1 << 2));
+    #[cfg(target_arch = "x86_64")]
+    #[allow(deprecated)]
+    let after = unsafe { std::arch::x86_64::_mm_getcsr() };
+    #[cfg(target_arch = "x86_64")]
+    assert_eq!(after, saved);
+}
