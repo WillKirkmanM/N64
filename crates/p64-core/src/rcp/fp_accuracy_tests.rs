@@ -119,3 +119,12 @@ fn cop2_move_slots_and_reserved_slots_decode_correctly() {
         }
     }
 }
+
+#[test]
+fn exact_arithmetic_clears_causes_and_preserves_sticky_flags() {
+    let mut n64 = device(1.0, 5.0, fpu::FCR31_CAUSE_MASK | (16 << 2));
+    add_s(&mut n64, OP);
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4), 6.0);
+    assert_eq!(n64.cpu.fpu.control.fcr31, 16 << 2);
+}
