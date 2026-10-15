@@ -71,3 +71,16 @@ fn fp_dependency_is_one_cycle_and_expires_after_integer_instruction() {
         2
     );
 }
+
+#[test]
+fn unary_unused_ft_still_creates_dependency_and_conversion_threshold_is_exact() {
+    let mut n64 = device(2.0, 3.0, 0);
+    n64.cpu.fpu.timing.previous_write = Some(0);
+    abs_s(&mut n64, (2 << 11) | (4 << 6));
+
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 1);
+    assert_eq!(fp_latency(16, 12, 4294967040.0f32.to_bits() as u64, 0), 5);
+    assert_eq!(fp_latency(16, 12, 4294967296.0f32.to_bits() as u64, 0), 2);
+    assert_eq!(fp_latency(17, 8, 9007199254740992.0f64.to_bits(), 0), 2);
+    assert_eq!(fp_latency(16, 33, 1.3f32.to_bits() as u64, 0), 1);
+}
