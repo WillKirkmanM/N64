@@ -191,3 +191,21 @@ fn underflow_obeys_flush_mode_and_directed_rounding() {
 
     assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
 }
+
+#[test]
+fn comparisons_support_subnormals_and_distinguish_nan_encodings() {
+    let mut n64 = device(f32::from_bits(1), 0.0, fpu::FCR31_CAUSE_MASK);
+    c_olt_s(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, 0);
+    let mut n64 = device(f32::from_bits(0x7F800001), 0.0, 0);
+    c_un_s(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, FCR31_CMP_BIT);
+    c_ngle_s(&mut n64, OP);
+
+    assert_eq!(
+        n64.cpu.fpu.control.fcr31,
+        FCR31_CMP_BIT | (16 << 12) | (16 << 2)
+    );
+}
