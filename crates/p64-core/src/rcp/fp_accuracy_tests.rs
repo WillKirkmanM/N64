@@ -172,3 +172,22 @@ fn nan_arithmetic_uses_r4300_canonical_result_and_signaling_input_traps() {
 
     assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
 }
+
+#[test]
+fn underflow_obeys_flush_mode_and_directed_rounding() {
+    for (mode, expected) in [(0, 0), (1, 0), (2, 0x00800000), (3, 0)] {
+        let mut n64 = device(f32::MIN_POSITIVE, 0.5, fpu::FCR31_FS_BIT | mode);
+        mul_s(&mut n64, OP);
+
+        assert_eq!(fpu::get_fpr_single(&n64, 4).to_bits(), expected);
+        assert_eq!(
+            n64.cpu.fpu.control.fcr31,
+            fpu::FCR31_FS_BIT | mode | (3 << 12) | (3 << 2)
+        );
+    }
+
+    let mut n64 = device(f32::MIN_POSITIVE, 0.5, 0);
+    mul_s(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
+}
