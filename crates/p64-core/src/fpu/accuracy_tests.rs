@@ -280,3 +280,28 @@ fn unaligned_fpu_memory_operations_fault_before_memory_access() {
         assert_eq!(n64.rdram.mem.read_u32(0), 0x89ABCDEF);
     }
 }
+
+#[test]
+fn aligned_fpu_memory_operations_still_transfer_register_bits() {
+    let mut n64 = N64::new();
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] =
+        MmuStatus::CU1 as u64 | MmuStatus::FR as u64;
+    n64.cpu.registers.gpr[1] = 0xFFFFFFFFA0000000;
+    n64.memory.bus.memory_map_read[0] = crate::rdram::read_mem_fast;
+    n64.memory.bus.memory_map_write[0] = crate::rdram::write_mem;
+    crate::rdram::write_mem(&mut n64, 4, 0x12345678, u32::MAX);
+    crate::rdram::write_mem(&mut n64, 8, 0x89ABCDEF, u32::MAX);
+    crate::rdram::write_mem(&mut n64, 12, 0x01234567, u32::MAX);
+    lwc1(&mut n64, (1 << 21) | (2 << 16) | 4);
+    ldc1(&mut n64, (1 << 21) | (3 << 16) | 8);
+
+    assert_eq!(get_fpr_single(&n64, 2).to_bits(), 0x12345678);
+    assert_eq!(get_fpr_double(&n64, 3).to_bits(), 0x89ABCDEF01234567);
+    swc1(&mut n64, (1 << 21) | (2 << 16) | 20);
+    sdc1(&mut n64, (1 << 21) | (3 << 16) | 24);
+
+    assert_eq!(n64.rdram.mem.read_u32(20), 0x12345678);
+    assert_eq!(n64.rdram.mem.read_u32(24), 0x89ABCDEF);
+    assert_eq!(n64.rdram.mem.read_u32(28), 0x01234567);
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+}
