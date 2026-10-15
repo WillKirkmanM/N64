@@ -159,3 +159,16 @@ fn enabled_exception_preserves_destination_and_sets_cause_only() {
         MmuCause::ExccodeFPE as u64
     );
 }
+
+#[test]
+fn nan_arithmetic_uses_r4300_canonical_result_and_signaling_input_traps() {
+    let mut n64 = device(f32::from_bits(0x7FC00000), 2.0, 0);
+    add_s(&mut n64, OP);
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4).to_bits(), 0x7FBFFFFF);
+    assert_eq!(n64.cpu.fpu.control.fcr31, (16 << 12) | (16 << 2));
+    let mut n64 = device(f32::from_bits(0x7F800001), 2.0, 0);
+    add_s(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
+}
