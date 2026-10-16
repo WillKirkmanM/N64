@@ -131,3 +131,32 @@ fn cop2_alignment_and_tlb_faults_preserve_transfer_state() {
         assert_eq!(n64.rcp().reg_latch, 0xabcd);
     }
 }
+
+#[test]
+fn cop2_doubleword_transfers_work_in_32_bit_user_mode_and_reverse_endian_word_stores() {
+    for reverse in [false, true] {
+        let mut n64 = machine();
+        n64.set_cp0_register(MmuRegister::EntryHi, 0);
+        n64.set_cp0_register(MmuRegister::EntryLo0, 0x17);
+        n64.set_cp0_register(MmuRegister::EntryLo1, 0x57);
+        tlb::write(&mut n64, 0);
+        n64.set_cp0_register(
+            MmuRegister::Status,
+            MmuStatus::CU2 as u64 | (2 << 3) | if reverse { 1 << 25 } else { 0 },
+        );
+        n64.cpu_mut().set_gpr(2, 0);
+        execute(&mut n64, 0x32, 9, 4);
+        assert_eq!(moved_latch(&mut n64), SOURCE);
+        execute(&mut n64, 0x36, 9, 0);
+        assert_eq!(moved_latch(&mut n64), SOURCE);
+        execute(&mut n64, 0x3e, 9, 16);
+        assert_eq!(word(&n64, 16), 0xfedc_ba98);
+        assert_eq!(word(&n64, 20), 0x7654_3210);
+        execute(&mut n64, 0x3a, 9, 32);
+        assert_eq!(word(&n64, if reverse { 36 } else { 32 }), 0x7654_3210);
+        assert!(!matches!(
+            n64.cpu().branch_state.state,
+            cpu::State::Exception
+        ));
+    }
+}
