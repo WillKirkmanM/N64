@@ -80,4 +80,6 @@ fn undefined_special_encodings_use_rsp_local_source_self_shift() {
 
 mod operands;
 
+mod transfers;
+
 mod vector_ops;
