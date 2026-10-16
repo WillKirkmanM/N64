@@ -263,3 +263,22 @@ fn comparisons_ignore_host_daz_ftz_and_preserve_mxcsr() {
         }
     }
 }
+
+#[test]
+fn conversions_report_inexact_and_enforce_r4300_long_ranges() {
+    let mut n64 = device(4.4, 0.0, 2);
+    cvt_w_s(&mut n64, OP);
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4).to_bits(), 5);
+    assert_eq!(n64.cpu.fpu.control.fcr31, 2 | (1 << 12) | (1 << 2));
+    let mut n64 = device(0.0, 0.0, 0);
+    fpu::set_fpr_double(&mut n64, 0, f64::from_bits(1 << 55));
+    cvt_d_l(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
+    let mut n64 = device(0.0, 0.0, 0);
+    fpu::set_fpr_double(&mut n64, 0, 9007199254740992.0);
+    cvt_l_d(&mut n64, OP);
+
+    assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
+}
