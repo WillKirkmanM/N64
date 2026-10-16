@@ -766,3 +766,35 @@ fn dma_to_unpopulated_rdram_preserves_low_ram_and_completes_normally() {
         fifo_pop(&mut n64);
     }
 }
+
+#[test]
+fn dma_wraps_at_the_24_bit_bus_boundary_instead_of_the_installed_ram_end() {
+    let mut n64 = N64::new();
+    let bytes: [u8; 16] = std::array::from_fn(|index| (index * 19 + 3) as u8);
+    n64.rsp.memory.mem[..16].copy_from_slice(&bytes);
+    do_dma(
+        &mut n64,
+        RspDma {
+            dir: DmaDir::Read,
+            length: 15,
+            memaddr: 0,
+            dramaddr: 0xfffff8,
+        },
+    );
+    let canonical: [u8; 8] = std::array::from_fn(|index| bytes[8 + index / 4 * 4 + 3 - index % 4]);
+    assert_eq!(&n64.rdram.mem[..8], &canonical);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DramAddr as usize], 8);
+    n64.rsp.memory.mem[..16].fill(0xff);
+    do_dma(
+        &mut n64,
+        RspDma {
+            dir: DmaDir::Write,
+            length: 15,
+            memaddr: 0,
+            dramaddr: 0xfffff8,
+        },
+    );
+    assert_eq!(&n64.rsp.memory.mem[..8], &[0; 8]);
+    assert_eq!(&n64.rsp.memory.mem[8..16], &bytes[8..]);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DramAddr as usize], 8);
+}
