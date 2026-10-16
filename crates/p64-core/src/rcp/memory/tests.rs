@@ -91,3 +91,43 @@ fn cop2_unusable_precedes_alignment_translation_and_side_effects() {
         }
     }
 }
+
+#[test]
+fn cop2_alignment_and_tlb_faults_preserve_transfer_state() {
+    for (primary, width, writing) in [
+        (0x32, 4, false),
+        (0x36, 8, false),
+        (0x3a, 4, true),
+        (0x3e, 8, true),
+    ] {
+        for offset in 1..width {
+            let mut n64 = machine();
+            n64.rcp_mut().reg_latch = 0xabcd;
+            execute(&mut n64, primary, 9, offset);
+            let cause = if writing {
+                MmuCause::ExccodeAdES
+            } else {
+                MmuCause::ExccodeAdEL
+            };
+            assert_eq!(n64.cp0_register(MmuRegister::Cause), cause as u64);
+            assert_eq!(
+                n64.cp0_register(MmuRegister::BadVAddr),
+                UNCACHED_BASE + u64::from(offset)
+            );
+            assert_eq!(n64.rcp().reg_latch, 0xabcd);
+            assert_eq!(word(&n64, 0), 0xfedc_ba98);
+        }
+        let mut n64 = machine();
+        n64.cpu_mut().set_gpr(2, 0x0040_0000);
+        n64.rcp_mut().reg_latch = 0xabcd;
+        execute(&mut n64, primary, 9, 0);
+        let cause = if writing {
+            MmuCause::ExccodeTLBS
+        } else {
+            MmuCause::ExccodeTLBL
+        };
+        assert_eq!(n64.cp0_register(MmuRegister::Cause), cause as u64);
+        assert_eq!(n64.cp0_register(MmuRegister::BadVAddr), 0x0040_0000);
+        assert_eq!(n64.rcp().reg_latch, 0xabcd);
+    }
+}
