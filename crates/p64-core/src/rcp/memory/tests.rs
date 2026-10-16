@@ -69,3 +69,25 @@ fn hardware_cop2_memory_sequence_matches_seven_observed_results() {
         ));
     }
 }
+
+#[test]
+fn cop2_unusable_precedes_alignment_translation_and_side_effects() {
+    for primary in [0x32, 0x36, 0x3a, 0x3e] {
+        for address in [UNCACHED_BASE + 1, 0x0040_0001, 0x0040_0000] {
+            let mut n64 = machine();
+            n64.set_cp0_register(MmuRegister::Status, 0);
+            n64.set_cp0_register(MmuRegister::BadVAddr, 0x1234);
+            n64.cpu_mut().set_gpr(2, address);
+            n64.rcp_mut().reg_latch = 0xabcd;
+            let before = n64.rdram.mem.data[..64].to_vec();
+            execute(&mut n64, primary, 9, 0);
+            assert_eq!(
+                n64.cp0_register(MmuRegister::Cause),
+                MmuCause::ExccodeCPU as u64 | MmuCause::CE2 as u64
+            );
+            assert_eq!(n64.cp0_register(MmuRegister::BadVAddr), 0x1234);
+            assert_eq!(n64.rcp().reg_latch, 0xabcd);
+            assert_eq!(&n64.rdram.mem.data[..64], before);
+        }
+    }
+}
