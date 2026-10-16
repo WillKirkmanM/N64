@@ -68,3 +68,6 @@ pub(crate) fn swc2(n64: &mut N64, opcode: u32) {
 pub(crate) fn sdc2(n64: &mut N64, opcode: u32) {
     store(n64, opcode, AccessSize::Dword as u64);
 }
+
+#[cfg(test)]
+mod tests;
