@@ -340,6 +340,70 @@ fn scalar_branch_slots_compare_signed_words_and_wrap_relative_targets() {
 }
 
 #[test]
+fn scalar_memory_slots_sign_extend_and_wrap_dmem_without_touching_imem() {
+    let mut n64 = N64::default();
+    start_rsp(&mut n64);
+    let cpu = cpu_snapshot(&n64);
+    let memory: [u8; 4096] = std::array::from_fn(|byte| (byte * 137 + byte / 31) as u8);
+    for (primary, width, signed) in [
+        (32, 1, true),
+        (33, 2, true),
+        (35, 4, false),
+        (36, 1, false),
+        (37, 2, false),
+        (39, 4, false),
+        (40, 1, false),
+        (41, 2, false),
+        (43, 4, false),
+    ] {
+        for base in [0u32, 1, 2, 3, 0xffd, 0xffe, 0xfff, u32::MAX] {
+            for immediate in [0u32, 1, 0x7fff, 0x8000, 0xffff] {
+                for value in WORD_EDGES {
+                    n64.rsp_mut().memory.mem[..4096].copy_from_slice(&memory);
+                    n64.rsp_mut().memory.mem[4096..].fill(0x5a);
+                    n64.rsp_mut().registers.gpr[1] = base;
+                    n64.rsp_mut().registers.gpr[2] = value;
+                    let displacement = if immediate >= 0x8000 {
+                        i64::from(immediate) - 0x1_0000
+                    } else {
+                        i64::from(immediate)
+                    };
+                    let address = (i64::from(base) + displacement).rem_euclid(4096) as usize;
+                    let opcode = (primary << 26) | (1 << 21) | (2 << 16) | immediate;
+                    let handler = n64.rsp().instruction_tables.decode(opcode);
+                    handler(&mut n64, opcode);
+                    let mut expected_memory = memory;
+                    if primary >= 40 {
+                        let source = value.to_be_bytes();
+                        for byte in 0..width {
+                            expected_memory[(address + byte) % 4096] = source[4 - width + byte];
+                        }
+                    } else {
+                        let mut expected = 0u32;
+                        for byte in 0..width {
+                            expected = expected * 256 + u32::from(memory[(address + byte) % 4096]);
+                        }
+                        if signed && expected >= 1 << (width * 8 - 1) {
+                            expected = (i64::from(expected) - (1i64 << (width * 8))) as u32;
+                        }
+                        assert_eq!(
+                            n64.rsp().registers.gpr[2],
+                            expected,
+                            "opcode={opcode:08x} base={base:08x}"
+                        );
+                    }
+                    assert_eq!(&n64.rsp().memory.mem[..4096], expected_memory.as_slice());
+                    assert!(n64.rsp().memory.mem[4096..]
+                        .iter()
+                        .all(|byte| *byte == 0x5a));
+                    assert_eq!(cpu_snapshot(&n64), cpu);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn jump_link_and_break_slots_preserve_delay_targets_and_main_cpu_state() {
     let mut n64 = N64::default();
     start_rsp(&mut n64);
