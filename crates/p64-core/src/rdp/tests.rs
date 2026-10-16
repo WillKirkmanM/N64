@@ -44,6 +44,20 @@ fn count_writes_do_not_change_the_rdp_clock_and_clock_clear_restarts_it() {
 }
 
 #[test]
+fn cpu_dpc_reads_charge_the_rcp_register_bus() {
+    let mut n64 = N64::new();
+    let status_address = DpcReg::Status as u64 * 4;
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 99;
+    let expected = n64.rdp.registers.regs_dpc[DpcReg::Status as usize];
+
+    assert_eq!(
+        read_regs_dpc(&mut n64, status_address, memory::AccessSize::Word),
+        expected
+    );
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 119);
+}
+
+#[test]
 fn clearing_rdp_counters_clears_their_busy_flags() {
     let mut n64 = N64::new();
     n64.rdp.registers.regs_dpc[DpcReg::Status as usize] |=
