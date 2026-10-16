@@ -282,6 +282,39 @@ fn vector_loads_ignore_high_address_bits_and_wrap_dmem() {
 }
 
 #[test]
+fn rsp_clock_samples_include_elapsed_scalar_cycles_and_wrap_at_24_bits() {
+    let mut n64 = N64::new();
+    // nemu64-test measures SLL between two MFC0 DPClock samples with eight
+    // intervening NOPs, and subtracts nine ticks of measurement overhead.
+    let dp_clock = SpReg::RegsCount as u32 + rdp::DpcReg::Clock as u32;
+    n64.rsp.instruction.instructions[0] = Instructions {
+        func: mfc0,
+        opcode: (1 << 16) | (dp_clock << 11),
+    };
+    n64.rsp.instruction.instructions[5] = Instructions {
+        func: sll,
+        opcode: (4 << 16) | (3 << 11) | (5 << 6),
+    };
+    n64.rsp.instruction.instructions[10] = Instructions {
+        func: mfc0,
+        opcode: (2 << 16) | (dp_clock << 11),
+    };
+    n64.rsp.instruction.instructions[11].func = break_;
+    n64.rsp.registers.gpr[4] = 7;
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] =
+        ((0x00ff_ffffu64 - 4) * 3).div_ceil(2);
+
+    assert_eq!(run(&mut n64), 18);
+    assert_eq!(n64.rsp.registers.gpr[3], 224);
+    assert_eq!(n64.rsp.registers.gpr[1], 0x00ff_fffb);
+    assert_eq!(n64.rsp.registers.gpr[2], 5);
+    let delta = n64.rsp.registers.gpr[2].wrapping_sub(n64.rsp.registers.gpr[1]) & 0x00ff_ffff;
+
+    assert_eq!(delta - 9, 1);
+    assert!(!n64.rsp.processor.sync_point);
+}
+
+#[test]
 fn cop0_read_stalls_its_immediate_consumer_until_the_third_cycle() {
     for (selector, expected) in [(1, 0x03d8), (4, 0), (7, 0), (11, 0x1234)] {
         let mut n64 = N64::new();
