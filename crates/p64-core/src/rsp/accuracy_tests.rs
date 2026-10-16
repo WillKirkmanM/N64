@@ -726,3 +726,43 @@ fn status_commands_preserve_unrelated_bits_and_cancel_paired_writes() {
         }
     }
 }
+
+#[test]
+fn dma_to_unpopulated_rdram_preserves_low_ram_and_completes_normally() {
+    let mut n64 = N64::new();
+    let sentinel = [0x12, 0x34, 0x56, 0x78, 0x87, 0x65, 0x43, 0x21];
+    n64.rdram.mem[0xbc520..0xbc528].copy_from_slice(&sentinel);
+    n64.rsp.memory.mem[..8].fill(0xa5);
+    write_regs(&mut n64, 0, 0, u32::MAX);
+    write_regs(&mut n64, 4, 0x8bc520, u32::MAX);
+    let count = n64.cp0_register(MmuRegister::Count);
+    write_regs(&mut n64, 12, 7, u32::MAX);
+    assert_eq!(&n64.rdram.mem[0xbc520..0xbc528], &sentinel);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DramAddr as usize], 0x8bc528);
+    assert_eq!(n64.rsp.registers.regs[SpReg::MemAddr as usize], 8);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaBusy as usize], 1);
+    assert_eq!(
+        n64.rsp.registers.regs[SpReg::WrLen as usize],
+        DMA_LENGTH_READBACK
+    );
+    assert_eq!(
+        n64.cpu.scheduler.events[EventType::SPDma as usize].count,
+        count + rdram_calculate_cycles(8) + DMA_START_CYCLES
+    );
+    fifo_pop(&mut n64);
+    assert_eq!(n64.rsp.registers.regs[SpReg::DmaBusy as usize], 0);
+    assert_eq!(n64.mips.regs[2] & MI_INTR_SP, 0);
+    for bank in [0, 0x1000] {
+        n64.rsp.memory.mem[bank..bank + 8].fill(0xff);
+        write_regs(&mut n64, 0, bank as u32, u32::MAX);
+        write_regs(&mut n64, 4, 0x8bc520, u32::MAX);
+        write_regs(&mut n64, 8, 7, u32::MAX);
+        assert_eq!(&n64.rsp.memory.mem[bank..bank + 8], &[0; 8]);
+        assert_eq!(&n64.rdram.mem[0xbc520..0xbc528], &sentinel);
+        if bank != 0 {
+            assert_eq!(n64.rsp.instruction.instructions[0].opcode, 0);
+            assert_eq!(n64.rsp.instruction.instructions[1].opcode, 0);
+        }
+        fifo_pop(&mut n64);
+    }
+}
