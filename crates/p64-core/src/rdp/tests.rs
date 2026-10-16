@@ -25,6 +25,25 @@ fn rdp_clock_is_readonly_free_running_and_24_bit() {
 }
 
 #[test]
+fn count_writes_do_not_change_the_rdp_clock_and_clock_clear_restarts_it() {
+    let mut n64 = N64::new();
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 300;
+    count_changed(&mut n64, 300, 10);
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 10;
+
+    assert_eq!(clock(&n64), 200);
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] += 150;
+
+    assert_eq!(clock(&n64), 300);
+    write_status(&mut n64, DpcStatusWrite::CLR_CLOCK_CTR.bits());
+
+    assert_eq!(clock(&n64), 0);
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] += 150;
+
+    assert_eq!(clock(&n64), 100);
+}
+
+#[test]
 fn clearing_rdp_counters_clears_their_busy_flags() {
     let mut n64 = N64::new();
     n64.rdp.registers.regs_dpc[DpcReg::Status as usize] |=
