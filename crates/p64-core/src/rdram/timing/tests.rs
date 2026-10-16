@@ -77,3 +77,17 @@ fn refill_callbacks_charge_once_and_same_row_can_hide_retry() {
     }
     assert_eq!(n64.cp0_register(MmuRegister::Count), 633);
 }
+
+#[test]
+fn bus_stores_mark_only_installed_banks_dirty() {
+    let mut n64 = machine();
+    super::super::write_mem(&mut n64, 2048, 1, u32::MAX);
+    assert_eq!(n64.rdram_interface.timing.banks[0].row, Some(1));
+    assert!(n64.rdram_interface.timing.banks[0].dirty);
+    crate::memory::write_rdram_byte(&mut n64, 1 << 20, 2);
+    assert!(n64.rdram_interface.timing.banks[1].dirty);
+    super::super::write_mem(&mut n64, 8 << 20, 3, u32::MAX);
+    assert!(n64.rdram_interface.timing.banks[2..]
+        .iter()
+        .all(|bank| bank.row.is_none()));
+}
