@@ -282,3 +282,22 @@ fn conversions_report_inexact_and_enforce_r4300_long_ranges() {
 
     assert_eq!(n64.cpu.fpu.control.fcr31, fpu::FCR31_CAUSE_UNIMP_BIT);
 }
+
+#[test]
+fn half_mode_arithmetic_masks_fs_but_writes_physical_fd_and_preserves_ft() {
+    let mut n64 = N64::new();
+    fpu::set_fpr_single(&mut n64, 0, 10.0, false);
+    fpu::set_fpr_single(&mut n64, 1, 100.0, false);
+    fpu::set_fpr_single(&mut n64, 2, 20.0, false);
+    n64.cpu.fpu.registers.fgr64[3] = (30.0f32.to_bits() as u64).to_le_bytes();
+    add_s(&mut n64, (1 << 11) | (3 << 16) | (5 << 6));
+
+    assert_eq!(fpu::get_fpr_single(&n64, 4).to_bits(), 0);
+    fpu::set_fgr_registers(&mut n64, MmuStatus::FR as u64);
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::FR as u64;
+
+    assert_eq!(
+        fpu::get_fpr_double(&n64, 5).to_bits(),
+        40.0f32.to_bits() as u64
+    );
+}
