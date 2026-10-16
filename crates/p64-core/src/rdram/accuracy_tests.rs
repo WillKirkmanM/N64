@@ -92,6 +92,28 @@ fn unpopulated_rdram_reads_zero_without_mirroring() {
 }
 
 #[test]
+fn rdram_map_charges_cycles_only_for_timed_reads() {
+    let mut n64 = N64::new();
+    n64.cartridge.rom = Memory::new().with_size(4).build();
+    crate::memory::initialise_memory_map(&mut n64);
+    n64.rdram_interface.regs[RiReg::Refresh as usize] = 0;
+    write_mem(&mut n64, 0, 0, u32::MAX);
+    let before = n64.cpu.mmu.registers.regs[crate::mmu::MmuRegister::Count as usize];
+    (n64.memory.bus.fast_read[0])(&mut n64, 0, AccessSize::Word);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[crate::mmu::MmuRegister::Count as usize],
+        before
+    );
+    (n64.memory.bus.memory_map_read[0])(&mut n64, 0, AccessSize::Word);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[crate::mmu::MmuRegister::Count as usize],
+        before + 31
+    );
+}
+
+#[test]
 fn ri_registers_are_independent_words_with_masked_writes() {
     let mut ri = RdramInterface::default();
 
