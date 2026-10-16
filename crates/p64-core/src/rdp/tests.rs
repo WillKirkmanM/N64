@@ -5,6 +5,26 @@ fn write_status(n64: &mut N64, command: u32) {
 }
 
 #[test]
+fn rdp_clock_is_readonly_free_running_and_24_bit() {
+    let mut n64 = N64::new();
+    let clock_address = (DpcReg::Clock as u64) * 4;
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 300;
+
+    assert_eq!(
+        read_regs_dpc(&mut n64, clock_address, memory::AccessSize::Word),
+        213
+    );
+    write_regs_dpc(&mut n64, clock_address, 0xabcdef, u32::MAX);
+    write_status(&mut n64, DpcStatusWrite::SET_FREEZE.bits());
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] += 200_000;
+
+    assert_eq!(clock(&n64), 213 + 133_333);
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = (1 << 24) * 3 / 2 + 3;
+
+    assert_eq!(clock(&n64), 2);
+}
+
+#[test]
 fn clearing_rdp_counters_clears_their_busy_flags() {
     let mut n64 = N64::new();
     n64.rdp.registers.regs_dpc[DpcReg::Status as usize] |=
