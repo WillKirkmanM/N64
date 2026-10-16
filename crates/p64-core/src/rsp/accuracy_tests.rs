@@ -315,6 +315,25 @@ fn rsp_clock_samples_include_elapsed_scalar_cycles_and_wrap_at_24_bits() {
 }
 
 #[test]
+fn rsp_dpc_reads_do_not_charge_cpu_mmio_latency() {
+    let mut n64 = N64::new();
+    let dp_status = SpReg::RegsCount as u32 + rdp::DpcReg::Status as u32;
+    n64.rsp.instruction.instructions[0] = Instructions {
+        func: mfc0,
+        opcode: (1 << 16) | (dp_status << 11),
+    };
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 99;
+
+    assert_eq!(run(&mut n64), 1);
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 99);
+    assert!(!n64.rsp.processor.running);
+    assert_eq!(
+        n64.rsp.registers.gpr[1],
+        n64.rdp.registers.regs_dpc[rdp::DpcReg::Status as usize]
+    );
+}
+
+#[test]
 fn cop0_read_stalls_its_immediate_consumer_until_the_third_cycle() {
     for (selector, expected) in [(1, 0x03d8), (4, 0), (7, 0), (11, 0x1234)] {
         let mut n64 = N64::new();
