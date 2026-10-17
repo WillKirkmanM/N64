@@ -230,3 +230,30 @@ fn every_reserved_integer_encoding_raises_ri_without_register_writes() {
         );
     }
 }
+
+#[test]
+fn width_guards_cover_every_extended_integer_instruction() {
+    let primary = [
+        0x18_u32, 0x19, 0x1a, 0x1b, 0x27, 0x2c, 0x2d, 0x34, 0x37, 0x3c, 0x3f,
+    ];
+    let special = [
+        0x14_u32, 0x16, 0x17, 0x1c, 0x1d, 0x1e, 0x1f, 0x2c, 0x2d, 0x2e, 0x2f, 0x38, 0x3a, 0x3b,
+        0x3c, 0x3e, 0x3f,
+    ];
+    let mut machine = N64::new();
+    start_cpu(&mut machine);
+    for word in primary.into_iter().map(|raw| raw << 26).chain(special) {
+        for mode in [1_u64, 2] {
+            machine.set_cp0_register(MmuRegister::Status, mode << 3);
+            machine.set_cp0_register(MmuRegister::Cause, 0);
+            machine.cpu.branch_state.state = State::Step;
+            machine.cpu.execution.pc = 0x1000;
+            decode_opcode(&machine, word)(&mut machine, word);
+            assert_eq!(
+                machine.cp0_register(MmuRegister::Cause) & 0x7c,
+                10 << 2,
+                "{word:#x}"
+            );
+        }
+    }
+}
