@@ -62,3 +62,30 @@ fn paired_register_decode_matches_raw_hardware_fields() {
         }
     }
 }
+
+#[test]
+fn matching_distinguishes_probe_regions_from_compatible_addresses() {
+    let entry = TlbEntry {
+        mask: 3,
+        hi: EntryHi {
+            vpn2: 0x100123,
+            region: 2,
+            asid: 7,
+        },
+        ..TlbEntry::default()
+    };
+    let query = EntryHi {
+        vpn2: 0x121,
+        region: 0,
+        asid: 7,
+    };
+
+    assert!(entry.matches(query, false));
+    assert!(!entry.matches(query, true));
+    assert!(!entry.matches(EntryHi { asid: 8, ..query }, false));
+    assert!(TlbEntry {
+        global: true,
+        ..entry
+    }
+    .matches(EntryHi { asid: 8, ..query }, false));
+}
