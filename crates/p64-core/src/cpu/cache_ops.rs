@@ -40,6 +40,9 @@ pub(super) fn cache(n64: &mut N64, opcode: u32) {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 fn instruction_cache(n64: &mut N64, address: CacheAddress, operation: CacheOperation) {
     let index = address.index;
 
