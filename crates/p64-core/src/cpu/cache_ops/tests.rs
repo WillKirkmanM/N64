@@ -85,3 +85,17 @@ fn cache_kernel_overrides_do_not_require_cu0() {
         assert_eq!(n64.cp0_register(MmuRegister::Cause), 0);
     }
 }
+
+#[test]
+fn cache_enabled_in_user_and_supervisor_modes_keeps_data_address_faults() {
+    for mode in [1_u64, 2] {
+        for (address, cause) in [(0x1000_u64, 2_u64 << 2), (0x1001, 4 << 2)] {
+            let mut n64 = N64::new();
+            n64.set_cp0_register(MmuRegister::Status, (mode << 3) | (1 << 28));
+            n64.cpu_mut().set_gpr(1, address);
+            cache(&mut n64, (1 << 21) | (2 << 16));
+            assert_eq!(n64.cp0_register(MmuRegister::Cause) & 0x3000_007c, cause);
+            assert_eq!(n64.cp0_register(MmuRegister::BadVAddr), address);
+        }
+    }
+}
