@@ -257,3 +257,18 @@ fn width_guards_cover_every_extended_integer_instruction() {
         }
     }
 }
+
+#[test]
+fn coprocessor_memory_operands_never_create_integer_load_dependencies() {
+    for primary in [0x31_u32, 0x32, 0x35, 0x36, 0x39, 0x3a, 0x3d, 0x3e] {
+        for base in 0..32 {
+            for target in 0..32 {
+                let instruction =
+                    Instruction::decode((primary << 26) | (base << 21) | (target << 16));
+                assert_eq!(instruction.interlock_read_mask(), 1 << base);
+                assert_eq!(instruction.load_destination(), None);
+                assert!(!instruction.requires_wide());
+            }
+        }
+    }
+}
