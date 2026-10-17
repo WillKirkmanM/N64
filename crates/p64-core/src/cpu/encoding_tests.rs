@@ -289,3 +289,26 @@ fn branch_and_jump_operands_wrap_at_address_boundaries() {
         }
     }
 }
+
+#[test]
+fn retirement_and_jump_links_wrap_without_host_overflow() {
+    let mut machine = N64::new();
+    for (state, increment) in [(State::Step, 4), (State::Discard, 8)] {
+        machine.cpu.execution.pc = u64::MAX - 3;
+        machine.cpu.branch_state.state = state;
+        machine.cpu_mut().retire_control_flow();
+        assert_eq!(
+            machine.cpu.execution.pc,
+            (u64::MAX - 3).wrapping_add(increment)
+        );
+    }
+    machine.cpu.execution.pc = u64::MAX - 3;
+    machine.cpu.branch_state.state = State::DelaySlotTaken;
+    machine.cpu.branch_state.pc = u64::MAX - 3;
+    jal(&mut machine, 0);
+    assert_eq!(machine.cpu().gpr(31), 0);
+    machine.cpu.branch_state.state = State::DelaySlotTaken;
+    machine.cpu.branch_state.pc = u64::MAX - 3;
+    jalr(&mut machine, (2 << 11) | 9);
+    assert_eq!(machine.cpu().gpr(2), 0);
+}
