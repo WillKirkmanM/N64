@@ -27,3 +27,6 @@ impl CacheSelector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
