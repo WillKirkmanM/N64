@@ -72,3 +72,16 @@ fn cache_coprocessor_access_precedes_address_and_selector_checks() {
         }
     }
 }
+
+#[test]
+fn cache_kernel_overrides_do_not_require_cu0() {
+    for status in [0_u64, (2 << 3) | (1 << 1), (2 << 3) | (1 << 2)] {
+        let mut n64 = N64::new();
+        n64.set_cp0_register(MmuRegister::Status, status);
+        n64.cpu_mut().set_gpr(1, 0xffff_ffff_a000_0000);
+        n64.memory.caches.icache[0].valid = true;
+        cache(&mut n64, 1 << 21);
+        assert!(!n64.memory.caches.icache[0].valid);
+        assert_eq!(n64.cp0_register(MmuRegister::Cause), 0);
+    }
+}
