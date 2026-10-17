@@ -272,3 +272,20 @@ fn coprocessor_memory_operands_never_create_integer_load_dependencies() {
         }
     }
 }
+
+#[test]
+fn branch_and_jump_operands_wrap_at_address_boundaries() {
+    for pc in [0_u64, u64::MAX - 3, 0xffff_ffff_8fff_fffc] {
+        for immediate in [i16::MIN, -1, 0, 1, i16::MAX] {
+            let instruction = Instruction::decode(immediate as u16 as u32);
+            let expected = pc
+                .wrapping_add(4)
+                .wrapping_add((i64::from(immediate) * 4) as u64);
+            assert_eq!(instruction.branch_target(pc), expected);
+        }
+        for index in [0_u32, 1, 0x03ff_ffff] {
+            let expected = (pc.wrapping_add(4) & 0xffff_ffff_f000_0000) | (u64::from(index) * 4);
+            assert_eq!(Instruction::decode(index).jump_target(pc), expected);
+        }
+    }
+}
