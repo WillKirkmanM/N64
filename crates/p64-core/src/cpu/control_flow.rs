@@ -205,3 +205,6 @@ pub(super) fn bltzall(n64: &mut N64, opcode: u32) {
 pub(super) fn bgezall(n64: &mut N64, opcode: u32) {
     branch_and_link(n64, opcode, Nonnegative, AnnulIfUntaken);
 }
+
+#[cfg(test)]
+mod tests;
