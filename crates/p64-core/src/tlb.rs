@@ -81,3 +81,6 @@ pub fn get_physical_address(
 
     (0, false, true)
 }
+
+#[cfg(test)]
+mod tests;
