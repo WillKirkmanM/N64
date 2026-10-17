@@ -191,3 +191,42 @@ fn every_integer_dispatch_slot_matches_the_independent_isa_table() {
         }
     }
 }
+
+#[test]
+fn every_reserved_integer_encoding_raises_ri_without_register_writes() {
+    let mut machine = N64::new();
+    start_cpu(&mut machine);
+    let words = [0x13_u32, 0x1c, 0x1d, 0x1e, 0x1f, 0x33, 0x3b]
+        .into_iter()
+        .map(|raw| raw << 26)
+        .chain([
+            0x01, 0x05, 0x0a, 0x0b, 0x0e, 0x15, 0x28, 0x29, 0x35, 0x37, 0x39, 0x3d,
+        ])
+        .chain(
+            [
+                0x04_u32, 0x05, 0x06, 0x07, 0x0d, 0x0f, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
+                0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+            ]
+            .into_iter()
+            .map(|raw| (1 << 26) | (raw << 16)),
+        );
+    for word in words {
+        machine.set_cp0_register(MmuRegister::Status, 0);
+        machine.set_cp0_register(MmuRegister::Cause, 0);
+        machine.cpu.execution.pc = 0xffff_ffff_8000_1000;
+        machine.cpu.branch_state.state = State::Step;
+        machine.cpu.registers.gpr.fill(0x0123_4567_89ab_cdef);
+        let registers = machine.cpu.registers.gpr;
+        decode_opcode(&machine, word)(&mut machine, word);
+        assert_eq!(
+            machine.cp0_register(MmuRegister::Cause) & 0x3000_007c,
+            10 << 2,
+            "{word:#x}"
+        );
+        assert_eq!(machine.cpu.registers.gpr, registers);
+        assert_eq!(
+            machine.cp0_register(MmuRegister::EPC),
+            0xffff_ffff_8000_1000
+        );
+    }
+}
