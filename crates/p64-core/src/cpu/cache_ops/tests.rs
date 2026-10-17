@@ -49,3 +49,26 @@ fn undefined_cache_selectors_preserve_address_fault_priority() {
         MmuCause::ExccodeTLBL as u64
     );
 }
+
+#[test]
+fn cache_coprocessor_access_precedes_address_and_selector_checks() {
+    for mode in [1_u64, 2] {
+        for address in [0x1000_u64, 0x1001, 0xffff_ffff_a000_0000] {
+            for selector in [0_u32, 2] {
+                let mut n64 = N64::new();
+                crate::cpu::start_cpu(&mut n64);
+                n64.set_cp0_register(MmuRegister::Status, mode << 3);
+                n64.set_cp0_register(MmuRegister::BadVAddr, 0x5678);
+                n64.cpu.execution.pc = 0x2000;
+                n64.cpu_mut().set_gpr(1, address);
+                n64.memory.caches.icache[0].valid = true;
+                let opcode = (0x2f << 26) | (1 << 21) | (selector << 16);
+                crate::cpu::decode_opcode(&n64, opcode)(&mut n64, opcode);
+                assert_eq!(n64.cp0_register(MmuRegister::Cause) & 0x3000_007c, 11 << 2);
+                assert_eq!(n64.cp0_register(MmuRegister::BadVAddr), 0x5678);
+                assert_eq!(n64.cp0_register(MmuRegister::EPC), 0x2000);
+                assert!(n64.memory.caches.icache[0].valid);
+            }
+        }
+    }
+}
