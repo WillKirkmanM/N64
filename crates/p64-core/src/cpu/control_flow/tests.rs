@@ -25,3 +25,23 @@ fn jalr_reads_an_overlapping_source_before_writing_the_link() {
     assert_eq!(n64.cpu.registers.gpr[31], TARGET + 4);
     assert!(matches!(n64.cpu.branch_state.state, State::DelaySlotTaken));
 }
+
+#[test]
+fn regimm_links_after_testing_r31_even_when_a_likely_branch_is_untaken() {
+    let mut n64 = N64::default();
+    n64.cpu.execution.pc = PC;
+    n64.cpu.registers.gpr[31] = 0;
+    bgezal(&mut n64, (31 << 21) | 1);
+
+    assert_eq!(n64.cpu.branch_state.pc, PC + 8);
+    assert_eq!(n64.cpu.registers.gpr[31], PC + 8);
+    assert!(matches!(n64.cpu.branch_state.state, State::Take));
+
+    n64.cpu.execution.pc = PC;
+    n64.cpu.branch_state.state = State::Step;
+    n64.cpu.registers.gpr[31] = 0;
+    bltzall(&mut n64, (31 << 21) | 1);
+
+    assert_eq!(n64.cpu.registers.gpr[31], PC + 8);
+    assert!(matches!(n64.cpu.branch_state.state, State::Discard));
+}
