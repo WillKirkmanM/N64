@@ -104,3 +104,6 @@ fn retire_scalar(n64: &mut N64) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
