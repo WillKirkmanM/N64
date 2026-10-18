@@ -68,3 +68,6 @@ fn low_bits(count: u64) -> u64 {
         (1u64 << count) - 1
     }
 }
+
+#[cfg(test)]
+mod tests;
