@@ -47,3 +47,39 @@ fn random_batch_matches_all_six_bit_wired_states() {
         }
     }
 }
+
+#[test]
+fn random_batch_matches_scalar_across_each_wired_zero_wrap() {
+    let mut n64 = N64::new();
+    start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::jit();
+
+    for length in 2..=8 {
+        let block = n64
+            .execution_engine
+            .prepare_block(&vec![0x24210001; length])
+            .unwrap();
+
+        for random in 0..=31 {
+            n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+            n64.cpu.mmu.registers.regs[MmuRegister::Random as usize] = random;
+            n64.cpu.mmu.registers.regs[MmuRegister::Wired as usize] = 0;
+            n64.cpu.mmu.clock.instruction_clock = 0;
+            for _ in 0..length {
+                mmu::begin_instruction(&mut n64);
+            }
+
+            let expected = n64.cpu.mmu.registers.regs[MmuRegister::Random as usize];
+            n64.cpu.mmu.registers.regs[MmuRegister::Random as usize] = random;
+            n64.cpu.mmu.clock.instruction_clock = 0;
+
+            assert!(execute_native_block(&mut n64, block));
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Random as usize],
+                expected,
+                "Random={random}, length={length}"
+            );
+            assert_eq!(n64.cpu.mmu.clock.instruction_clock, length as u64);
+        }
+    }
+}
