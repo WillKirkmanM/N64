@@ -36,4 +36,8 @@ pub(crate) use memory_ops::effective_address;
 pub(crate) use native::{execute_native_branch_nop_block, native_branch_target};
 
 #[cfg(test)]
+#[path = "cpu/tests.rs"]
+mod accuracy_tests;
+
+#[cfg(test)]
 mod encoding_tests;
