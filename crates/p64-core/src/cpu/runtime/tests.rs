@@ -74,6 +74,18 @@ fn restart_from_vi(n64: &mut N64) {
     n64.cpu_mut().set_gpr(1, 99);
 }
 
+#[test]
+fn viewer_completion_stops_before_a_later_due_vi_can_restart_execution() {
+    let mut n64 = machine();
+    n64.is_viewer.stop_on_completion = true;
+    events::create_event(&mut n64, EventType::SP, 5, complete_viewer);
+    events::create_event(&mut n64, EventType::VI, 6, restart_from_vi);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().execution.running, 0);
+    assert_eq!(n64.cpu().gpr(1), 0);
+    assert!(n64.cpu().scheduler.events[EventType::VI as usize].enabled);
+}
+
 fn stop(n64: &mut N64) {
     n64.cpu_mut().execution.running = 0;
 }
