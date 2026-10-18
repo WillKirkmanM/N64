@@ -32,6 +32,21 @@ fn integer_interlock_compares_unused_rs_rt_and_i_type_destinations() {
     }
 }
 
+#[test]
+fn annulled_likely_slot_counts_a_cycle_and_clears_load_hazard() {
+    let mut n64 = N64::default();
+    start_cpu(&mut n64);
+    n64.cpu.registers.gpr[1] = 1;
+    let opcode = (20 << 26) | (1 << 21) | 1;
+    let instruction = decode_opcode(&n64, opcode);
+    execute_instruction(&mut n64, opcode, instruction);
+
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 1);
+    assert_eq!(n64.cpu.mmu.clock.instruction_clock, 2);
+    assert_eq!(n64.cpu.execution.pending_gpr_load, 0);
+    assert!(matches!(n64.cpu.branch_state.state, State::Discard));
+}
+
 fn software_interrupt_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (16 << 26) | (4 << 21) | (1 << 16) | (13 << 11),
