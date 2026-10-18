@@ -132,3 +132,13 @@ fn verify_exception_cleanup(n64: &mut N64) {
     assert!(matches!(n64.cpu().branch_state.state, State::Step));
     n64.cpu_mut().set_gpr(1, 1);
 }
+
+#[test]
+fn event_exception_state_is_cleared_before_the_next_callback() {
+    let mut n64 = machine();
+    events::create_event(&mut n64, EventType::PI, 5, raise_exception);
+    events::create_event(&mut n64, EventType::SP, 6, verify_exception_cleanup);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().gpr(1), 1);
+    assert!(matches!(n64.cpu().branch_state.state, State::Step));
+}
