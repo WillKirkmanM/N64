@@ -54,6 +54,18 @@ fn record_sp(n64: &mut N64) {
     record(n64, 3);
 }
 
+#[test]
+fn due_devices_drain_in_deadline_order_and_existing_same_date_priority() {
+    let mut n64 = machine();
+    events::create_event(&mut n64, EventType::SP, 10, record_sp);
+    events::create_event(&mut n64, EventType::VI, 10, record_vi);
+    events::create_event(&mut n64, EventType::PI, 5, record_pi);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().gpr(1), 213);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 21);
+}
+
 fn complete_viewer(n64: &mut N64) {
     n64.is_viewer.completed = true;
 }
