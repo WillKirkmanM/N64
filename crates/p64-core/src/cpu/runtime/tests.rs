@@ -90,6 +90,23 @@ fn stop(n64: &mut N64) {
     n64.cpu_mut().execution.running = 0;
 }
 
+#[test]
+fn callback_stop_prevents_following_due_callbacks_and_equal_dates_stay_pending() {
+    let mut n64 = machine();
+    events::create_event(&mut n64, EventType::PI, 5, stop);
+    events::create_event(&mut n64, EventType::VI, 6, restart_from_vi);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().execution.running, 0);
+    assert_eq!(n64.cpu().gpr(1), 0);
+    assert!(n64.cpu().scheduler.events[EventType::VI as usize].enabled);
+
+    let mut n64 = machine();
+    events::create_event(&mut n64, EventType::SP, 21, stop);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().execution.running, 1);
+    assert_eq!(n64.cpu().scheduler.next_event_count, 21);
+}
+
 fn transient_zero_cycle_sp(n64: &mut N64) {
     let deadline = n64.cpu().event_deadline(EventType::SP);
     n64.cpu_mut().registers.gpr[1] += 1;
