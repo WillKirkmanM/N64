@@ -24,3 +24,26 @@ fn aot_miss_retains_production_decoded_wide_privilege_fault() {
     assert_eq!(n64.execution_engine.stats.fallback_executions, 1);
     assert_eq!(n64.execution_engine.stats.native_executions, 0);
 }
+
+#[test]
+fn random_batch_matches_all_six_bit_wired_states() {
+    for wired in 0u64..64 {
+        for random in 0u64..64 {
+            let mut scalar = random;
+
+            for length in 1..=8 {
+                scalar = if scalar == wired {
+                    31
+                } else {
+                    scalar.wrapping_sub(1) & 63
+                };
+
+                assert_eq!(
+                    retired_random(random, wired, length),
+                    scalar,
+                    "Random={random} Wired={wired} length={length}"
+                );
+            }
+        }
+    }
+}
