@@ -117,3 +117,35 @@ fn event_and_delayed_cp0_boundaries_use_scalar_dispatch() {
     assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 12);
     assert_eq!(n64.cpu.registers.gpr[1], 2);
 }
+
+#[test]
+fn load_interlock_privilege_and_delay_slot_guards_preserve_architecture() {
+    let mut n64 = N64::new();
+    start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    let block = n64
+        .execution_engine
+        .prepare_block(&[0x24010001, 0x64220001])
+        .unwrap();
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 16; // User, UX=0.
+    assert!(!execute_native_block(&mut n64, block));
+    assert_eq!(n64.cpu.registers.gpr[1], 0);
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0;
+    n64.cpu.branch_state.state = State::DelaySlotTaken;
+
+    assert!(!execute_native_block(&mut n64, block));
+    n64.cpu.branch_state.state = State::Step;
+    n64.cpu.execution.pending_gpr_load = 1; // Encoded rt creates the hardware interlock.
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 0;
+    n64.cpu.fpu.timing.pending_write = Some(3);
+    n64.cpu.fpu.timing.previous_write = Some(4);
+
+    assert!(execute_native_block(&mut n64, block));
+    assert_eq!(n64.cpu.registers.gpr[1], 1);
+    assert_eq!(n64.cpu.registers.gpr[2], 2);
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 3);
+    assert_eq!(n64.cpu.execution.pending_gpr_load, 0);
+    assert_eq!(n64.cpu.fpu.timing.pending_write, None);
+    assert_eq!(n64.cpu.fpu.timing.previous_write, None);
+}
