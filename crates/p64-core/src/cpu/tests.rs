@@ -47,6 +47,30 @@ fn annulled_likely_slot_counts_a_cycle_and_clears_load_hazard() {
     assert!(matches!(n64.cpu.branch_state.state, State::Discard));
 }
 
+#[test]
+fn word_multiply_uses_signed_35_bit_rt_and_full_rs() {
+    let mut n64 = N64::default();
+
+    for (lhs, rhs, expected_hi, expected_lo) in [
+        (0x0000_0000_FFFF_FFFF, 0x10, 0xF, 0xFFFF_FFFF_FFFF_FFF0),
+        (0x0000_00EE_FFFF_FFFF, 0x10, 0xEEF, 0xFFFF_FFFF_FFFF_FFF0),
+        (
+            0x10,
+            0x0000_00EE_FFFF_FFFF,
+            0xFFFF_FFFF_FFFF_FFEF,
+            0xFFFF_FFFF_FFFF_FFF0,
+        ),
+        (1, 0x0000_0004_0000_0000, 0xFFFF_FFFF_FFFF_FFFC, 0),
+    ] {
+        n64.cpu.registers.gpr[1] = lhs;
+        n64.cpu.registers.gpr[2] = rhs;
+        mult(&mut n64, register_opcode(3));
+
+        assert_eq!(n64.cpu.registers.hi, expected_hi);
+        assert_eq!(n64.cpu.registers.lo, expected_lo);
+    }
+}
+
 fn software_interrupt_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (16 << 26) | (4 << 21) | (1 << 16) | (13 << 11),
