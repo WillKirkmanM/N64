@@ -296,3 +296,7 @@ pub(crate) fn execute_native_branch_nop_block(
 
     true
 }
+
+#[cfg(all(test, target_arch = "x86_64"))]
+#[path = "native_tests.rs"]
+mod native_block_guard_tests;
