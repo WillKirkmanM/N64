@@ -115,6 +115,16 @@ fn transient_zero_cycle_sp(n64: &mut N64) {
     }
 }
 
+#[test]
+fn finite_zero_cycle_same_device_rearming_is_processed_without_cpu_progress() {
+    let mut n64 = machine();
+    events::create_event(&mut n64, EventType::SP, 5, transient_zero_cycle_sp);
+    complete_twenty_cycle_instruction(&mut n64);
+    assert_eq!(n64.cpu().gpr(1), 2);
+    assert_eq!(n64.cp0_register(MmuRegister::Count), 21);
+    assert_eq!(n64.cpu().scheduler.next_event_count, u64::MAX);
+}
+
 fn raise_exception(n64: &mut N64) {
     n64.cpu_mut().branch_state.state = State::Exception;
 }
