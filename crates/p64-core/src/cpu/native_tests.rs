@@ -83,3 +83,37 @@ fn random_batch_matches_scalar_across_each_wired_zero_wrap() {
         }
     }
 }
+
+#[test]
+fn event_and_delayed_cp0_boundaries_use_scalar_dispatch() {
+    let mut n64 = N64::new();
+    start_cpu(&mut n64);
+    n64.execution_engine = crate::recompiler::Engine::jit();
+    let block = n64
+        .execution_engine
+        .prepare_block(&[0x24210001, 0x24210001])
+        .unwrap();
+    n64.cpu.execution.pc = 0xffff_ffff_8000_0000;
+    n64.cpu.mmu.registers.regs[MmuRegister::Count as usize] = 10;
+    n64.cpu.scheduler.next_event_count = 11;
+
+    assert!(!execute_native_block(&mut n64, block));
+    assert_eq!(n64.cpu.registers.gpr[1], 0);
+    assert_eq!(n64.cpu.execution.pc, 0xffff_ffff_8000_0000);
+    assert_eq!(n64.cpu.mmu.clock.instruction_clock, 0);
+
+    n64.cpu.scheduler.next_event_count = 12;
+    n64.cpu.mmu.clock.pending_wired_reset = Some((1, 0));
+
+    assert!(!execute_native_block(&mut n64, block));
+    assert_eq!(n64.cpu.mmu.clock.pending_wired_reset, Some((1, 0)));
+    n64.cpu.mmu.clock.pending_wired_reset = None;
+    n64.cpu.mmu.clock.count_write_origin = Some(9);
+
+    assert!(!execute_native_block(&mut n64, block));
+    n64.cpu.mmu.clock.count_write_origin = None;
+    // Events fire after Count exceeds their deadline.
+    assert!(execute_native_block(&mut n64, block));
+    assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Count as usize], 12);
+    assert_eq!(n64.cpu.registers.gpr[1], 2);
+}
