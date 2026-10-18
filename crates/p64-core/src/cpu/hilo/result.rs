@@ -1,5 +1,9 @@
 use super::super::{instruction::se32, Cpu};
 
+#[cfg(test)]
+#[path = "result/tests.rs"]
+mod tests;
+
 pub(super) struct HiLo {
     hi: u64,
     lo: u64,
