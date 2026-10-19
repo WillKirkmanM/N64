@@ -87,6 +87,29 @@ fn successful_sc_does_not_clear_the_reservation() {
     assert!(n64.cpu.registers.llbit);
 }
 
+#[test]
+fn wide_instruction_guard_is_checked_at_execution_time() {
+    let mut n64 = N64::default();
+    start_cpu(&mut n64);
+    let opcode = (1 << 21) | (2 << 16) | (3 << 11) | 0x2D;
+    let instruction = decode_opcode(&n64, opcode);
+    n64.cpu.registers.gpr[1] = 1;
+    n64.cpu.registers.gpr[2] = 2;
+    n64.cpu.registers.gpr[3] = 0xBADDECAF;
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0x10;
+    instruction(&mut n64, opcode);
+
+    assert_eq!(n64.cpu.registers.gpr[3], 0xBADDECAF);
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::ExccodeRI as u64
+    );
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0x30;
+    instruction(&mut n64, opcode);
+
+    assert_eq!(n64.cpu.registers.gpr[3], 3);
+}
+
 fn software_interrupt_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (16 << 26) | (4 << 21) | (1 << 16) | (13 << 11),
