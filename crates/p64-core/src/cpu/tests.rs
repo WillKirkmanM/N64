@@ -326,6 +326,31 @@ fn reverse_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize
     }
 }
 
+#[test]
+fn reverse_endian_fetch_selects_paired_word_for_cached_and_uncached_code() {
+    let mut n64 = N64::default();
+
+    for cached in [false, true] {
+        start_cpu(&mut n64);
+        setup_reverse_data(&mut n64, 0, cached);
+        n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] |= MmuStatus::BEV as u64;
+        n64.cpu.execution.pc = 0x2000;
+        n64.cpu.registers.gpr[3] = 0;
+        n64.memory.caches.icache.fill(Default::default());
+        crate::cache::init(&mut n64);
+        n64.memory.bus.memory_map_read[0] = reverse_fetch_program;
+        n64.memory.bus.memory_map_read[0x1FC0] = reverse_fetch_program;
+        n64.cpu.instructions.instrs[63] = halt;
+        run(&mut n64);
+
+        assert_eq!(n64.cpu.registers.gpr[3], 5);
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+            0x200C
+        );
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
