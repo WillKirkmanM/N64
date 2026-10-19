@@ -558,6 +558,26 @@ fn unaligned_merge_instructions_remain_valid() {
     }
 }
 
+#[test]
+fn cache_operations_require_word_alignment() {
+    let mut n64 = N64::default();
+
+    for operation in [0, 1] {
+        reset_data_access(&mut n64, 2);
+        cache(&mut n64, (1 << 21) | (operation << 16));
+
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+            MmuCause::ExccodeAdEL as u64
+        );
+        assert_eq!(
+            n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+            0xFFFF_FFFF_A000_0002
+        );
+        assert_eq!(n64.cpu.registers.gpr[10], 0);
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
