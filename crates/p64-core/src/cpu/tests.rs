@@ -120,6 +120,25 @@ fn software_interrupt_program(_n64: &mut N64, address: u64, _size: memory::Acces
     }
 }
 
+#[test]
+fn software_interrupt_retires_next_instruction_and_enters_handler_once() {
+    let mut n64 = N64::default();
+    start_cpu(&mut n64);
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::BEV as u64 | 0x101;
+    n64.cpu.execution.pc = 0xFFFF_FFFF_A000_0000;
+    n64.cpu.registers.gpr[1] = 0x100;
+    n64.memory.bus.memory_map_read[0] = software_interrupt_program;
+    n64.memory.bus.memory_map_read[0x1FC0] = software_interrupt_program;
+    n64.cpu.instructions.instrs[63] = halt;
+    run(&mut n64);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+        0xFFFF_FFFF_A000_0008
+    );
+    assert_eq!(n64.cpu.registers.gpr[4], 1);
+}
+
 fn data_read(n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     n64.cpu.registers.gpr[10] += 1;
 
