@@ -526,6 +526,38 @@ fn failed_sc_still_checks_address_translation() {
     }
 }
 
+#[test]
+fn unaligned_merge_instructions_remain_valid() {
+    let cases: [(InstrFn, u64); 4] = [
+        (lwl, 0xFFFF_FFFF_ABCD_EF88),
+        (lwr, 0x1122_3344_5566_89AB),
+        (ldl, 0xABCD_EF12_3456_7888),
+        (ldr, 0x1122_3344_5566_89AB),
+    ];
+    let mut n64 = N64::default();
+
+    for (instruction, expected) in cases {
+        reset_data_access(&mut n64, 1);
+        instruction(&mut n64, (1 << 21) | (2 << 16));
+
+        assert_eq!(n64.cpu.registers.gpr[2], expected);
+        assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+    }
+
+    for instruction in [
+        swl as InstrFn,
+        swr as InstrFn,
+        sdl as InstrFn,
+        sdr as InstrFn,
+    ] {
+        reset_data_access(&mut n64, 1);
+        instruction(&mut n64, (1 << 21) | (2 << 16));
+
+        assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+        assert_ne!(n64.cpu.registers.gpr[10], 0);
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
