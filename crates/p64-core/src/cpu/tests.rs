@@ -290,6 +290,31 @@ fn reverse_endian_partial_loads_match_all_nemu_offsets() {
     }
 }
 
+#[test]
+fn reverse_endian_stores_select_physical_bus_lanes() {
+    let mut n64 = N64::default();
+    let cases: [(InstrFn, u64, u64); 5] = [
+        (sb, 0x0807_0605, 0x0403_0288),
+        (sh, 0x0807_0605, 0x0403_7788),
+        (sw, 0x0807_0605, 0x5566_7788),
+        (sc, 0x0807_0605, 0x5566_7788),
+        (sd, 0x1122_3344, 0x5566_7788),
+    ];
+
+    for cached in [false, true] {
+        for (instruction, high, low) in cases {
+            setup_reverse_data(&mut n64, 0, cached);
+            instruction(&mut n64, (1 << 21) | (2 << 16));
+            if cached {
+                crate::cache::dcache_writeback(&mut n64, 0);
+            }
+
+            assert_eq!(n64.cpu.registers.gpr[8], high);
+            assert_eq!(n64.cpu.registers.gpr[9], low);
+        }
+    }
+}
+
 fn reverse_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => 0,
