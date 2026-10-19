@@ -588,6 +588,41 @@ fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSi
     }
 }
 
+#[test]
+fn unaligned_jump_faults_after_its_delay_slot_and_runs_handler_once() {
+    let mut n64 = N64::default();
+    start_cpu(&mut n64);
+    n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = MmuStatus::BEV as u64;
+    n64.cpu.execution.pc = 0xFFFF_FFFF_A000_0000;
+    n64.cpu.registers.gpr[1] = 0xFFFF_FFFF_A000_0021;
+    n64.cpu.registers.gpr[3] = 1;
+    n64.memory.bus.memory_map_read[0] = unaligned_fetch_program;
+    n64.memory.bus.memory_map_read[0x1FC0] = unaligned_fetch_program;
+    n64.cpu.instructions.instrs[63] = halt;
+    run(&mut n64);
+
+    assert_eq!(
+        n64.cpu.registers.gpr[3], 3,
+        "Jump delay slot must execute before the target fetch faults"
+    );
+    assert_eq!(
+        n64.cpu.registers.gpr[4], 1,
+        "First exception handler instruction must execute exactly once"
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::ExccodeAdEL as u64
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+        0xFFFF_FFFF_A000_0021
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+        0xFFFF_FFFF_A000_0021
+    );
+}
+
 fn nested_branch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (2 << 26) | 8, // J 0x20
