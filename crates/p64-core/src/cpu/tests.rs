@@ -448,6 +448,29 @@ fn alignment_fault_in_delay_slot_records_branch_epc_and_effective_address() {
     assert_eq!(n64.cpu.registers.gpr[10], 0);
 }
 
+#[test]
+fn aligned_loads_still_read_the_expected_data() {
+    let cases: [(InstrFn, u64); 7] = [
+        (lh, 0xFFFF_FFFF_FFFF_89AB),
+        (lhu, 0x89AB),
+        (lw, 0xFFFF_FFFF_89AB_CDEF),
+        (lwu, 0x89AB_CDEF),
+        (ll, 0xFFFF_FFFF_89AB_CDEF),
+        (ld, 0x89AB_CDEF_1234_5678),
+        (lld, 0x89AB_CDEF_1234_5678),
+    ];
+    let mut n64 = N64::default();
+
+    for (instruction, expected) in cases {
+        reset_data_access(&mut n64, 0);
+        instruction(&mut n64, (1 << 21) | (2 << 16));
+
+        assert_eq!(n64.cpu.registers.gpr[2], expected);
+        assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+        assert_ne!(n64.cpu.registers.gpr[10], 0);
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
