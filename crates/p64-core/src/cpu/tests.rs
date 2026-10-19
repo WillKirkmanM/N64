@@ -351,6 +351,51 @@ fn reverse_endian_fetch_selects_paired_word_for_cached_and_uncached_code() {
     }
 }
 
+#[test]
+fn unaligned_loads_fault_before_access_and_preserve_the_destination() {
+    let cases: [(InstrFn, u64); 7] = [
+        (lh, 2),
+        (lhu, 2),
+        (lw, 4),
+        (lwu, 4),
+        (ld, 8),
+        (ll, 4),
+        (lld, 8),
+    ];
+    let mut n64 = N64::default();
+
+    for (instruction, alignment) in cases {
+        for offset in 1..alignment {
+            reset_data_access(&mut n64, offset);
+            instruction(&mut n64, (1 << 21) | (2 << 16));
+
+            assert_eq!(n64.cpu.registers.gpr[2], 0x1122_3344_5566_7788);
+            assert_eq!(
+                n64.cpu.registers.gpr[10], 0,
+                "Fault must precede the memory access"
+            );
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                MmuCause::ExccodeAdEL as u64
+            );
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+                0xFFFF_FFFF_A000_0000 + offset
+            );
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+                0xFFFF_FFFF_8000_1004
+            );
+            assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_0180);
+            assert!(n64.cpu.registers.llbit);
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::LLAddr as usize],
+                0xDEAD
+            );
+        }
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
