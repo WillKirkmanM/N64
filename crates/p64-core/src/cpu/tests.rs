@@ -471,6 +471,38 @@ fn aligned_loads_still_read_the_expected_data() {
     }
 }
 
+#[test]
+fn aligned_stores_and_conditional_failure_keep_existing_behavior() {
+    let cases: [(InstrFn, u64, u64); 5] = [
+        (sh, 0x7788_CDEF, 0x1234_5678),
+        (sw, 0x5566_7788, 0x1234_5678),
+        (sd, 0x1122_3344, 0x5566_7788),
+        (sc, 0x5566_7788, 0x1234_5678),
+        (scd, 0x1122_3344, 0x5566_7788),
+    ];
+    let mut n64 = N64::default();
+
+    for (instruction, high, low) in cases {
+        reset_data_access(&mut n64, 0);
+        instruction(&mut n64, (1 << 21) | (2 << 16));
+
+        assert_eq!(n64.cpu.registers.gpr[8], high);
+        assert_eq!(n64.cpu.registers.gpr[9], low);
+        assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+    }
+
+    for instruction in [sc as InstrFn, scd as InstrFn] {
+        reset_data_access(&mut n64, 0);
+        n64.cpu.registers.llbit = false;
+        instruction(&mut n64, (1 << 21) | (2 << 16));
+
+        assert_eq!(n64.cpu.registers.gpr[2], 0);
+        assert_eq!(n64.cpu.registers.gpr[8], 0x89AB_CDEF);
+        assert_eq!(n64.cpu.registers.gpr[9], 0x1234_5678);
+        assert_eq!(n64.cpu.registers.gpr[10], 0);
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
