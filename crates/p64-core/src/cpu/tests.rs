@@ -71,6 +71,22 @@ fn word_multiply_uses_signed_35_bit_rt_and_full_rs() {
     }
 }
 
+#[test]
+fn successful_sc_does_not_clear_the_reservation() {
+    let mut n64 = N64::default();
+    reset_data_access(&mut n64, 0);
+    sc(&mut n64, (1 << 21) | (2 << 16));
+
+    assert!(n64.cpu.registers.llbit);
+    n64.cpu.registers.gpr[2] = 0x1234_5678_9ABC_DEF0;
+    scd(&mut n64, (1 << 21) | (2 << 16));
+
+    assert_eq!(n64.cpu.registers.gpr[2], 1);
+    assert_eq!(n64.cpu.registers.gpr[8], 0x1234_5678);
+    assert_eq!(n64.cpu.registers.gpr[9], 0x9ABC_DEF0);
+    assert!(n64.cpu.registers.llbit);
+}
+
 fn software_interrupt_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (16 << 26) | (4 << 21) | (1 << 16) | (13 << 11),
