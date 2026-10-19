@@ -396,6 +396,35 @@ fn unaligned_loads_fault_before_access_and_preserve_the_destination() {
     }
 }
 
+#[test]
+fn unaligned_stores_fault_without_writing_memory_or_sc_result() {
+    let cases: [(InstrFn, u64); 5] = [(sh, 2), (sw, 4), (sd, 8), (sc, 4), (scd, 8)];
+    let mut n64 = N64::default();
+
+    for (instruction, alignment) in cases {
+        for offset in 1..alignment {
+            for reservation in [false, true] {
+                reset_data_access(&mut n64, offset);
+                n64.cpu.registers.llbit = reservation;
+                instruction(&mut n64, (1 << 21) | (2 << 16));
+
+                assert_eq!(n64.cpu.registers.gpr[2], 0x1122_3344_5566_7788);
+                assert_eq!(n64.cpu.registers.gpr[8], 0x89AB_CDEF);
+                assert_eq!(n64.cpu.registers.gpr[9], 0x1234_5678);
+                assert_eq!(n64.cpu.registers.gpr[10], 0);
+                assert_eq!(
+                    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                    MmuCause::ExccodeAdES as u64
+                );
+                assert_eq!(
+                    n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+                    0xFFFF_FFFF_A000_0000 + offset
+                );
+            }
+        }
+    }
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
