@@ -425,6 +425,29 @@ fn unaligned_stores_fault_without_writing_memory_or_sc_result() {
     }
 }
 
+#[test]
+fn alignment_fault_in_delay_slot_records_branch_epc_and_effective_address() {
+    let mut n64 = N64::default();
+    reset_data_access(&mut n64, 0);
+    n64.cpu.branch_state.state = State::DelaySlotTaken;
+    n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] = MmuCause::IP2 as u64;
+    lw(&mut n64, (1 << 21) | (2 << 16) | 1);
+
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+        MmuCause::BD as u64 | MmuCause::ExccodeAdEL as u64 | MmuCause::IP2 as u64
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+        0xFFFF_FFFF_8000_1000
+    );
+    assert_eq!(
+        n64.cpu.mmu.registers.regs[MmuRegister::BadVAddr as usize],
+        0xFFFF_FFFF_A000_0001
+    );
+    assert_eq!(n64.cpu.registers.gpr[10], 0);
+}
+
 fn unaligned_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => (1 << 21) | 8, // JR $1
