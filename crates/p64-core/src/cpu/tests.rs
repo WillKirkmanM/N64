@@ -207,6 +207,32 @@ fn reverse_data_write(n64: &mut N64, address: u64, value: u32, mask: u32) {
     }
 }
 
+#[test]
+fn reverse_endian_user_loads_select_physical_bus_lanes() {
+    let mut n64 = N64::default();
+    let cases: [(InstrFn, u64); 9] = [
+        (lb, 1),
+        (lbu, 1),
+        (lh, 0x0201),
+        (lhu, 0x0201),
+        (lw, 0x0403_0201),
+        (lwu, 0x0403_0201),
+        (ll, 0x0403_0201),
+        (ld, 0x0807_0605_0403_0201),
+        (lld, 0x0807_0605_0403_0201),
+    ];
+
+    for cached in [false, true] {
+        for (instruction, expected) in cases {
+            setup_reverse_data(&mut n64, 0, cached);
+            instruction(&mut n64, (1 << 21) | (2 << 16));
+
+            assert_eq!(n64.cpu.registers.gpr[2], expected);
+            assert_eq!(n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize], 0);
+        }
+    }
+}
+
 fn reverse_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => 0,
