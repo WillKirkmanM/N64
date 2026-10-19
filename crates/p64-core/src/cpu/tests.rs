@@ -233,6 +233,63 @@ fn reverse_endian_user_loads_select_physical_bus_lanes() {
     }
 }
 
+#[test]
+fn reverse_endian_partial_loads_match_all_nemu_offsets() {
+    let mut n64 = N64::default();
+    let cases: [(InstrFn, u64, &[u64]); 4] = [
+        (
+            lwl,
+            0x00EF_0102,
+            &[0x01EF_0102, 0x0201_0102, 0x0302_0102, 0x0403_0201],
+        ),
+        (
+            lwr,
+            0x00EF_0102,
+            &[0x0403_0201, 0x0004_0302, 0x00EF_0403, 0x00EF_0104],
+        ),
+        (
+            ldl,
+            0x1122_3344_5566_7788,
+            &[
+                0x0122_3344_5566_7788,
+                0x0201_3344_5566_7788,
+                0x0302_0144_5566_7788,
+                0x0403_0201_5566_7788,
+                0x0504_0302_0166_7788,
+                0x0605_0403_0201_7788,
+                0x0706_0504_0302_0188,
+                0x0807_0605_0403_0201,
+            ],
+        ),
+        (
+            ldr,
+            0x1122_3344_5566_7788,
+            &[
+                0x0807_0605_0403_0201,
+                0x1108_0706_0504_0302,
+                0x1122_0807_0605_0403,
+                0x1122_3308_0706_0504,
+                0x1122_3344_0807_0605,
+                0x1122_3344_5508_0706,
+                0x1122_3344_5566_0807,
+                0x1122_3344_5566_7708,
+            ],
+        ),
+    ];
+
+    for cached in [false, true] {
+        for (instruction, initial, expected) in cases {
+            for (offset, expected) in expected.iter().enumerate() {
+                setup_reverse_data(&mut n64, offset as u64, cached);
+                n64.cpu.registers.gpr[2] = initial;
+                instruction(&mut n64, (1 << 21) | (2 << 16));
+
+                assert_eq!(n64.cpu.registers.gpr[2], *expected);
+            }
+        }
+    }
+}
+
 fn reverse_fetch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize) -> u32 {
     match address {
         0 => 0,
