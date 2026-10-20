@@ -63,3 +63,18 @@ fn native_integer_instructions_match_reference_with_aliases_and_edge_bits() {
 
     assert_eq!(engine.stats.native_executions, 49_500);
 }
+
+#[test]
+fn unsupported_and_aot_misses_do_not_modify_registers() {
+    let mut engine = Engine::aot([0x24220001]);
+    let mut registers = [0xdeadbeef; 32];
+    let before = registers;
+
+    for opcode in [0x8c220000, 0x20220001, 0x08000000, 0x24220002] {
+        assert!(!engine.try_execute(opcode, &mut registers));
+        assert_eq!(registers, before);
+    }
+
+    assert!(engine.try_execute(0x24220001, &mut registers));
+    assert_eq!(engine.compiled_instructions(), 1);
+}
