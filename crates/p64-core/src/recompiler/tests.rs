@@ -113,3 +113,13 @@ fn prepared_handles_are_safe_after_engine_replacement() {
     assert_eq!(registers[2], 19);
     assert_eq!(engine.stats.native_executions, 1);
 }
+
+#[test]
+fn preparing_aot_miss_never_generates_code() {
+    let mut engine = Engine::aot([0x24220001]);
+
+    assert!(engine.prepare(0x24220001).is_some());
+    assert!(engine.prepare(0x24220002).is_none());
+    assert_eq!(engine.compiled_instructions(), 1);
+    assert_eq!(engine.stats.native_executions, 0);
+}
