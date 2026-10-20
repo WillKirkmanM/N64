@@ -123,3 +123,68 @@ fn preparing_aot_miss_never_generates_code() {
     assert_eq!(engine.compiled_instructions(), 1);
     assert_eq!(engine.stats.native_executions, 0);
 }
+
+#[test]
+fn register_resident_native_blocks_match_sequential_interpreter_semantics() {
+    let mut engine = Engine::jit();
+    let mut random = 0x784c_5466_f031_a992_u64;
+    let functions = [
+        0, 2, 3, 4, 6, 7, 20, 22, 23, 33, 35, 36, 37, 38, 39, 42, 43, 45, 47, 56, 58, 59, 60, 62,
+        63,
+    ];
+    let immediate = [9, 10, 11, 12, 13, 14, 15, 25];
+
+    for iteration in 0..4000 {
+        let mut initial = [0; 32];
+
+        for value in initial.iter_mut().skip(1) {
+            next_random(&mut random);
+            *value = random;
+        }
+
+        let length = 2 + iteration % 7;
+        let mut opcodes = Vec::new();
+
+        for _ in 0..length {
+            next_random(&mut random);
+            let register_mask = if iteration & 1 == 0 { 3 } else { 31 };
+
+            let rs = random as u32 & register_mask;
+            let rt = (random >> 8) as u32 & register_mask;
+            let rd = (random >> 16) as u32 & register_mask;
+            let sa = (random >> 24) as u32 & 31;
+            let kind = (random >> 32) as usize % 33;
+            let opcode = if kind < functions.len() {
+                (rs << 21) | (rt << 16) | (rd << 11) | (sa << 6) | functions[kind]
+            } else {
+                (immediate[kind - functions.len()] << 26)
+                    | (rs << 21)
+                    | (rt << 16)
+                    | ((random >> 40) as u32 & 65535)
+            };
+
+            opcodes.push(opcode);
+        }
+
+        let mut expected = initial;
+        let mut actual = initial;
+
+        for opcode in &opcodes {
+            reference(*opcode, &mut expected);
+        }
+
+        let block = engine.prepare_block(&opcodes).unwrap();
+
+        assert_eq!(block.len(), opcodes.len());
+        assert_eq!(block.first_opcode(), opcodes[0]);
+        assert_eq!(
+            block.requires_wide(),
+            opcodes.iter().any(|op| is_wide_opcode(*op))
+        );
+        assert!(engine.execute_prepared_block(block, &mut actual));
+        assert_eq!(
+            actual, expected,
+            "block {opcodes:08x?}, iteration {iteration}"
+        );
+    }
+}
