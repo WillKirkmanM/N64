@@ -666,3 +666,16 @@ fn branch_link_in_taken_delay_slot_links_to_the_original_target() {
     assert_eq!(n64.cpu.branch_state.pc, 0xFFFF_FFFF_8000_2008);
     assert_eq!(n64.cpu.execution.pc.wrapping_add(4), 0xFFFF_FFFF_8000_2000);
 }
+
+#[test]
+fn untaken_relative_branch_in_taken_delay_slot_keeps_the_original_target() {
+    let mut n64 = N64::default();
+    n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1004;
+    n64.cpu.branch_state.state = State::DelaySlotTaken;
+    n64.cpu.branch_state.pc = 0xFFFF_FFFF_8000_2000;
+    n64.cpu.registers.gpr[1] = 1;
+    beq(&mut n64, (1 << 21) | 2);
+
+    assert_eq!(n64.cpu.execution.pc.wrapping_add(4), 0xFFFF_FFFF_8000_2000);
+    assert!(matches!(n64.cpu.branch_state.state, State::NotTaken));
+}
