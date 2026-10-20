@@ -216,3 +216,71 @@ fn aot_native_blocks_are_validated_and_stale_handles_are_rejected() {
     assert!(Engine::from_aot_blocks(vec![(opcodes, altered)]).is_err());
     assert!(compile_block(&[0xD4220000, 0x24210001]).is_none());
 }
+
+#[test]
+fn folded_self_updates_preserve_word_sign_extension_and_doubleword_wrap() {
+    let cases: Vec<(u32, u64, Vec<i16>, u64)> = vec![
+        (9, 0xABCD_1234_7FFF_FFFF, vec![1, 1, -1, -1], 0x7FFF_FFFF),
+        (9, 0xABCD_1234_FFFF_FFFF, vec![1, 0, 0, 0], 0),
+        (
+            9,
+            0xABCD_1234_8000_0000,
+            vec![-1, 1, -32768, 32767],
+            0x7FFF_FFFF,
+        ),
+        (
+            9,
+            0x1234_5678_7FFF_FFFF,
+            vec![32767; 8],
+            0xFFFF_FFFF_8003_FFF7,
+        ),
+        (
+            9,
+            0x1234_5678_0000_0000,
+            vec![-32768; 8],
+            0xFFFF_FFFF_FFFC_0000,
+        ),
+        (25, u64::MAX, vec![1, 1], 1),
+        (25, 0, vec![-1, -1], u64::MAX - 1),
+        (25, u64::MAX, vec![-32768; 8], 0xFFFF_FFFF_FFFB_FFFF),
+        (
+            25,
+            0x8000_0000_0000_0000,
+            vec![32767; 8],
+            0x8000_0000_0003_FFF8,
+        ),
+    ];
+
+    for (primary, initial, immediates, expected) in cases {
+        for register in [1_u32, 31] {
+            let opcodes: Vec<u32> = immediates
+                .iter()
+                .map(|immediate| {
+                    (primary << 26)
+                        | (register << 21)
+                        | (register << 16)
+                        | (*immediate as u16 as u32)
+                })
+                .collect();
+            let mut engine = Engine::jit();
+            let block = engine.prepare_block(&opcodes).unwrap();
+            let mut gpr = [0; 32];
+            gpr[register as usize] = initial;
+            let mut expected_registers = gpr;
+            expected_registers[register as usize] = expected;
+
+            assert!(engine.execute_prepared_block(block, &mut gpr));
+            assert_eq!(
+                gpr, expected_registers,
+                "primary {primary}, register {register}"
+            );
+            assert_eq!(block.len(), immediates.len());
+            assert_eq!(engine.stats.native_executions, immediates.len() as u64);
+            assert_eq!(engine.stats.native_block_executions, 1);
+        }
+    }
+    assert_eq!(
+        compile_block(&[0x24210001; 8]),
+        compile_block(&[0x24210004; 2])
+    );
+}
