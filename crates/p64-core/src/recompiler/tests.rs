@@ -188,3 +188,31 @@ fn register_resident_native_blocks_match_sequential_interpreter_semantics() {
         );
     }
 }
+
+#[test]
+fn aot_native_blocks_are_validated_and_stale_handles_are_rejected() {
+    let opcodes = vec![0x24210001, 0x00211025, 0x24420002];
+    let code = compile_block(&opcodes).unwrap();
+    let mut engine = Engine::from_aot_blocks(vec![(opcodes.clone(), code.clone())]).unwrap();
+
+    assert_eq!(engine.compiled_blocks(), 1);
+    let block = engine.prepare_block(&opcodes).unwrap();
+    let mut registers = [0; 32];
+    registers[1] = 10;
+
+    assert!(engine.execute_prepared_block(block, &mut registers));
+    assert_eq!(registers[1], 11);
+    assert_eq!(registers[2], 13);
+    assert_eq!(engine.stats.native_executions, 3);
+    assert!(engine.prepare_block(&[0x24210001, 0x24210002]).is_none());
+    engine = Engine::jit();
+    let before = registers;
+
+    assert!(!engine.execute_prepared_block(block, &mut registers));
+    assert_eq!(before, registers);
+    let mut altered = code;
+    altered[0] ^= 1;
+
+    assert!(Engine::from_aot_blocks(vec![(opcodes, altered)]).is_err());
+    assert!(compile_block(&[0xD4220000, 0x24210001]).is_none());
+}
