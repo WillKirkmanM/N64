@@ -679,3 +679,44 @@ fn untaken_relative_branch_in_taken_delay_slot_keeps_the_original_target() {
     assert_eq!(n64.cpu.execution.pc.wrapping_add(4), 0xFFFF_FFFF_8000_2000);
     assert!(matches!(n64.cpu.branch_state.state, State::NotTaken));
 }
+
+#[test]
+fn signed_arithmetic_overflow_preserves_destination() {
+    // Corresponds to nemu64-test's positive/negative and doubleword overflow cases.
+    let cases: [(InstrFn, u64, u64); 8] = [
+        (add, 0x7FFF_FFFF, 0x7FFF_FFFF),
+        (add, se32(0xE8760110u32 as i32), se32(0x83214321u32 as i32)),
+        (sub, se32(i32::MIN), 1),
+        (sub, i32::MAX as u64, u64::MAX),
+        (dadd, i64::MAX as u64, 1),
+        (dadd, i64::MIN as u64, u64::MAX),
+        (dsub, i64::MIN as u64, 1),
+        (dsub, i64::MAX as u64, u64::MAX),
+    ];
+    let mut n64 = N64::default();
+
+    for (instruction, lhs, rhs) in cases {
+        for destination in [0, 3] {
+            n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1000;
+            n64.cpu.branch_state.state = State::Step;
+            n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0;
+            n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize] = 0;
+            n64.cpu.registers.gpr[1] = lhs;
+            n64.cpu.registers.gpr[2] = rhs;
+            n64.cpu.registers.gpr[destination as usize] = 0xBADDECAF;
+            instruction(&mut n64, register_opcode(destination));
+
+            assert_eq!(n64.cpu.registers.gpr[destination as usize], 0xBADDECAF);
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                MmuCause::ExccodeOv as u64
+            );
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+                0xFFFF_FFFF_8000_1000
+            );
+            assert_eq!(n64.cpu.execution.pc, 0xFFFF_FFFF_8000_0180);
+            assert!(matches!(n64.cpu.branch_state.state, State::Exception));
+        }
+    }
+}
