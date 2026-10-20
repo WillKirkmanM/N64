@@ -653,3 +653,16 @@ fn relative_branch_in_taken_delay_slot_executes_the_original_target() {
         "Original jump target must execute as the nested branch's delay slot"
     );
 }
+
+#[test]
+fn branch_link_in_taken_delay_slot_links_to_the_original_target() {
+    let mut n64 = N64::default();
+    n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1004;
+    n64.cpu.branch_state.state = State::DelaySlotTaken;
+    n64.cpu.branch_state.pc = 0xFFFF_FFFF_8000_2000;
+    bgezal(&mut n64, 2);
+
+    assert_eq!(n64.cpu.registers.gpr[31], 0xFFFF_FFFF_8000_2004);
+    assert_eq!(n64.cpu.branch_state.pc, 0xFFFF_FFFF_8000_2008);
+    assert_eq!(n64.cpu.execution.pc.wrapping_add(4), 0xFFFF_FFFF_8000_2000);
+}
