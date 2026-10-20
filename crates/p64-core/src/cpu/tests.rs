@@ -638,3 +638,18 @@ fn nested_branch_program(_n64: &mut N64, address: u64, _size: memory::AccessSize
 fn halt(n64: &mut N64, _opcode: u32) {
     n64.cpu.execution.running = 0;
 }
+
+#[test]
+fn relative_branch_in_taken_delay_slot_executes_the_original_target() {
+    let mut n64 = N64::default();
+    start_cpu(&mut n64);
+    n64.cpu.execution.pc = 0xFFFF_FFFF_A000_0000;
+    n64.memory.bus.memory_map_read[0] = nested_branch_program;
+    n64.cpu.instructions.instrs[63] = halt;
+    run(&mut n64);
+
+    assert_eq!(
+        n64.cpu.registers.gpr[3], 5,
+        "Original jump target must execute as the nested branch's delay slot"
+    );
+}
