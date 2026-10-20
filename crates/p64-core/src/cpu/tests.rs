@@ -770,3 +770,26 @@ fn addiu_wraps_and_sign_extends_the_low_word() {
         assert!(matches!(n64.cpu.branch_state.state, State::Step));
     }
 }
+
+#[test]
+fn signed_arithmetic_without_overflow_writes_sign_extended_result() {
+    let mut n64 = N64::default();
+    n64.cpu.registers.gpr[1] = 0x4321_4321_FFFF_FFFE;
+    n64.cpu.registers.gpr[2] = 1;
+    add(&mut n64, register_opcode(3));
+
+    assert_eq!(n64.cpu.registers.gpr[3], u64::MAX);
+    sub(&mut n64, register_opcode(3));
+
+    assert_eq!(n64.cpu.registers.gpr[3], u64::MAX - 2);
+    addi(&mut n64, (1 << 21) | (3 << 16) | 1);
+
+    assert_eq!(n64.cpu.registers.gpr[3], u64::MAX);
+    n64.cpu.registers.gpr[1] = 0x1234_5678_0000_0000;
+    dadd(&mut n64, register_opcode(3));
+
+    assert_eq!(n64.cpu.registers.gpr[3], 0x1234_5678_0000_0001);
+    dsub(&mut n64, register_opcode(3));
+
+    assert_eq!(n64.cpu.registers.gpr[3], 0x1234_5677_FFFF_FFFF);
+}
