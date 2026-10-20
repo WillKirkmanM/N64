@@ -753,3 +753,20 @@ fn immediate_overflow_and_delay_slot_record_exception() {
         }
     }
 }
+
+#[test]
+fn addiu_wraps_and_sign_extends_the_low_word() {
+    let mut n64 = N64::default();
+
+    for (operand, immediate, expected) in [
+        (0x1234_5678_7FFF_FFFF, 1u16, 0xFFFF_FFFF_8000_0000),
+        (0xABCD_EF01_8000_0000, 0xFFFF, 0x7FFF_FFFF),
+        (0x4321_4321_4321_4321, (-10208i16) as u16, 0x4321_1B41),
+    ] {
+        n64.cpu.registers.gpr[1] = operand;
+        addiu(&mut n64, (1 << 21) | (2 << 16) | immediate as u32);
+
+        assert_eq!(n64.cpu.registers.gpr[2], expected);
+        assert!(matches!(n64.cpu.branch_state.state, State::Step));
+    }
+}
