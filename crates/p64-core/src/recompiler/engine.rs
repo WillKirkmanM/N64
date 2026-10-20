@@ -535,3 +535,40 @@ impl Engine {
         }
     }
 }
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_code_budget_keeps_existing_handles_and_stops_compilation() {
+        let mut engine = Engine::jit();
+        engine.code.page_limit = 1;
+        let opcode = (9 << 26) | (1 << 16) | 7;
+        let handle = engine.prepare(opcode).unwrap();
+        let generation = engine.generation();
+        let remaining = (1..=ExecutablePage::SIZE)
+            .rev()
+            .find(|size| engine.code.pages[0].fits(*size))
+            .unwrap();
+        let padding = vec![0x90; remaining];
+        engine.install_native(&padding).unwrap();
+        assert!(engine.prepare_block(&[opcode, opcode]).is_none());
+        assert!(!engine.code.compilation_available);
+        assert_eq!(engine.generation(), generation);
+        let mut gpr = [0; 32];
+        assert!(engine.execute_prepared(handle, &mut gpr));
+        assert_eq!(gpr[1], 7);
+        engine.code.page_limit = 2;
+        assert!(engine.prepare_block(&[opcode, opcode]).is_none());
+        assert!(engine
+            .prepare_branch_block(&[opcode, (4 << 26) | 1])
+            .is_none());
+        assert!(engine
+            .prepare_memory_block(&[opcode, (35 << 26) | (2 << 16)])
+            .is_none());
+        assert!(engine.prepare(opcode | (3 << 16)).is_none());
+        assert_eq!(engine.code.pages.len(), 1);
+        assert!(engine.prepare(opcode).is_some());
+    }
+}
