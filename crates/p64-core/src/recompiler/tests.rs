@@ -78,3 +78,14 @@ fn unsupported_and_aot_misses_do_not_modify_registers() {
     assert!(engine.try_execute(0x24220001, &mut registers));
     assert_eq!(engine.compiled_instructions(), 1);
 }
+
+#[test]
+fn aot_rejects_altered_native_bytes() {
+    let opcode = 0x24220001;
+    let mut code = compile_opcode(opcode).unwrap();
+
+    assert!(Engine::from_aot_codes(vec![(opcode, code.clone())]).is_ok());
+    code[0] ^= 1;
+
+    assert!(Engine::from_aot_codes(vec![(opcode, code)]).is_err());
+}
