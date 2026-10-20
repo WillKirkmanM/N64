@@ -720,3 +720,36 @@ fn signed_arithmetic_overflow_preserves_destination() {
         }
     }
 }
+
+#[test]
+fn immediate_overflow_and_delay_slot_record_exception() {
+    let mut n64 = N64::default();
+
+    for (instruction, operand) in [
+        (addi as InstrFn, i32::MAX as u64),
+        (daddi as InstrFn, i64::MAX as u64),
+    ] {
+        for state in [State::DelaySlotTaken, State::DelaySlotNotTaken] {
+            n64.cpu.execution.pc = 0xFFFF_FFFF_8000_1004;
+            n64.cpu.branch_state.state = state;
+            n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] = 0;
+            n64.cpu.registers.gpr[1] = operand;
+            n64.cpu.registers.gpr[2] = 0xBADDECAF;
+            instruction(&mut n64, (1 << 21) | (2 << 16) | 1);
+
+            assert_eq!(n64.cpu.registers.gpr[2], 0xBADDECAF);
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Cause as usize],
+                MmuCause::BD as u64 | MmuCause::ExccodeOv as u64
+            );
+            assert_eq!(
+                n64.cpu.mmu.registers.regs[MmuRegister::EPC as usize],
+                0xFFFF_FFFF_8000_1000
+            );
+            assert_ne!(
+                n64.cpu.mmu.registers.regs[MmuRegister::Status as usize] & MmuStatus::EXL as u64,
+                0
+            );
+        }
+    }
+}
