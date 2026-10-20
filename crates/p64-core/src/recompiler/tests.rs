@@ -89,3 +89,27 @@ fn aot_rejects_altered_native_bytes() {
 
     assert!(Engine::from_aot_codes(vec![(opcode, code)]).is_err());
 }
+
+#[test]
+fn prepared_handles_are_safe_after_engine_replacement() {
+    let mut engine = Engine::jit();
+    let old_generation = engine.generation();
+    let instruction = engine.prepare(0x24220001).unwrap();
+    let mut registers = [0; 32];
+    registers[1] = 17;
+
+    assert!(engine.execute_prepared(instruction, &mut registers));
+    assert_eq!(registers[2], 18);
+    assert_eq!(engine.stats.native_executions, 1);
+    engine = Engine::jit();
+    assert_ne!(engine.generation(), old_generation);
+    let before = registers;
+
+    assert!(!engine.execute_prepared(instruction, &mut registers));
+    assert_eq!(registers, before);
+    let fresh = engine.prepare(0x24220002).unwrap();
+
+    assert!(engine.execute_prepared(fresh, &mut registers));
+    assert_eq!(registers[2], 19);
+    assert_eq!(engine.stats.native_executions, 1);
+}
