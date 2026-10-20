@@ -77,3 +77,6 @@ pub(super) fn teqi(n64: &mut N64, opcode: u32) {
 pub(super) fn tnei(n64: &mut N64, opcode: u32) {
     trap_immediate(n64, opcode, NotEqual);
 }
+
+#[cfg(test)]
+mod tests;
