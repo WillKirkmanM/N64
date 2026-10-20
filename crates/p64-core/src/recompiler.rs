@@ -8,6 +8,9 @@ mod executable;
 #[cfg(target_arch = "x86_64")]
 use executable::ExecutablePage;
 
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests;
+
 use crate::opcode::{PrimaryOpcode, SpecialOpcode};
 use std::sync::atomic::{AtomicU64, Ordering};
 
