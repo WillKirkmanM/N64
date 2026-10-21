@@ -815,3 +815,41 @@ fn memory_aot_records_use_context_abi_and_reject_stale_handles() {
     assert_eq!(gpr, before_gpr);
     assert_cache_equal(&lines, &before_lines);
 }
+
+#[test]
+fn native_opcode_policy_preserves_every_raw_encoding() {
+    let integer_functions = [
+        0, 2, 3, 4, 6, 7, 20, 22, 23, 33, 35, 36, 37, 38, 39, 42, 43, 45, 47, 56, 58, 59, 60, 62,
+        63,
+    ];
+    let wide_functions = [20, 22, 23, 45, 47, 56, 58, 59, 60, 62, 63];
+
+    for primary in 0..64_u32 {
+        for function in 0..64_u32 {
+            let opcode = (primary << 26) | function;
+            let integer = if primary == 0 {
+                integer_functions.contains(&function)
+            } else {
+                (9..=15).contains(&primary) || primary == 25
+            };
+
+            assert_eq!(supported_opcode(opcode), integer, "integer {opcode:08x}");
+            assert_eq!(
+                supported_branch_opcode(opcode),
+                [2, 4, 5, 6, 7].contains(&primary),
+                "branch {opcode:08x}"
+            );
+            assert_eq!(
+                supported_memory_opcode(opcode),
+                [35, 43, 55, 63].contains(&primary),
+                "memory {opcode:08x}"
+            );
+            assert_eq!(
+                is_wide_opcode(opcode),
+                [25, 55, 63].contains(&primary)
+                    || (primary == 0 && wide_functions.contains(&function)),
+                "wide {opcode:08x}"
+            );
+        }
+    }
+}
