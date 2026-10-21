@@ -284,3 +284,49 @@ fn folded_self_updates_preserve_word_sign_extension_and_doubleword_wrap() {
         compile_block(&[0x24210004; 2])
     );
 }
+
+#[test]
+fn folded_logical_updates_and_observed_intermediate_results_are_exact() {
+    let initial = 0x1234_5678_ABCD_EF01;
+
+    for (primary, immediates, expected) in [
+        (12, [0xFFFF_u32, 0xF00F, 0xFF0F, 0xFFFF], 0xE001),
+        (
+            13,
+            [0xAAAA_u32, 0x5555, 0xF00F, 0x0FF0],
+            0x1234_5678_ABCD_FFFF,
+        ),
+        (14, [0xAAAA_u32, 0x5555, 0xF00F, 0x0FF0], initial),
+    ] {
+        let opcodes: Vec<u32> = immediates
+            .into_iter()
+            .map(|immediate| (primary << 26) | (31 << 21) | (31 << 16) | immediate)
+            .collect();
+        let mut engine = Engine::jit();
+        let block = engine.prepare_block(&opcodes).unwrap();
+        let mut gpr = [0; 32];
+        gpr[31] = initial;
+
+        assert!(engine.execute_prepared_block(block, &mut gpr));
+        assert_eq!(gpr[31], expected);
+    }
+
+    let opcodes = [0x27FF0001, 0x37E10000, 0x27FF0001];
+    let mut engine = Engine::jit();
+    let block = engine.prepare_block(&opcodes).unwrap();
+    let mut gpr = [0; 32];
+    gpr[31] = 0x7FFFFFFF;
+
+    assert!(engine.execute_prepared_block(block, &mut gpr));
+    assert_eq!(
+        gpr[1], 0xFFFF_FFFF_8000_0000,
+        "Copy observes the intermediate update"
+    );
+    assert_eq!(gpr[31], 0xFFFF_FFFF_8000_0001);
+    let zero_ops = [0x24000001, 0x3400FFFF, 0x3800ABCD, 0x30005555];
+    let zero_block = engine.prepare_block(&zero_ops).unwrap();
+    let before = gpr;
+
+    assert!(engine.execute_prepared_block(zero_block, &mut gpr));
+    assert_eq!(before, gpr);
+}
