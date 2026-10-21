@@ -770,3 +770,48 @@ fn doubleword_memory_preserves_pairs_zero_aliases_and_partial_exits() {
         }
     }
 }
+
+#[test]
+fn memory_aot_records_use_context_abi_and_reject_stale_handles() {
+    let opcodes = vec![0x8C220000, 0x24420001, 0xAC220004];
+    let code = compile_memory_block(&opcodes).unwrap();
+
+    assert!(compile_memory_block(&[0xAC3F7FFF; 8]).unwrap().len() <= 2048);
+    assert!(compile_memory_block(&[0xFC3F7FFF; 8]).unwrap().len() <= 2048);
+    let mut engine = Engine::from_aot_blocks(vec![(opcodes.clone(), code)]).unwrap();
+
+    assert_eq!(engine.compiled_memory_blocks(), 1);
+    assert!(engine.prepare_block(&opcodes).is_none());
+    assert!(engine.prepare_branch_block(&opcodes).is_none());
+    let block = engine.prepare_memory_block(&opcodes).unwrap();
+    let mut gpr = [0; 32];
+    gpr[1] = 0xFFFF_FFFF_8000_0000;
+    let mut lines = [crate::cache::DCache::default(); 512];
+    lines[0].valid = true;
+    lines[0].words[0] = 0x7FFFFFFF;
+    let mut context = NativeMemoryContext::new(&mut gpr, &mut lines, 0xFFFF_FFFF_8000_2000, 0, 0);
+
+    assert_eq!(
+        engine.execute_prepared_memory_block(block, &mut context),
+        Some(3)
+    );
+    assert_eq!(context.extra_cycles, 1);
+    assert_eq!(context.pending_load, 0);
+    assert_eq!(gpr[2], 0xFFFF_FFFF_8000_0000);
+    assert_eq!(lines[0].words[1], 0x80000000);
+    assert!(lines[0].dirty && lines[0].store_dirty);
+    assert_eq!(engine.stats.native_memory_executions, 1);
+    engine = Engine::jit();
+    let before_gpr = gpr;
+    let before_lines = lines;
+    let mut context = NativeMemoryContext::new(&mut gpr, &mut lines, 0, 2, 0x1234);
+
+    assert_eq!(
+        engine.execute_prepared_memory_block(block, &mut context),
+        None
+    );
+    assert_eq!(context.pending_load, 2);
+    assert_eq!(context.last_data_address, 0x1234);
+    assert_eq!(gpr, before_gpr);
+    assert_cache_equal(&lines, &before_lines);
+}
