@@ -181,4 +181,60 @@ mod memory_blocks {
         assert!(!n64.memory.caches.dcache[0].valid);
         assert_eq!(n64.execution_engine.stats.native_memory_executions, 1);
     }
+
+    #[test]
+    fn cached_memory_blocks_preserve_hits_misses_writeback_and_resume() {
+        let mut native_calls = 0;
+
+        for wide in [false, true] {
+            for second_load_offset in [2, if wide { 8 } else { 4 }, 16, 0x2000] {
+                let words = program(second_load_offset, wide);
+                let (rom, artifact) = crate::support::artifact_for(&words);
+
+                for warm in [false, true] {
+                    for uncached in [false, true] {
+                        for deadline in [43, 83, 200, 1200] {
+                            let pending = if warm { 16 } else { 17 };
+
+                            let mut reference =
+                                device(&words, Engine::interpreter(), warm, uncached, pending);
+                            run_until(&mut reference, deadline);
+                            let first = snapshot(&reference);
+                            let resumed_deadline =
+                                reference.cpu.mmu.registers.regs[MmuRegister::Count as usize] + 37;
+                            run_until(&mut reference, resumed_deadline);
+                            let resumed = snapshot(&reference);
+
+                            for engine in
+                                [Engine::jit(), aot::load_artifact(&artifact, &rom).unwrap()]
+                            {
+                                let mut actual = device(&words, engine, warm, uncached, pending);
+                                run_until(&mut actual, deadline);
+
+                                assert_eq!(
+                                    snapshot(&actual),
+                                    first,
+                                    "wide={wide} offset={second_load_offset} warm={warm} uncached={uncached} deadline={deadline}"
+                                );
+                                run_until(&mut actual, resumed_deadline);
+
+                                assert_eq!(
+                                    snapshot(&actual),
+                                    resumed,
+                                    "resumed wide={wide} offset={second_load_offset} warm={warm} uncached={uncached} deadline={deadline}"
+                                );
+                                native_calls +=
+                                    actual.execution_engine.stats.native_memory_executions;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            native_calls > 0,
+            "production path never exercised native memory blocks"
+        );
+    }
 }
