@@ -358,3 +358,42 @@ fn overwritten_cached_registers_need_no_live_in_load() {
         assert_eq!(gpr, expected);
     }
 }
+
+#[test]
+fn aot_bulk_loading_seals_all_pages_before_publishing_handles() {
+    let mut records = Vec::new();
+
+    for immediate in 0..1024 {
+        let scalar = 0x24220000 | immediate;
+        records.push((vec![scalar], compile_opcode(scalar).unwrap()));
+        let block = vec![0x24210000 | immediate, 0x00201025];
+        records.push((block.clone(), compile_block(&block).unwrap()));
+    }
+
+    records.push(records[0].clone());
+    records.push(records[1].clone());
+    let mut engine = Engine::from_aot_blocks(records).unwrap();
+
+    assert_eq!(engine.compiled_instructions(), 1024);
+    assert_eq!(engine.compiled_blocks(), 1024);
+    assert!(engine.code.pages.len() > 1);
+    assert!(engine.code.pages.iter().all(|page| page.is_sealed()));
+    for immediate in 0..1024 {
+        let mut gpr = [0; 32];
+        gpr[1] = 7;
+        let scalar = engine.prepare(0x24220000 | immediate).unwrap();
+
+        assert!(engine.execute_prepared(scalar, &mut gpr));
+        assert_eq!(gpr[2], 7 + immediate as u64);
+        let block = engine
+            .prepare_block(&[0x24210000 | immediate, 0x00201025])
+            .unwrap();
+
+        assert!(engine.execute_prepared_block(block, &mut gpr));
+        assert_eq!(gpr[1], 7 + immediate as u64);
+        assert_eq!(gpr[2], gpr[1]);
+    }
+
+    assert_eq!(engine.stats.native_block_executions, 1024);
+    assert_eq!(engine.stats.native_executions, 3072);
+}
