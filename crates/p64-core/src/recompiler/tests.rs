@@ -705,3 +705,68 @@ fn failing_memory_access_does_not_consume_its_pending_load_or_stall() {
         assert_cache_equal(&lines, &before);
     }
 }
+
+#[test]
+fn doubleword_memory_preserves_pairs_zero_aliases_and_partial_exits() {
+    let sequences = [
+        vec![0xDC220000, 0xFC220008, 0xDC230008], // LD, SD, LD both pairs
+        vec![0xDC200008, 0xFC200000, 0xDC240000], // r0 discard/store-zero
+        vec![0xDC210000, 0xFC220008],             // base overwritten by load
+        vec![0xDC220000, 0xFC220004],             // aligned word but misaligned dword
+        vec![0xDC220000, 0xFC220010],             // dependent store cache miss
+        vec![0xFC220008, 0x8C23000C, 0xDC240008], // mixed widths
+    ];
+
+    for opcodes in sequences {
+        let mut gpr = [0; 32];
+        gpr[1] = 0xFFFF_FFFF_8000_0000;
+        gpr[2] = 0xABCDEF01_23456789;
+        let mut lines = [crate::cache::DCache::default(); 512];
+        lines[0].valid = true;
+        lines[0].words = [0x89ABCDEF, 0xFEDCBA98, 0x01234567, 0x89ABCDEF];
+        let mut expected_gpr = gpr;
+        let mut expected_lines = lines;
+        let expected = memory_oracle(
+            &opcodes,
+            &mut expected_gpr,
+            &mut expected_lines,
+            0x80002000,
+            1,
+            99,
+        );
+        let code = compile_memory_block(&opcodes).unwrap();
+
+        for aot in [false, true] {
+            let mut engine = if aot {
+                Engine::from_aot_blocks(vec![(opcodes.clone(), code.clone())]).unwrap()
+            } else {
+                Engine::jit()
+            };
+
+            let block = engine.prepare_memory_block(&opcodes).unwrap();
+
+            assert!(block.requires_wide());
+            let mut actual_gpr = gpr;
+            let mut actual_lines = lines;
+            let mut context =
+                NativeMemoryContext::new(&mut actual_gpr, &mut actual_lines, 0x80002000, 1, 99);
+
+            assert_eq!(
+                engine.execute_prepared_memory_block(block, &mut context),
+                (expected.0 != 0).then_some(expected.0)
+            );
+            assert_eq!(
+                (
+                    context.retired_count as usize,
+                    context.extra_cycles,
+                    context.pending_load,
+                    context.last_data_address,
+                    context.side_exit
+                ),
+                expected
+            );
+            assert_eq!(actual_gpr, expected_gpr, "{opcodes:x?}");
+            assert_cache_equal(&actual_lines, &expected_lines);
+        }
+    }
+}
