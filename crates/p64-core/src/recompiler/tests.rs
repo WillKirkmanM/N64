@@ -670,3 +670,38 @@ fn mixed_memory_native_blocks_match_independent_cache_and_interlock_model() {
         assert_cache_equal(&lines, &expected_lines);
     }
 }
+
+#[test]
+fn failing_memory_access_does_not_consume_its_pending_load_or_stall() {
+    for (offset, exit) in [
+        (2, NativeMemoryExit::Address),
+        (16, NativeMemoryExit::CacheMiss),
+    ] {
+        let opcodes = [0x8C220000, 0xAC220000 | offset];
+        let mut engine = Engine::jit();
+        let block = engine.prepare_memory_block(&opcodes).unwrap();
+        let mut gpr = [0; 32];
+        gpr[1] = 0xFFFF_FFFF_8000_0000;
+        let mut lines = [crate::cache::DCache::default(); 512];
+        lines[0].valid = true;
+        lines[0].words[0] = 0x80000001;
+        let before = lines;
+        let mut context =
+            NativeMemoryContext::new(&mut gpr, &mut lines, 0xFFFF_FFFF_8000_2000, 0, 0);
+
+        assert_eq!(
+            engine.execute_prepared_memory_block(block, &mut context),
+            Some(1)
+        );
+        assert_eq!(context.retired_count, 1);
+        assert_eq!(context.pending_load, 2);
+        assert_eq!(
+            context.extra_cycles, 0,
+            "Failed dependent store must not consume its interlock"
+        );
+        assert_eq!(context.last_data_address, 0xFFFF_FFFF_8000_0000);
+        assert_eq!(context.side_exit, exit);
+        assert_eq!(gpr[2], 0xFFFF_FFFF_8000_0001);
+        assert_cache_equal(&lines, &before);
+    }
+}
