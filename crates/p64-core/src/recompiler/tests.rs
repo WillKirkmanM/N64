@@ -523,3 +523,51 @@ fn branch_artifact_uses_separate_abi_and_rejects_stale_handles() {
         assert!(compile_branch_block(&invalid).is_none());
     }
 }
+
+#[cfg(feature = "accuracy-diagnostics")]
+#[test]
+fn block_histograms_count_only_successful_calls_by_guest_length() {
+    let mut engine = Engine::jit();
+    let pure = engine.prepare_block(&[0x24210001; 3]).unwrap();
+    let branch = engine
+        .prepare_branch_block(&[0x24210001, 0x24210001, 0x24210001, 0x14200003])
+        .unwrap();
+    let mut registers = [0; 32];
+
+    assert!(engine.execute_prepared_block(pure, &mut registers));
+    assert!(engine.execute_prepared_block(pure, &mut registers));
+    assert_eq!(
+        engine.execute_prepared_branch_block(branch, &mut registers),
+        Some(true)
+    );
+    let mut expected = [0; MAX_BLOCK_INSTRUCTIONS + 1];
+    expected[3] = 2;
+    expected[4] = 1;
+
+    assert_eq!(
+        engine.stats.diagnostics.native_block_length_counts,
+        expected
+    );
+    let mut branches = [0; MAX_BLOCK_INSTRUCTIONS + 1];
+    branches[4] = 1;
+
+    assert_eq!(
+        engine.stats.diagnostics.native_branch_length_counts,
+        branches
+    );
+    engine = Engine::jit();
+
+    assert!(!engine.execute_prepared_block(pure, &mut registers));
+    assert_eq!(
+        engine.execute_prepared_branch_block(branch, &mut registers),
+        None
+    );
+    assert_eq!(
+        engine.stats.diagnostics.native_block_length_counts,
+        [0; MAX_BLOCK_INSTRUCTIONS + 1]
+    );
+    assert_eq!(
+        engine.stats.diagnostics.native_branch_length_counts,
+        [0; MAX_BLOCK_INSTRUCTIONS + 1]
+    );
+}
