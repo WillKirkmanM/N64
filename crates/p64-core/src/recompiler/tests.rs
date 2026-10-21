@@ -483,3 +483,43 @@ fn branch_tail_native_predicates_match_alu_prefix_state() {
 
     assert_eq!(engine.stats.native_branch_executions, 3000);
 }
+
+#[test]
+fn branch_artifact_uses_separate_abi_and_rejects_stale_handles() {
+    let opcodes = vec![0x24210001, 0x10200003];
+    let code = compile_branch_block(&opcodes).unwrap();
+
+    assert_eq!(compile_block(&opcodes), Some(code.clone()));
+    let mut engine = Engine::from_aot_blocks(vec![(opcodes.clone(), code)]).unwrap();
+
+    assert_eq!(engine.compiled_branch_blocks(), 1);
+    assert_eq!(engine.compiled_blocks(), 1);
+    assert!(engine.prepare_block(&opcodes).is_none());
+    let block = engine.prepare_branch_block(&opcodes).unwrap();
+    let mut registers = [0; 32];
+    registers[1] = u64::MAX;
+
+    assert_eq!(
+        engine.execute_prepared_branch_block(block, &mut registers),
+        Some(true)
+    );
+    assert_eq!(registers[1], 0);
+    assert_eq!(engine.stats.native_executions, 2);
+    engine = Engine::jit();
+    let before = registers;
+
+    assert_eq!(
+        engine.execute_prepared_branch_block(block, &mut registers),
+        None
+    );
+    assert_eq!(before, registers);
+
+    for invalid in [
+        vec![0x10200003],
+        vec![0x24210001, 0x10200003, 0x24210001],
+        vec![0x8C220000, 0x10200003],
+        vec![0x24210001, 0x0C000000],
+    ] {
+        assert!(compile_branch_block(&invalid).is_none());
+    }
+}
