@@ -571,3 +571,102 @@ fn block_histograms_count_only_successful_calls_by_guest_length() {
         [0; MAX_BLOCK_INSTRUCTIONS + 1]
     );
 }
+
+#[test]
+fn mixed_memory_native_blocks_match_independent_cache_and_interlock_model() {
+    let mut engine = Engine::jit();
+    let mut random = 0x9817_490D_DDAF_EE82_u64;
+    let pc = 0xFFFF_FFFF_8000_2000;
+
+    for iteration in 0..4000 {
+        let mut gpr = [0; 32];
+
+        for value in gpr.iter_mut().skip(1) {
+            next_random(&mut random);
+            *value = random;
+        }
+        gpr[1] = 0xFFFF_FFFF_8000_0000;
+        gpr[2] = 0xFFFF_FFFF_8000_0040;
+        let mut lines = [crate::cache::DCache::default(); 512];
+
+        for (index, line) in lines.iter_mut().enumerate() {
+            line.valid = true;
+            line.index = (index as u16 * 16) & 0xFF0;
+            line.words = std::array::from_fn(|word| {
+                next_random(&mut random);
+
+                random as u32 ^ word as u32
+            });
+        }
+
+        if iteration % 5 == 0 {
+            lines[iteration % 16].valid = false;
+        }
+
+        if iteration % 7 == 0 {
+            lines[iteration % 16].tag = 0x1000;
+        }
+
+        let mut opcodes = Vec::new();
+
+        for index in 0..2 + iteration % 7 {
+            next_random(&mut random);
+            let kind = (random >> 40) as u32 % 7;
+            let destination = (random >> 8) as u32 & 31;
+
+            if index == 0 || kind <= 3 {
+                let base = if random & 1 == 0 { 1 } else { 2 };
+
+                let primary = [35, 43, 55, 63][(kind % 4) as usize];
+                let alignment = if primary >= 55 { 8 } else { 4 };
+
+                let mut offset = ((random >> 16) as u32 & 7) * alignment;
+                if iteration % 11 == 0 && index != 0 {
+                    offset |= 2;
+                }
+
+                opcodes.push((primary << 26) | (base << 21) | (destination << 16) | offset);
+            } else {
+                let source = (random >> 16) as u32 & 31;
+                let primary = [9, 13, 14][(kind - 4) as usize];
+                opcodes.push(
+                    (primary << 26)
+                        | (source << 21)
+                        | (destination << 16)
+                        | (random as u32 & 65535),
+                );
+            }
+        }
+
+        let pending = (random >> 32) as u8 & 31;
+        let initial_data = 0xA1234567;
+        let mut expected_gpr = gpr;
+        let mut expected_lines = lines;
+        let expected = memory_oracle(
+            &opcodes,
+            &mut expected_gpr,
+            &mut expected_lines,
+            pc,
+            pending,
+            initial_data,
+        );
+        let block = engine.prepare_memory_block(&opcodes).unwrap();
+        let mut context = NativeMemoryContext::new(&mut gpr, &mut lines, pc, pending, initial_data);
+        let actual = engine.execute_prepared_memory_block(block, &mut context);
+
+        assert_eq!(actual, (expected.0 != 0).then_some(expected.0));
+        assert_eq!(
+            (
+                context.retired_count as usize,
+                context.extra_cycles,
+                context.pending_load,
+                context.last_data_address,
+                context.side_exit
+            ),
+            expected,
+            "memory block {opcodes:08x?}"
+        );
+        assert_eq!(gpr, expected_gpr, "memory block {opcodes:08x?}");
+        assert_cache_equal(&lines, &expected_lines);
+    }
+}
