@@ -330,3 +330,31 @@ fn folded_logical_updates_and_observed_intermediate_results_are_exact() {
     assert!(engine.execute_prepared_block(zero_block, &mut gpr));
     assert_eq!(before, gpr);
 }
+
+#[test]
+fn overwritten_cached_registers_need_no_live_in_load() {
+    let opcodes = [
+        0x3C01FFFF, 0x3421FFFF, 0x24220001, 0x34030004, 0x00432021, 0x00642804, 0x2463FFFF,
+        0x00A33021,
+    ];
+    let code = compile_block(&opcodes).unwrap();
+    // After the ABI pointer move, LUI defines the first cached value without a load.
+    assert_eq!(code[3], 0xB8);
+    let mut engine = Engine::jit();
+    let block = engine.prepare_block(&opcodes).unwrap();
+
+    for poison in [0, u64::MAX, 0xABCD_5678_1234_9876] {
+        let mut gpr = [poison; 32];
+        gpr[0] = 0;
+        let mut expected = gpr;
+        expected[1] = u64::MAX;
+        expected[2] = 0;
+        expected[3] = 3;
+        expected[4] = 4;
+        expected[5] = 64;
+        expected[6] = 67;
+
+        assert!(engine.execute_prepared_block(block, &mut gpr));
+        assert_eq!(gpr, expected);
+    }
+}
