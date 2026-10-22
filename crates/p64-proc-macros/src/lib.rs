@@ -30,3 +30,6 @@ pub fn add_rdram_cycles(attr: TokenStream, item: TokenStream) -> TokenStream {
     )
     .into()
 }
+
+#[cfg(test)]
+mod tests;
