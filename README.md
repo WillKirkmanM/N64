@@ -1,31 +1,48 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4d8ae246-fa67-4b39-a2e4-072c7f09c577" width=200 />
-</p>
-<h1 align="center">p64</h1>
-
-<h4 align="center">
-  <a href="#get-started">Install</a>
-  ·
-  <a href="https://p64.parson.dev/">Documentation</a>
-  ·
-  <a href="https://github.com/WillKirkmanM/p64/releases">Releases</a>
-</h4>
-
-<p align="center">An Educational and Cycle Accurate Emulator for the Nintendo 64 with full VR4300 CPU emulation, Low Level RDP, RSP & RCP Emulation</p>
-
-Capable of playing all released titles with minimal hardware requirements.
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/569dd662-2068-4767-a5d4-416603a3c2d6" />
+  <img width="150" src="https://avatars.githubusercontent.com/u/138057124?v=4">
 </p>
 
+<h1 align="center">N64</h1>
 
-# Get Started
-**Clone the Repository**
-```
-git clone https://github.com/WillKirkmanM/p64 --recursive
+<p align="center">A Nintendo 64 Emulator Written in Rust</p>
+
+## Start
+
+Open N64 and choose **Open ROM**, or drop a ROM onto the launcher.
+Drop a folder to add games to the library.
+
+Select controllers and change resolution, upscaling and VSync in **Settings**.
+
+## Controls
+
+| N64 input | Keyboard |
+| --- | --- |
+| Analogue stick | Arrow keys |
+| D-pad | W / A / S / D |
+| A / B | Left Shift / Left Ctrl |
+| C-buttons | I / J / K / L |
+| L / R | X / C |
+| Z | Z |
+| Start | Enter |
+
+Change bindings under **File > Configure Input Profile**.
+
+## Saves
+
+Game and Controller Pak saves live in `p64/saves` under your system's data
+directory. Close the game window before copying saves or making a backup.
+
+## Development
+
+Requires Rust, CMake and a C++17 compiler. On Windows, use the MSVC toolchain.
+Rendering requires a Vulkan-capable GPU and driver.
+
+```sh
+git submodule update --init --recursive
+cargo run --release -p p64-emulator --locked
 ```
 
-**Run the Emulator**
-```
-cargo run
-```
+## Issues
+
+[Report bugs or request features](https://github.com/WillKirkmanM/n64/issues).
+For bugs, include your operating system, the game and steps to reproduce.
