@@ -95,3 +95,7 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+#[path = "nemu-runner/tests.rs"]
+mod tests;
