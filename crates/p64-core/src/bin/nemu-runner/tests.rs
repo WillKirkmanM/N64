@@ -27,3 +27,17 @@ fn default_and_aot_options_preserve_paths_and_host_pacing() {
     assert_eq!(aot.artifact, Some(PathBuf::from("code cache.p64aot")));
     assert!(aot.stop_on_completion && aot.unthrottled);
 }
+
+#[test]
+fn malformed_options_return_errors_before_starting_emulation() {
+    for arguments in [
+        &[][..],
+        &["ROM.z64", "--backend"],
+        &["ROM.z64", "--backend", "unknown"],
+        &["ROM.z64", "--backend", "aot"],
+        &["ROM.z64", "--aot"],
+        &["ROM.z64", "--unknown"],
+    ] {
+        assert!(parse(arguments).is_err(), "arguments={arguments:?}");
+    }
+}
